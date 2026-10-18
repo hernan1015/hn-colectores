@@ -1,0 +1,23 @@
+# HN AGRO · colector del mapa de inundación diario de la NASA (uso interno). Ver inundacion.py.
+name: colector-inundacion
+on:
+  schedule:
+    - cron: '23 4,16 * * *'   # 01:23 y 13:23 hora argentina (la NASA publica el día anterior a la tarde UTC)
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: colector-inundacion
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Colectar
+        env:
+          GH_TOKEN: ${{ secrets.RADAR_TOKEN }}        # permiso SÓLO para escribir en hn-radar (privado)
+          GH_REPO: hernan1015/hn-radar               # los datos se guardan en el repo PRIVADO; acá no queda nada
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: python3 inundacion.py

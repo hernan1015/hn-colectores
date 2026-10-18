@@ -1,0 +1,35 @@
+# HN AGRO · colector diario de SMAP L4 (humedad del perfil, Argentina). Ver smap_l4.py.
+# Relleno histórico: Actions → colector-smap → Run workflow con desde/hasta (≈ 20 s por día; cortar en tramos de ~2 años).
+name: colector-smap
+on:
+  schedule:
+    - cron: '41 9 * * *'   # 06:41 hora argentina
+  workflow_dispatch:
+    inputs:
+      desde: { description: 'AAAA-MM-DD (vacío = últimos 10 días)', required: false, default: '' }
+      hasta: { description: 'AAAA-MM-DD (vacío = hoy)', required: false, default: '' }
+      final: { description: 'relleno encadenado: AAAA-MM-DD final (vacío = no encadenar)', required: false, default: '' }
+permissions:
+  contents: read
+  actions: write      # para lanzar el tramo siguiente del relleno EN ESTE repo
+concurrency:
+  group: colector-smap-${{ inputs.final != '' && 'relleno' || 'diario' }}
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q netCDF4 numpy
+      - name: Colectar
+        env:
+          GH_TOKEN: ${{ secrets.RADAR_TOKEN }}        # permiso SÓLO para escribir en hn-radar (privado)
+          GH_REPO: hernan1015/hn-radar               # los datos se guardan en el repo PRIVADO; acá no queda nada
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          COLECTOR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COLECTOR_REPO: ${{ github.repository }}
+          DESDE: ${{ inputs.desde }}
+          HASTA: ${{ inputs.hasta }}
+          FINAL: ${{ inputs.final }}
+        run: python3 smap_l4.py

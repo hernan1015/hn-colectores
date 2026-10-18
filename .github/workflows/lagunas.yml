@@ -1,0 +1,22 @@
+# HN AGRO · nivel semanal de lagunas por SWOT (sin token). Ver lagunas_swot.py.
+name: colector-lagunas
+on:
+  schedule:
+    - cron: '7 11 * * 1'   # lunes 08:07 hora argentina
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: colector-lagunas
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Colectar
+        env:
+          GH_TOKEN: ${{ secrets.RADAR_TOKEN }}        # permiso SÓLO para escribir en hn-radar (privado)
+          GH_REPO: hernan1015/hn-radar               # los datos se guardan en el repo PRIVADO; acá no queda nada
+        run: python3 lagunas_swot.py

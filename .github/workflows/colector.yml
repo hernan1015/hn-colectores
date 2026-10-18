@@ -1,0 +1,22 @@
+# HN AGRO · colector horario del radar SINARAME (uso interno). Ver colectar.sh.
+name: colector-radar
+on:
+  schedule:
+    - cron: '17 * * * *'   # minuto 17: lejos de la hora en punto, cuando GitHub se atrasa más
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: colector-radar
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Colectar
+        env:
+          GH_TOKEN: ${{ secrets.RADAR_TOKEN }}        # permiso SÓLO para escribir en hn-radar (privado)
+          GH_REPO: hernan1015/hn-radar               # los datos se guardan en el repo PRIVADO; acá no queda nada
+        run: bash colectar.sh
