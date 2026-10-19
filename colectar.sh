@@ -43,6 +43,7 @@ for ((k=1; k*10<=VENTANA_MIN; k++)); do
   done
 done
 
+fallo_subida=0
 # 3. subir un .tar por día tocado + el manifiesto actualizado
 for dir in nuevo/*/; do
   [ -f "$dir/agregar.txt" ] || continue
@@ -51,8 +52,11 @@ for dir in nuevo/*/; do
   sort -u "man/$d/manifiesto.txt" "$dir/agregar.txt" > "man/$d/manifiesto.txt.n" && mv "man/$d/manifiesto.txt.n" "man/$d/manifiesto.txt"
   lote="lote_$(date -u +%Y%m%dT%H%M)Z_${GITHUB_RUN_ID:-local}.tar"
   tar -cf "$lote" -C "$dir" $(cd "$dir" && ls *.png)
-  gh release upload "$tag" "$lote" >/dev/null && gh release upload "$tag" "man/$d/manifiesto.txt" --clobber >/dev/null
-  echo "subido $tag: $lote ($(wc -l < "$dir/agregar.txt") imágenes; el día lleva $(wc -l < "man/$d/manifiesto.txt"))"
+  if gh release upload "$tag" "$lote" >/dev/null && gh release upload "$tag" "man/$d/manifiesto.txt" --clobber >/dev/null; then
+    echo "subido $tag: $lote ($(wc -l < "$dir/agregar.txt") imágenes; el día lleva $(wc -l < "man/$d/manifiesto.txt"))"
+  else
+    echo "NO SE PUDO SUBIR $tag ($lote): revisar el permiso RADAR_TOKEN (Contents: Read and write sobre hn-radar)"; fallo_subida=1
+  fi
 done
 
 # 4. resumen
@@ -61,3 +65,4 @@ done
   echo "- imágenes nuevas: **$nuevas** · todavía no publicadas o ausentes: $faltan · ausentes con más de 1 h: **$viejas404**"
   for R in $RADARES; do echo "- $R: ${porRadar[$R]:-0} nuevas"; done
 } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+[ "$fallo_subida" = 0 ] || exit 1   # que la corrida quede en ROJO si no se guardó nada
