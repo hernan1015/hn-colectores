@@ -9,5 +9,6 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | colector-inundacion | 2 veces por día | NASA LANCE (MODIS/VIIRS), con token de Earthdata |
 | colector-smap | diario | NASA SMAP L4, con token de Earthdata |
 | colector-lagunas | lunes | NASA SWOT (Hydrocron) |
+| colector-imerg | diario | NASA IMERG-Late (lluvia satelital), con token de Earthdata |
 
 Los registros de cada corrida muestran sólo cantidades.
