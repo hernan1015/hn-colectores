@@ -1,0 +1,30 @@
+# HN AGRO · colector diario de IMERG-Late (lluvia satelital de NASA, toda Argentina). Ver imerg_late.py.
+# Recarga de días: Actions → colector-imerg → Run workflow con desde/hasta.
+name: colector-imerg
+on:
+  schedule:
+    - cron: '40 15 * * *'   # 12:40 hora argentina: el día anterior ya está publicado
+  workflow_dispatch:
+    inputs:
+      desde: { description: 'AAAA-MM-DD (vacío = últimos 5 días)', required: false, default: '' }
+      hasta: { description: 'AAAA-MM-DD (vacío = ayer)', required: false, default: '' }
+permissions:
+  contents: read
+concurrency:
+  group: colector-imerg
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -q requests
+      - name: Colectar
+        env:
+          GH_TOKEN: ${{ secrets.RADAR_TOKEN }}        # permiso SÓLO para escribir en hn-radar (privado)
+          GH_REPO: hernan1015/hn-radar               # los datos se guardan en el repo PRIVADO; acá no queda nada
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+          DESDE: ${{ inputs.desde }}
+          HASTA: ${{ inputs.hasta }}
+        run: python3 imerg_late.py
