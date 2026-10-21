@@ -108,7 +108,7 @@ def main():
             f.write('\n'.join(sorted(ya[mes])) + '\n')
         gh('release', 'upload', tag, f'man/{mes}/manifiesto.txt', '--clobber')
         llovio = sum(1 for v in grilla.values() if v >= 1)
-        print(f'{dia}: {len(grilla)} celdas del país · {llovio} con ≥1 mm · máx {max(grilla.values()):.1f} mm')
+        print(f'{dia}: {len(grilla)} celdas del país · {llovio} con 1 mm o más · máx {max(grilla.values()):.1f} mm')
         d += dt.timedelta(days=1)
 
 
