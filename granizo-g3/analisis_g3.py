@@ -8,7 +8,16 @@ COPIA ADAPTADA PARA EL LOTE (granizo-g3/lote.py la importa). Original: G3/analis
   3. BUCKET, DATOS y CASOS los fija lote.py por episodio (GOES-16 o GOES-19 según la fecha).
   4. GLM: se verifica el estado HTTP y el tamaño; sin destellos la matriz vacía tiene 6 columnas (el original, 4).
   5. listar(): si los 4 intentos fallan, corta con error (el original seguía con una variable sin definir).
-El resto (tobac, paralaje, rayos por celda, salto 2σ, atributos) es el del original sin tocar.
+  6. Arreglos de la revisión de Codex (codex-mejoras/codex-g3.md), ADAPTADOS a esta copia y probados:
+     (1) GLM: fisico() decodifica cada variable con su _Unsigned/_FillValue/scale_factor/add_offset;
+     (2) ABI faltante: frame vacío en la grilla de 10 min (tobac corta con memory=0);
+     (3) salto 2σ: 14 min de historia bloqueada entera, activación > 10, fin con DFRDT < 0, episodios
+         agrupados desde el inicio, ddof=1 declarado (se conserva sig > 0 del original);
+     (4) rayos: velocidad por celda y asignación exclusiva; (5) familias/sistemas: sin sumas parciales,
+     cobertura marcada; (6) generador en vez de pix_cel y tabla de consulta para la máscara por celda.
+     Además: archivos GLM duplicados por período se cuentan una vez; sin celdas = salida vacía explícita;
+     MEST que falla = sin saltos «familia» (no se inventan familias).
+El resto (tobac, paralaje, atributos) es el del original. Aproximaciones declaradas en meta.json.
 
 G3 · Prototipo de la etapa 3 del vigía de granizo («convección intensificándose», 90-0 min).
 Seguimiento CELDA por CELDA con GOES-19 ABI banda 13 (cada 10 min) y GLM crudo de 20 s.
@@ -230,6 +239,31 @@ def bajar_abi(caso):
 
 
 # ------------------------------------------------------------------ BAJAR GLM
+def _txt(x):
+    return x.decode() if isinstance(x, bytes) else str(np.asarray(x).reshape(-1)[0] if np.ndim(x) else x)
+
+
+def fisico(v):
+    """LOTE (Codex G3, error 1): valor físico de una variable netCDF leída con h5py, POR VARIABLE.
+    Respeta _Unsigned, _FillValue/missing_value (comparados en crudo, antes de escalar), scale_factor y
+    add_offset. Faltante = NaN. Reemplaza el `.view(np.uint16)` incondicional del original."""
+    raw = np.asarray(v[()])
+    uns = _txt(v.attrs.get("_Unsigned", "false")).lower() == "true"
+    if uns and raw.dtype.kind == "i":
+        raw = raw.view(np.dtype(raw.dtype.str.replace("i", "u")))
+    falta = np.zeros(raw.shape, bool)
+    for at in ("_FillValue", "missing_value"):
+        if at in v.attrs:
+            for val in np.asarray(v.attrs[at]).reshape(-1):
+                p = np.asarray(val).astype(v.dtype)
+                if uns and p.dtype.kind == "i":
+                    p = p.view(np.dtype(p.dtype.str.replace("i", "u")))
+                falta |= raw == p
+    out = raw.astype("f8") * float(np.asarray(v.attrs.get("scale_factor", 1)).reshape(-1)[0]) \
+        + float(np.asarray(v.attrs.get("add_offset", 0)).reshape(-1)[0])
+    return np.where(falta, np.nan, out)
+
+
 def glm_uno(k, caja):
     import requests, h5py
     lon0, lon1, lat0, lat1 = caja
@@ -242,18 +276,24 @@ def glm_uno(k, caja):
             if largo >= 0 and len(b) != largo:  # LOTE: archivo cortado = reintento, nunca «sin rayos»
                 raise IOError("GLM incompleto: %d de %d bytes" % (len(b), largo))
             h = h5py.File(io.BytesIO(b), "r")
-            la, lo = h["flash_lat"][:], h["flash_lon"][:]
+            # LOTE (Codex G3, error 1): cada variable con su propio empaquetado
+            la, lo = fisico(h["flash_lat"]), fisico(h["flash_lon"])
             o = h["flash_time_offset_of_first_event"]
-            off = o[:].view(np.uint16).astype("f8") * float(o.attrs["scale_factor"][0]) + float(o.attrs["add_offset"][0])
-            base = re.search(r"seconds since (\S+ \S+)", o.attrs["units"].decode()).group(1)
+            off = fisico(o)
+            un = _txt(o.attrs["units"])
+            if not un.startswith("seconds since "):
+                raise ValueError("unidad temporal GLM inesperada: " + un)
+            base = re.search(r"seconds since (\S+ \S+)", un).group(1)
             t0 = dt.datetime.strptime(base[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).timestamp()
-            q = h["flash_quality_flag"][:]
-            def esc(v):  # entero sin signo empaquetado -> valor físico
-                x = h[v]
-                return x[:].view(np.uint16).astype("f8") * float(x.attrs["scale_factor"][0]) + float(x.attrs["add_offset"][0])
-            ar = esc("flash_area") / 1e6      # m² -> km²
-            en = esc("flash_energy") * 1e15   # J -> fJ
-            sel = (lo >= lon0 - .3) & (lo <= lon1 + .3) & (la >= lat0 - .3) & (la <= lat1 + .3)
+            q = fisico(h["flash_quality_flag"])
+            if _txt(h["flash_area"].attrs.get("units", "m2")).replace(" ", "") not in ("m2", "m^2"):
+                raise ValueError("flash_area no está en m2")
+            if _txt(h["flash_energy"].attrs.get("units", "J")) != "J":
+                raise ValueError("flash_energy no está en J")
+            ar = fisico(h["flash_area"]) / 1e6      # m² -> km²
+            en = fisico(h["flash_energy"]) * 1e15   # J -> fJ
+            sel = (np.isfinite(la) & np.isfinite(lo) & np.isfinite(off)
+                   & (lo >= lon0 - .3) & (lo <= lon1 + .3) & (la >= lat0 - .3) & (la <= lat1 + .3))
             h.close()
             # columnas: tiempo, lat, lon, calidad, área (km²), energía óptica (fJ)
             return np.c_[t0 + off[sel], la[sel], lo[sel], q[sel], ar[sel], en[sel]].astype("f8")
@@ -272,6 +312,8 @@ def bajar_glm(caso):
     for t in horas(C["t0"], C["t1"]):
         keys += listar("GLM-L2-LCFA/%d/%03d/%02d/" % (t.year, t.timetuple().tm_yday, t.hour))
     keys = sorted(k for k in keys if C["t0"] <= t_nombre(k) < C["t1"])
+    # LOTE (Codex G3): una revisión del mismo período de 20 s no cuenta como otro archivo de cobertura
+    keys = sorted({int(t_nombre(k).timestamp() // 20): k for k in keys}.values())
     esperados = int((C["t1"] - C["t0"]).total_seconds() // 20)
     print(caso, "GLM:", len(keys), "archivos de", esperados, "esperados")
     filas, faltan, ok_t = [], [], []
@@ -319,7 +361,8 @@ V_MAX = 35             # m/s, velocidad máxima de una celda para el enlace
 D_MEST = 20000         # m: distancia máxima para que tobac una celdas en una familia
 FRAC_EV = 0.25        # fracción del área propia que define una fusión o división significativa
 R_GLM = 5.0            # km: un destello va a la celda si cae a ≤ 5 km de un píxel de esa celda
-SALTO_TASA_MIN = 10.0  # destellos/min (Schultz y otros 2009)
+SALTO_TASA_MIN = 10.0  # destellos/min (Schultz y otros 2009); activación estricta: > 10 (LOTE). Umbral de LMA, sin recalibrar para GLM
+SIGMA_DDOF = 1         # LOTE (Codex G3): σ muestral declarado; ddof=0 queda como sensibilidad pendiente
 
 
 def cargar_abi(caso):
@@ -334,7 +377,29 @@ def cargar_abi(caso):
         T.append(dt.datetime.fromtimestamp(float(q["ts"]), UTC))
         TE.append(float(q["tef"]))
         B.append(b)
-    return T, np.array(TE), np.array(B), lat, lon, float(z["lon_sat"])
+    if not fs:
+        raise RuntimeError("no hay ABI bajado")
+    # LOTE (Codex G3, error 2): grilla regular de 10 min. Un barrido faltante queda como frame VACÍO (NaN),
+    # así tobac (memory=0) corta el seguimiento en vez de unir frames a 20 min como si fueran consecutivos.
+    C = CASOS[caso]
+    nt = int((C["t1"] - C["t0"]).total_seconds() // 600)
+    reg = [C["t0"] + dt.timedelta(seconds=600 * i) for i in range(nt)]
+    cubo = np.full((nt,) + lat.shape, np.nan, dtype="f4")
+    tef = np.array([(t + dt.timedelta(minutes=5)).timestamp() for t in reg])  # sólo de relleno en los huecos
+    vistos = set()
+    for t, te_, b in zip(T, TE, B):
+        i = int((t - C["t0"]).total_seconds() // 600)
+        if i in vistos or not 0 <= i < nt:
+            raise ValueError("ABI duplicado o fuera de la ventana: %s" % t)
+        vistos.add(i); cubo[i] = b; tef[i] = te_
+    return reg, tef, cubo, lat, lon, float(z["lon_sat"])
+
+
+def frames_presentes(caso):
+    """LOTE: índices de la grilla de 10 min que tienen un barrido ABI real (los demás son huecos)."""
+    C = CASOS[caso]
+    fs = sorted(glob.glob(os.path.join(DATOS, caso, "abi", "*.npz")))
+    return {int((float(np.load(f)["ts"]) - C["t0"].timestamp()) // 600): float(np.load(f)["te"]) for f in fs}
 
 
 def area_pixel(lat, lon):
@@ -344,6 +409,29 @@ def area_pixel(lat, lon):
     dxr = np.gradient(lon, axis=0) * 111.2 * np.cos(np.radians(lat))
     # área = |det| del jacobiano (km² por píxel)
     return np.abs(dxl * np.gradient(lat, axis=0) * 111.2 - dyl * dxr)
+
+
+COLS_ATR = ["cell", "frame", "dts", "size", "area_km2", "max_fcd", "max_fed", "accum_fcd", "avg_flash_area",
+            "accum_total_energy", "btmin", "a50", "a60", "mean_lat", "mean_lon", "rc_btmin", "rc_frac60",
+            "flash_rate", "dfrdt", "lja_std"]
+
+
+def salida_vacia(caso, motivo, nt, corr):
+    """LOTE: episodio sin celdas que seguir. Se escriben las salidas con encabezado y el motivo en meta.json."""
+    import pandas as pd
+    out = os.path.join(DATOS, caso)
+    pd.DataFrame(columns=COLS_ATR).to_csv(os.path.join(out, "atributos_probsevere.csv"), index=False)
+    pd.DataFrame(columns=["cell", "version", "t", "tasa", "dfr", "sig"]).to_csv(os.path.join(out, "saltos.csv"), index=False)
+    pd.DataFrame(columns=["cell", "frame", "t", "tef", "btmin", "a50", "a55", "a60", "a65", "lat_min", "lon_min",
+                          "lat", "lon", "npx", "lat_f", "lon_f"]).to_csv(os.path.join(out, "celdas_frames.csv"), index=False)
+    pd.DataFrame(columns=["cell"]).to_csv(os.path.join(out, "celdas_resumen.csv"), index=False)
+    json.dump(dict(eventos=[]), open(os.path.join(out, "fusiones_divisiones.json"), "w"))
+    g = np.load(os.path.join(out, "glm.npz"))
+    meta = dict(estado=motivo, frames=nt, paralaje=corr, n_celdas=0, glm_archivos=int(len(g["archivos"])),
+                glm_esperados=int(g["esperados"]), glm_fallidos=int(len(g["faltan"])))
+    json.dump(meta, open(os.path.join(out, "meta.json"), "w"), indent=1)
+    print(caso, "sin celdas:", motivo)
+    return meta
 
 
 def seguir(caso):
@@ -367,24 +455,36 @@ def seguir(caso):
     feats = tobac.feature_detection_multithreshold(da, dxy=dxy, threshold=UMBRALES, target="minimum",
                                                    n_min_threshold=4, position_threshold="weighted_diff",
                                                    sigma_threshold=0.5, min_distance=10000)
+    if feats is None or len(feats) == 0:  # LOTE: sin topes fríos = salida vacía explícita (no es un error)
+        return salida_vacia(caso, "sin_features", nt, corr)
     print(" features:", len(feats))
     mask, feats = tobac.segmentation_2D(feats, da, dxy=dxy, threshold=UMBRAL_SEG, target="minimum")
     track = tobac.linking_trackpy(feats, da, dt=600, dxy=dxy, v_max=V_MAX, stubs=2, method_linking="predict",
                                   adaptive_stop=0.2, adaptive_step=0.95, subnetwork_size=100, memory=0)
     track = track[track["cell"] >= 0].copy()
+    if not len(track):
+        return salida_vacia(caso, "sin_celdas", nt, corr)
     # familias de celdas que se fusionan o dividen: tobac.merge_split_MEST (árbol de expansión mínima)
     from tobac import merge_split
+    mest_ok = True
     try:
         ms = merge_split.merge_split_MEST(track, dxy, distance=D_MEST, frame_len=2)
         cel2fam = dict(zip(ms["cell"].values.astype(int), ms["cell_parent_track_id"].values.astype(int)))
     except Exception as e:
-        print("  merge_split_MEST falló:", e); cel2fam = {}
+        # LOTE (Codex G3): no se inventan familias; sin MEST no se emiten saltos «familia» y queda anotado
+        print("  merge_split_MEST falló:", e); cel2fam = {}; mest_ok = False
     M = mask.values.astype("i4")
+    M[~np.isfinite(B)] = 0  # LOTE: el relleno de los huecos nunca es celda
     f2c = dict(zip(track["feature"].astype(int), track["cell"].astype(int)))
-    # máscara por CELDA (0 = sin celda)
-    MC = np.zeros_like(M)
+    # máscara por CELDA (0 = sin celda). LOTE (Codex G3, error 6): tabla de consulta, no un recorrido del cubo por feature
+    lut = np.zeros(int(M.max()) + 1, dtype="i4")
     for f, c in f2c.items():
-        MC[M == f] = c
+        if 0 < f < len(lut):
+            lut[f] = c
+    MC = lut[np.maximum(M, 0)]
+    del M, mask, da
+    if not np.any(MC):
+        return salida_vacia(caso, "sin_celdas", nt, corr)
     # ---------- métricas por celda y frame
     filas = []
     for i in range(nt):
@@ -446,7 +546,17 @@ def seguir(caso):
         if len(com) and TE[i] > TE[i - 1]:
             vel[i] = [np.median((b_.loc[com, "lat"] - a.loc[com, "lat"]) / (TE[i] - TE[i - 1])),
                       np.median((b_.loc[com, "lon"] - a.loc[com, "lon"]) / (TE[i] - TE[i - 1]))]
-    vel[0] = vel[1]
+    vel[0] = vel[1] if nt > 1 else 0
+    # LOTE (Codex G3, error 4): velocidad POR CELDA (entre su frame anterior y el actual). Si la celda recién
+    # nace no tiene velocidad propia: se usa la mediana de la escena en ese frame (Codex usaba 0; decisión del lote).
+    vel_c = {}
+    for i in range(1, nt):
+        a = df[df.frame == i - 1].set_index("cell"); b_ = df[df.frame == i].set_index("cell")
+        if TE[i] > TE[i - 1]:
+            for c in a.index.intersection(b_.index):
+                vel_c[(i, int(c))] = ((b_.loc[c, "lat"] - a.loc[c, "lat"]) / (TE[i] - TE[i - 1]),
+                                      (b_.loc[c, "lon"] - a.loc[c, "lon"]) / (TE[i] - TE[i - 1]))
+    velo = lambda i, c: vel_c.get((i, int(c)), (vel[i, 0], vel[i, 1]))
     from scipy.spatial import cKDTree
     k_frame = np.searchsorted((TE[1:] + TE[:-1]) / 2, F[:, 0])  # frame ABI más cercano en el tiempo
     cel_f = np.zeros(len(F), "i4")
@@ -458,15 +568,21 @@ def seguir(caso):
         if not len(sel) or not m.any():
             continue
         dtf = F[sel, 0] - TE[i]
-        fla = F[sel, 1] - vel[i, 0] * dtf; flo = F[sel, 2] - vel[i, 1] * dtf
-        tree = cKDTree(np.c_[latc[m] * 111.2, lonc[m] * 111.2 * coslat])
-        d, j = tree.query(np.c_[fla * 111.2, flo * 111.2 * coslat], distance_upper_bound=R_GLM)
-        hit = np.isfinite(d)
-        cel_f[sel[hit]] = MC[i][m][j[hit]]
+        mejor = np.full(len(sel), np.inf)
+        for c in np.unique(MC[i][m]):  # asignación EXCLUSIVA: cada destello va a la celda más cercana (empate: menor id)
+            cm = MC[i] == c
+            vla, vlo = velo(i, c)
+            tree = cKDTree(np.c_[latc[cm] * 111.2, lonc[cm] * 111.2 * coslat])
+            d, _ = tree.query(np.c_[(F[sel, 1] - vla * dtf) * 111.2, (F[sel, 2] - vlo * dtf) * 111.2 * coslat],
+                              distance_upper_bound=R_GLM)
+            hit = d < mejor
+            mejor[hit] = d[hit]
+            cel_f[sel[hit]] = c
     # cobertura GLM por minuto (3 archivos de 20 s = minuto completo)
     m0 = math.floor(C["t0"].timestamp() / 60) * 60
     nmin = int((C["t1"].timestamp() - m0) // 60)
     cub = np.zeros(nmin, int)
+    tarch = np.unique(np.floor(tarch / 20) * 20)  # LOTE (Codex G3): un archivo por período de 20 s
     ia = ((tarch - m0) // 60).astype(int)
     np.add.at(cub, ia[(ia >= 0) & (ia < nmin)], 1)
     minutos = m0 + 60 * np.arange(nmin)
@@ -481,23 +597,31 @@ def seguir(caso):
         bl2 = bloq[:n2 * 2].reshape(n2, 2).any(1)
         dfr = np.r_[np.nan, np.diff(tr2)] / 2.0               # DFRDT, destellos/min²
         sig = np.full(n2, np.nan); salto = np.zeros(n2, bool); bloqueado = np.zeros(n2, bool)
+        # LOTE (Codex G3, error 3): la historia usada son 7 períodos de 2 min = 14 min (tr2[k-6..k]):
+        # 5 DFRDT previas + la actual. El bloqueo cubre esa historia entera (k-6..k), no k-5..k.
         for k in range(6, n2):
             ven = dfr[k - 5:k]                                # los 5 períodos previos (10 min), sin el actual
             if np.isnan(ven).any() or np.isnan(dfr[k]):
                 continue
-            if bl2[k - 5:k + 1].any():
+            if bl2[k - 6:k + 1].any():
                 bloqueado[k] = True; continue
-            sig[k] = np.std(ven)
-            if tr2[k] >= SALTO_TASA_MIN and sig[k] > 0 and dfr[k] > 2 * sig[k]:
+            sig[k] = np.std(ven, ddof=SIGMA_DDOF)
+            # activación ESTRICTA (> 10/min). Se conserva sig > 0 del original: con historia plana no hay salto.
+            if tr2[k] > SALTO_TASA_MIN and sig[k] > 0 and dfr[k] > 2 * sig[k]:
                 salto[k] = True
-        # episodios: el salto termina cuando DFRDT ≤ 0, salvo que otro salto llegue a ≤ 6 min del anterior
+        # episodios: empiezan con un salto; terminan cuando DFRDT < 0 o cuando el período no es evaluable.
+        # Un salto a ≤ 6 min del INICIO del episodio anterior no abre otro (agrupación desde el inicio).
         ep, ult, dentro = [], None, False
         for k in range(n2):
-            if salto[k]:
-                if not dentro and (ult is None or t2[k] - ult > 360):
+            if not np.isfinite(sig[k]) or not np.isfinite(dfr[k]) or bloqueado[k]:
+                dentro = False
+                continue
+            if salto[k] and not dentro:
+                if ult is None or t2[k] - ult > 360:
                     ep.append(k)
-                dentro, ult = True, t2[k]
-            elif not (dfr[k] > 0):
+                    ult = t2[k]
+                dentro = True
+            elif dfr[k] < 0:
                 dentro = False
         return dict(tr2=tr2, dfr=dfr, sig=sig, salto=salto, bloq=bloqueado, ep=ep)
 
@@ -540,7 +664,7 @@ def seguir(caso):
             for k in SS["ep"]:
                 saltos.append(dict(cell=int(c), version=nombre, t=float(t2[k]), tasa=float(SS["tr2"][k]),
                                    dfr=float(SS["dfr"][k]), sig=float(SS["sig"][k])))
-        series[int(c)] = dict(fr_min=fr_min, tr2=S1["tr2"], t2=t2, dfr=S1["dfr"], sig=S1["sig"], bloq=S1["bloq"],
+        series[int(c)] = dict(fr_min=fr_min, vivo=vivo, tr2=S1["tr2"], t2=t2, dfr=S1["dfr"], sig=S1["sig"], bloq=S1["bloq"],
                               fr_lin=fl, tr2_lin=SL["tr2"], dfr_lin=SL["dfr"], sig_lin=SL["sig"], bloq_lin=SL["bloq"])
         ep = S1["ep"]
         btm = d_.btmin.values; tt = d_.t.values
@@ -567,18 +691,29 @@ def seguir(caso):
                             lat1=float(d_.lat.values[-1]), lon1=float(d_.lon.values[-1])))
     # ---------- salto 2σ por FAMILIA (tobac MEST): la suma de destellos de todas las celdas de la familia.
     # Dentro de la familia una fusión no suma destellos «de afuera», así que no hace falta bloquear.
-    fam_series = {}
-    for c, s_ in series.items():
-        f_ = cel2fam.get(c, -c)
-        x = s_["fr_min"]
-        if f_ not in fam_series:
-            fam_series[f_] = np.full(nmin, np.nan)
-        y = fam_series[f_]
-        fam_series[f_] = np.where(np.isnan(y), x, np.where(np.isnan(x), y, y + x))
+    # LOTE (Codex G3, error 5): la suma de un grupo vale sólo en los minutos en que TODAS las celdas vivas del
+    # grupo tienen GLM completo. Si a una le falta el dato, el minuto del grupo es hueco (NaN), nunca una suma parcial.
+    def agregar(grupos):
+        sal, cobert = {}, {}
+        for g_, miembros in grupos.items():
+            val = np.stack([series[c]["fr_min"] for c in miembros])
+            viv = np.stack([series[c]["vivo"] for c in miembros])
+            incompleto = (viv & ~np.isfinite(val)).any(axis=0)
+            s_ = np.nansum(val, axis=0)
+            s_[incompleto | ~viv.any(axis=0)] = np.nan
+            sal[g_] = s_
+            cobert[g_] = dict(min_vivos=int(viv.any(axis=0).sum()), min_incompletos=int((incompleto & viv.any(axis=0)).sum()))
+        return sal, cobert
+    grupos_fam = {}
+    for c in series:
+        grupos_fam.setdefault(cel2fam.get(c, -c), []).append(c)
+    fam_series, fam_cob = agregar(grupos_fam)
     fam_saltos = {}
     for f_, x in fam_series.items():
         SF = salto_2s(x, np.zeros(nmin, bool))
         fam_saltos[f_] = SF
+        if not mest_ok:  # sin MEST no hay familias reales: no se emiten saltos «familia»
+            continue
         for k in SF["ep"]:
             saltos.append(dict(cell=-int(f_), version="familia", t=float(t2[k]), tasa=float(SF["tr2"][k]),
                                dfr=float(SF["dfr"][k]), sig=float(SF["sig"][k])))
@@ -594,11 +729,10 @@ def seguir(caso):
             raiz[buscar(c)] = buscar(u)
     for c in padre:
         raiz[buscar(c)] = buscar(padre[c][0])
-    sis_series = {}
-    for c, s_ in series.items():
-        f_ = buscar(c); x = s_["fr_min"]
-        y = sis_series.get(f_, np.full(nmin, np.nan))
-        sis_series[f_] = np.where(np.isnan(y), x, np.where(np.isnan(x), y, y + x))
+    grupos_sis = {}
+    for c in series:
+        grupos_sis.setdefault(buscar(c), []).append(c)
+    sis_series, sis_cob = agregar(grupos_sis)  # LOTE (Codex G3, error 5)
     sis_saltos = {}
     for f_, x in sis_series.items():
         SF = salto_2s(x, np.zeros(nmin, bool)); sis_saltos[f_] = SF
@@ -613,20 +747,23 @@ def seguir(caso):
         r_["familia"] = int(f_)
         r_["n_celdas_familia"] = sum(1 for v in cel2fam.values() if v == f_) or 1
         # episodios de la familia mientras vive esta celda
-        r_["n_saltos_familia"] = sum(1 for k in fam_saltos[f_]["ep"] if r_["t_ini"] - 300 <= t2[k] <= r_["t_fin"] + 600)
+        r_["n_saltos_familia"] = sum(1 for k in fam_saltos[f_]["ep"] if r_["t_ini"] - 300 <= t2[k] <= r_["t_fin"] + 600) if mest_ok else np.nan
+        # LOTE (Codex G3, error 5): cobertura del grupo marcada
+        r_["fam_min_vivos"], r_["fam_min_incompletos"] = fam_cob[f_]["min_vivos"], fam_cob[f_]["min_incompletos"]
+        r_["sis_min_vivos"], r_["sis_min_incompletos"] = sis_cob[s_]["min_vivos"], sis_cob[s_]["min_incompletos"]
     R = pd.DataFrame(resumen)
     S = pd.DataFrame(saltos)
     out = os.path.join(DATOS, caso)
     # ---------- atributos por celda y frame con los NOMBRES de ProbSevere v3 (jlc248/ProbSevere_v3_paper_2024)
     # Equivalencias aproximadas (ver INFORME.md): no son el mismo cálculo que en ProbSevere.
     atr = []
-    pix_cel = {}
-    for i in range(nt):
-        for c in np.unique(MC[i]):
-            if c:
-                m = MC[i] == c
-                pix_cel[(i, int(c))] = (np.c_[latc[m] * 111.2, lonc[m] * 111.2 * coslat], m)
-    for (i, c), (xy, m) in pix_cel.items():
+    def pixeles():  # LOTE (Codex G3, error 6): generador; ya no se guarda una máscara por celda y frame
+        for i in range(nt):
+            for c in np.unique(MC[i]):
+                if c > 0:
+                    m = MC[i] == c
+                    yield (i, int(c)), (np.c_[latc[m] * 111.2, lonc[m] * 111.2 * coslat], m)
+    for (i, c), (xy, m) in pixeles():
         sel = np.where((cel_f == c) & (F[:, 0] >= TE[i] - 300) & (F[:, 0] < TE[i]))[0]  # 5 min previos
         fila = dict(cell=c, frame=i, dts=dt.datetime.fromtimestamp(TE[i], UTC).strftime("%Y-%m-%d %H:%M:%S"),
                     size=int(m.sum()), area_km2=float(apx[m].sum()))
@@ -636,15 +773,25 @@ def seguir(caso):
             fila.update(max_fcd=vacio, max_fed=vacio, accum_fcd=vacio, avg_flash_area=np.nan, accum_total_energy=vacio)
         else:
             dtf = F[sel, 0] - TE[i]
-            q = np.c_[(F[sel, 1] - vel[i, 0] * dtf) * 111.2, (F[sel, 2] - vel[i, 1] * dtf) * 111.2 * coslat]
+            vla, vlo = velo(i, c)  # LOTE (Codex G3, error 4): velocidad de la celda
+            q = np.c_[(F[sel, 1] - vla * dtf) * 111.2, (F[sel, 2] - vlo * dtf) * 111.2 * coslat]
             tr_ = cKDTree(xy)
             _, j = tr_.query(q)
             fcd = np.bincount(j, minlength=len(xy))
             fed = np.zeros(len(xy))
-            for p, a_ in zip(q, F[sel, 4]):   # disco del área del destello alrededor del centroide (aprox. FED)
-                fed[tr_.query_ball_point(p, max(math.sqrt(a_ / math.pi), 1.2))] += 1
+            for p, a_ in zip(q, F[sel, 4]):   # disco del área del destello alrededor del centroide: APROXIMACIÓN, no FED observado
+                if np.isfinite(a_) and a_ >= 0:
+                    fed[tr_.query_ball_point(p, max(math.sqrt(a_ / math.pi), 1.2))] += 1
+            if not np.isfinite(F[sel, 4]).all():
+                fed[:] = np.nan
             fila.update(max_fcd=float(fcd.max()), max_fed=float(fed.max()), accum_fcd=float(len(sel)),
-                        avg_flash_area=float(F[sel, 4].mean()), accum_total_energy=float(F[sel, 5].sum()))
+                        avg_flash_area=float(np.nanmean(F[sel, 4])) if np.isfinite(F[sel, 4]).any() else np.nan,
+                        accum_total_energy=float(F[sel, 5].sum()))
+            # LOTE (Codex G3): con GLM incompleto en los 5 min previos, los rayos del frame son hueco, no un valor
+            lo5 = int(math.floor((TE[i] - 300 - m0) / 60)); hi5 = int(math.ceil((TE[i] - m0) / 60))
+            if lo5 < 0 or hi5 > nmin or not (cub[lo5:hi5] >= 3).all():
+                for col in ("max_fcd", "max_fed", "accum_fcd", "avg_flash_area", "accum_total_energy"):
+                    fila[col] = np.nan
         atr.append(fila)
     A = pd.DataFrame(atr).sort_values(["cell", "frame"])
     A = A.merge(df[["cell", "frame", "btmin", "a50", "a60", "lat", "lon"]], on=["cell", "frame"], how="left")
@@ -698,6 +845,14 @@ def seguir(caso):
                 glm_archivos=int(len(tarch)), glm_esperados=int(g["esperados"]), glm_fallidos=int(len(g["faltan"])),
                 minutos_glm_incompletos=int((cub < 3).sum()), n_fusiones=sum(1 for e in ev if e[1] == "fusión"),
                 n_divisiones=sum(1 for e in ev if e[1] == "división"))
+    # LOTE: decisiones y aproximaciones declaradas (Codex G3: documentar, no son errores)
+    meta.update(version_lote=2, frames_con_abi=int(np.isfinite(B).any(axis=(1, 2)).sum()), mest_ok=mest_ok,
+                sigma_ddof=SIGMA_DDOF, salto_historia_min=14, salto_activacion="tasa > %g/min (LMA, sin recalibrar para GLM)" % SALTO_TASA_MIN,
+                paralaje_metodo="esférico, tope fijo a %g km (aproximado)" % H_TOPE,
+                glm_elipsoide="el de GLM-16/17; no certificado para GLM-19", glm_calidad="todas las banderas no faltantes",
+                fed="aproximación: disco del área del destello, NO es el FED observado",
+                rayos_asignacion="exclusiva, velocidad por celda (mediana de escena si la celda recién nace)",
+                causal=False)
     json.dump(meta, open(os.path.join(out, "meta.json"), "w"), indent=1)
     print(json.dumps(meta, indent=1))
 

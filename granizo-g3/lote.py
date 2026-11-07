@@ -91,10 +91,17 @@ def cargar_catalogo(ep):
 # ------------------------------------------------------------------ cobertura
 def cobertura(out, t0, t1):
     fs = sorted(glob.glob(os.path.join(out, "abi", "*.npz")))
-    te = np.array([float(np.load(f)["te"]) for f in fs])
     ts = np.array([float(np.load(f)["ts"]) for f in fs])
+    # frame = índice en la grilla regular de 10 min desde t0 (igual que analisis_g3.cargar_abi, con huecos)
+    nt = int((t1 - t0) // 600)
+    te = t0 + 600 * np.arange(nt) + 600.0  # relleno para los huecos (ahí no hay celdas)
+    for f in fs:
+        z = np.load(f)
+        i = int((float(z["ts"]) - t0) // 600)
+        if 0 <= i < nt:
+            te[i] = float(z["te"])
     g = np.load(os.path.join(out, "glm.npz"))
-    ga = g["archivos"]
+    ga = np.unique(np.floor(g["archivos"] / 20) * 20)
     hs = list(range(hora_floor(t0), int(t1), 3600))
     cob = {}
     for h in hs:
