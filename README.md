@@ -12,3 +12,5 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | colector-imerg | diario | NASA IMERG-Late (lluvia satelital), con token de Earthdata |
 
 Los registros de cada corrida muestran sólo cantidades.
+
+**Corridas a mano (sin schedule):** `granizo-lc/` corre LightningCast (GPL-3.0, se instala del GitLab oficial en cada corrida; no está en este repo) sobre episodios de granizo, para investigación. Ver `granizo-lc/LEEME.md`.

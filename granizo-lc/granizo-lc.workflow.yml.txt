@@ -1,0 +1,112 @@
+# HN AGRO · SATCHI Granizo G3b en lote: LightningCast (probabilidad de RAYO en 60 min) sobre los
+# episodios de la lista sellada, contra el primer rayo GLM y la hora del granizo.
+# Va en .github/workflows/granizo-lightningcast.yml (este .txt existe porque el token que lo subió
+# no tiene permiso `workflow`). SÓLO a mano (workflow_dispatch): no tiene schedule.
+# LightningCast (GPL-3.0) NO está en este repo: instalar_lc.sh lo baja del GitLab oficial al correr,
+# con la versión fijada. Ver granizo-lc/LEEME.md.
+name: granizo-lightningcast
+on:
+  workflow_dispatch:
+    inputs:
+      episodios:
+        description: "Episodios AAAA-MM-DD separados por coma, o 'todos' (los 42 de la lista sellada)"
+        required: true
+        default: "2026-11-03"
+      paso_min:
+        description: "Minutos entre barridos (10 = todos los full disk; 20 = la mitad)"
+        required: true
+        default: "10"
+        type: choice
+        options: ["10", "20", "30"]
+      horas:
+        description: "Ventana UTC opcional dentro del episodio, p. ej. 15-23 o 18-06 (vacío = 12Z a 12Z)"
+        required: false
+        default: ""
+      guardar_netcdf:
+        description: "Guardar las grillas de probabilidad de LightningCast en el artefacto"
+        required: true
+        default: true
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: granizo-lightningcast
+  cancel-in-progress: false
+jobs:
+  lista:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matriz: ${{ steps.m.outputs.matriz }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        env:
+          EPISODIOS: ${{ inputs.episodios }}
+        run: python3 granizo-lc/matriz.py "$EPISODIOS" >> "$GITHUB_OUTPUT"
+
+  episodio:
+    needs: lista
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    strategy:
+      fail-fast: false
+      max-parallel: 2          # NOAA de a 2 pedidos: cada job baja de a un archivo por vez
+      matrix:
+        episodio: ${{ fromJSON(needs.lista.outputs.matriz) }}
+    env:
+      EPISODIO: ${{ matrix.episodio }}
+      PASO: ${{ inputs.paso_min }}
+      HORAS: ${{ inputs.horas }}
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Instalar LightningCast (GPL-3.0, del GitLab oficial, versión fijada)
+        run: bash granizo-lc/instalar_lc.sh "$RUNNER_TEMP/lc"
+      - name: Entorno del análisis (aparte)
+        run: |
+          uv venv -q -p 3.10 "$RUNNER_TEMP/hn"
+          uv pip install -q -p "$RUNNER_TEMP/hn/bin/python" "numpy<2" pandas xarray netCDF4 pyproj matplotlib
+      - name: Bajar ABI/GLM y correr LightningCast
+        run: |
+          "$RUNNER_TEMP/hn/bin/python" granizo-lc/correr_episodio.py --episodio "$EPISODIO" \
+            --salida "out/lc-$EPISODIO" --lc-python "$RUNNER_TEMP/lc/venv/bin/python" \
+            --paso "$PASO" --horas "$HORAS"
+          cp "$RUNNER_TEMP/lc/lc_version.json" "$RUNNER_TEMP/lc/lc_freeze.txt" "out/lc-$EPISODIO/"
+      - name: Analizar
+        if: always()
+        run: |
+          "$RUNNER_TEMP/hn/bin/python" granizo-lc/analizar_lote.py --corrida "out/lc-$EPISODIO" \
+            --puntos granizo-lc/episodios_lote.csv --episodio "$EPISODIO" --paso "$PASO"
+      - name: Sin grillas
+        if: ${{ always() && !inputs.guardar_netcdf }}
+        run: rm -rf "out/lc-$EPISODIO/netcdf"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lc-${{ matrix.episodio }}
+          path: out/lc-${{ matrix.episodio }}
+          retention-days: 30
+          if-no-files-found: warn
+
+  juntar:
+    needs: episodio
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lc-*
+          path: lote
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/j"
+          "$RUNNER_TEMP/j/bin/pip" install -q pandas
+          "$RUNNER_TEMP/j/bin/python" granizo-lc/juntar.py lote lote-resumen
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lc-lote-resumen
+          path: lote-resumen
+          retention-days: 30
