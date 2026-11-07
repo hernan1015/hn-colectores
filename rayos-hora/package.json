@@ -1,0 +1,14 @@
+{
+  "name": "hn-colector-rayos-hora",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · caché horaria de rayos GLM (GOES) recortada a la Argentina, en R2",
+  "scripts": {
+    "colectar": "node rayos-hora.mjs",
+    "test": "node --test test/rayos-hora.test.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "h5wasm": "0.10.3"
+  }
+}

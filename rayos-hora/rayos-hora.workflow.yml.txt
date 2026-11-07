@@ -1,0 +1,39 @@
+# HN AGRO · caché horaria de rayos GLM (GOES) recortada a la Argentina, en R2. Ver rayos-hora/LEEME.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/rayos-hora.yml (el token con el que se armó la rama no
+# tiene permiso «workflow», por eso viene como .txt).
+# El horario está COMENTADO a propósito: primero una corrida a mano (Actions → colector-rayos-hora → Run workflow).
+# Relleno bajo pedido: Run workflow con desde/hasta (UTC). Sin desde/hasta: se pone al día con las últimas 48 h.
+name: colector-rayos-hora
+on:
+  # schedule:
+  #   - cron: '23 * * * *'   # minuto 23: la hora anterior ya cerró (margen de 15 min) y lejos de la hora en punto
+  workflow_dispatch:
+    inputs:
+      desde: { description: 'UTC, AAAA-MM-DD o AAAA-MM-DDTHH (vacío = últimas 48 h)', required: false, default: '' }
+      hasta: { description: 'UTC, AAAA-MM-DD o AAAA-MM-DDTHH (vacío = última hora cerrada)', required: false, default: '' }
+      max_horas: { description: 'tope de horas por corrida (48; hasta 200)', required: false, default: '48' }
+permissions:
+  contents: read
+concurrency:
+  group: colector-rayos-hora
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45          # el candado en R2 vence a los 50 min: nunca queda trabado por una corrida muerta
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix rayos-hora --no-audit --no-fund
+      - name: Colectar
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DESDE: ${{ inputs.desde }}
+          HASTA: ${{ inputs.hasta }}
+          MAX_HORAS: ${{ inputs.max_horas }}
+        run: node rayos-hora/rayos-hora.mjs
