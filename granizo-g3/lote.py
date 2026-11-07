@@ -8,9 +8,13 @@ SATCHI Granizo · G3 en lote: un episodio (día convectivo 12-12 UTC) por corrid
    del bucket público de NOAA en AWS: noaa-goes16 hasta el 6/4/2025, noaa-goes19 desde el 7/4/2025.
    Como mucho 2 pedidos simultáneos.
 2. Corre el seguimiento de la etapa 3 (analisis_g3.py: tobac + paralaje + rayos por celda + salto 2σ).
-3. Evalúa contra el catálogo G1 (catalogo_lote.csv) con el contrato G0: celda 25 km × hora UTC, 8 vecinas,
-   evento ±1 h, señal acierta en [emisión disponible, vencimiento + 1 h], faltantes ≠ cero, FAR sólo con
-   ausencia observada. Sólo CONTEOS: ningún porcentaje ni probabilidad de granizo.
+3. Escribe, SIN etiquetas: atributos, saltos, señales provisorias por celda (senales_provisorias.csv) y la
+   cobertura por hora (cobertura.json). En Actions no hay catálogo: no se evalúa nada.
+4. Sólo del lado privado (G4), con --catalogo CSV (o --solo-evaluar DIR sobre una salida ya bajada): cruza con
+   el catálogo según el contrato G0 (celda 25 km × hora UTC, 8 vecinas, evento ±1 h, señal acierta en
+   [emisión disponible, vencimiento + 1 h], faltantes ≠ cero, FAR sólo con ausencia observada) y escribe
+   evaluacion.json. Sólo CONTEOS: ningún porcentaje ni probabilidad de granizo.
+   python -P lote.py <AAAA-MM-DD> --solo-evaluar <carpeta del episodio> --catalogo <catálogo privado>.csv
 
 --horas HH-HH recorta la ventana (prueba corta): p. ej. 20-21 corre de 20 a 21 UTC del día del episodio
 (horas < 12 caen en el día siguiente, como en el episodio).
@@ -43,6 +47,7 @@ SEN = dict(
 # Una hora es «sin datos» si le faltan demasiados archivos (contrato §6: faltante ≠ cero)
 MIN_ABI_HORA = 4      # de 6 imágenes
 MIN_GLM_HORA = 150    # de 180 archivos de 20 s
+CATALOGO = ""         # ruta al catálogo PRIVADO (--catalogo); el repo público no lo trae
 
 
 def celda_de(lat, lon):
@@ -75,7 +80,7 @@ def t_iso(s):
 # ------------------------------------------------------------------ catálogo
 def cargar_catalogo(ep):
     import pandas as pd
-    c = pd.read_csv(os.path.join(AQUI, "catalogo_lote.csv"), dtype=str).fillna("")
+    c = pd.read_csv(CATALOGO, dtype=str).fillna("")
     c = c[c.episodio == ep].copy()
     ini, fin = [], []
     for r in c.itertuples():
@@ -270,9 +275,38 @@ def centro(ix, iy):
     return lat, lon
 
 
-def evaluar(ep, out, t0, t1, tipo_ep, ventana_recortada):
-    import pandas as pd
+def guardar_cobertura(out, dest, t0, t1):
+    """Sin etiquetas: hora efectiva de cada frame y archivos ABI/GLM por hora. Con esto se evalúa después."""
     te, cob = cobertura(out, t0, t1)
+    json.dump(dict(t0=t0, t1=t1, te=[float(x) for x in te], regla_sin_datos=dict(min_abi_por_hora=MIN_ABI_HORA, min_glm_por_hora=MIN_GLM_HORA),
+                   por_hora={str(h): v for h, v in cob.items()}),
+              open(os.path.join(dest, "cobertura.json"), "w"), indent=1)
+
+
+def leer_cobertura(dest):
+    z = json.load(open(os.path.join(dest, "cobertura.json")))
+    return z["t0"], z["t1"], np.array(z["te"]), {int(h): v for h, v in z["por_hora"].items()}
+
+
+def guardar_señales(dest):
+    """Señales PROVISORIAS por celda (sin etiquetas): tipo, celda tobac, emisión, vencimiento, celda de grilla."""
+    import pandas as pd
+    t0, t1, te, cob = leer_cobertura(dest)
+    I = instancias(dest, te)
+    pd.DataFrame([dict(tipo=x["tipo"], cell=x["cell"], emision_utc=iso(x["t"]), vence_utc=iso(x["v"]),
+                       celda=cid(x["ix"], x["iy"]), valor=x["valor"]) for x in I],
+                 columns=["tipo", "cell", "emision_utc", "vence_utc", "celda", "valor"]).to_csv(
+        os.path.join(dest, "senales_provisorias.csv"), index=False)
+    return len(I)
+
+
+def evaluar(ep, dest, catalogo, tipo_ep="", ventana_recortada=False):
+    """Cruce con el catálogo (lado PRIVADO, G4): usa sólo los archivos de la salida del episodio."""
+    import pandas as pd
+    global CATALOGO
+    CATALOGO = catalogo
+    t0, t1, te, cob = leer_cobertura(dest)
+    out = dest
     cat = cargar_catalogo(ep)
     cat = cat[(cat.fin >= t0 - 3600) & (cat.ini <= t1 + 3600)]  # sólo lo que toca la ventana corrida
     ins = instancias(out, te)
@@ -304,8 +338,18 @@ def main():
     ap.add_argument("--horas", default="")
     ap.add_argument("--salida", default=os.path.join(AQUI, "salida"))
     ap.add_argument("--tipo", default="")
+    ap.add_argument("--catalogo", default="", help="CSV del catálogo (privado). Sin él NO se evalúa.")
+    ap.add_argument("--solo-evaluar", default="", help="carpeta de salida ya hecha de un episodio: sólo cruza con --catalogo")
     a = ap.parse_args()
     ep = a.episodio
+    if a.solo_evaluar:  # lado privado: no baja nada de NOAA
+        if not a.catalogo:
+            sys.exit("--solo-evaluar necesita --catalogo")
+        ev = evaluar(ep, a.solo_evaluar, a.catalogo, a.tipo)
+        json.dump(ev, open(os.path.join(a.solo_evaluar, "evaluacion.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
+        for t, r in ev["por_señal"].items():
+            print(t, json.dumps(r["conteos"], ensure_ascii=False))
+        return
     d0 = dt.datetime.strptime(ep, "%Y-%m-%d").replace(tzinfo=UTC)
     t0, t1 = d0 + dt.timedelta(hours=12), d0 + dt.timedelta(hours=36)
     if a.horas:
@@ -323,22 +367,31 @@ def main():
     out = os.path.join(A.DATOS, ep)
     dest = os.path.join(a.salida, ep)
     os.makedirs(dest, exist_ok=True)
+    error = None
     try:
         A.seguir(ep)
-        ev = evaluar(ep, out, t0.timestamp(), t1.timestamp(), a.tipo, bool(a.horas))
-    except Exception as e:  # sin celdas, etc.: queda escrito, nunca como «sin señal»
+    except Exception as e:
         import traceback; traceback.print_exc()
-        ev = dict(episodio=ep, estado="error", error=repr(e), nota="sin evaluación: NO equivale a «sin señal»")
-    json.dump(ev, open(os.path.join(dest, "evaluacion.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
+        error = repr(e)
     for f in ("atributos_probsevere.csv", "saltos.csv", "celdas_resumen.csv", "celdas_frames.csv", "meta.json",
               "abi_log.json", "fusiones_divisiones.json"):
         p = os.path.join(out, f)
         if os.path.exists(p):
             shutil.copy(p, dest)
-    if ev.get("estado") == "error":
+    if error:  # queda escrito; nunca equivale a «sin señal»
+        json.dump(dict(episodio=ep, estado="error", error=error, nota="sin seguimiento: NO equivale a «sin señal»"),
+                  open(os.path.join(dest, "error.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         sys.exit(1)
-    for t, r in ev["por_señal"].items():
-        print(t, json.dumps(r["conteos"], ensure_ascii=False))
+    guardar_cobertura(out, dest, t0.timestamp(), t1.timestamp())
+    print("señales provisorias:", guardar_señales(dest))
+    # Sin catálogo (el caso de Actions): NO se evalúa. El cruce con las etiquetas se hace del lado privado (G4).
+    if a.catalogo:
+        ev = evaluar(ep, dest, a.catalogo, a.tipo, bool(a.horas))
+        json.dump(ev, open(os.path.join(dest, "evaluacion.json"), "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
+        for t, r in ev["por_señal"].items():
+            print(t, json.dumps(r["conteos"], ensure_ascii=False))
+    else:
+        print("sin catálogo: no se evalúa (atributos, saltos, señales y cobertura escritos)")
 
 
 if __name__ == "__main__":
