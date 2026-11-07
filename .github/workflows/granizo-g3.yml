@@ -1,0 +1,83 @@
+# HN AGRO · SATCHI Granizo · etapa 3 (G3) en lote: seguimiento de celdas ABI C13 + GLM de 20 s por episodio.
+# SÓLO a mano (Actions → granizo-g3 → Run workflow). Sin schedule. Ver granizo-g3/LEEME.md.
+# Para activarlo: copiar este archivo a .github/workflows/granizo-g3.yml (hace falta el permiso `workflow`).
+name: granizo-g3
+on:
+  workflow_dispatch:
+    inputs:
+      episodios:
+        description: 'AAAA-MM-DD separados por espacio, o «todos» (lista sellada granizo-g3/episodios.csv)'
+        required: true
+        default: 'todos'
+      horas:
+        description: 'Opcional, prueba corta: HH-HH UTC (p. ej. 20-21). Vacío = episodio entero 12-12 UTC'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: granizo-g3
+  cancel-in-progress: false
+jobs:
+  lista:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matriz: ${{ steps.m.outputs.matriz }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        env:
+          EPISODIOS: ${{ inputs.episodios }}
+        run: |
+          python3 - <<'EOF'
+          import os, re, json, csv
+          pedido = os.environ["EPISODIOS"].split()
+          lista = {r["episodio"]: r["tipo"] for r in csv.DictReader(open("granizo-g3/episodios.csv", encoding="utf-8"))}
+          eps = list(lista) if pedido == ["todos"] else pedido
+          for e in eps:
+              if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", e):
+                  raise SystemExit("episodio inválido: " + e)
+          m = [dict(episodio=e, tipo=lista.get(e, "fuera_de_lista")) for e in eps]
+          print("episodios:", len(m))
+          open(os.environ["GITHUB_OUTPUT"], "a").write("matriz=" + json.dumps(m) + "\n")
+          EOF
+  g3:
+    needs: lista
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 2          # 2 episodios a la vez × 1 pedido cada uno = como mucho 2 pedidos a NOAA
+      matrix:
+        ep: ${{ fromJSON(needs.lista.outputs.matriz) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Dependencias (todas BSD/MIT/Apache; tobac BSD-3, trackpy BSD-3)
+        run: pip install -q -r granizo-g3/requirements.txt
+      - name: Seguimiento y evaluación
+        env:
+          G3_HILOS: '1'
+          HORAS: ${{ inputs.horas }}
+          EP: ${{ matrix.ep.episodio }}
+          TIPO: ${{ matrix.ep.tipo }}
+        run: |
+          cd granizo-g3
+          if [ -n "$HORAS" ]; then
+            [[ "$HORAS" =~ ^[0-9]{1,2}-[0-9]{1,2}$ ]] || { echo "horas inválidas"; exit 1; }
+            python3 -P lote.py "$EP" --tipo "$TIPO" --salida "$RUNNER_TEMP/g3" --horas "$HORAS"
+          else
+            python3 -P lote.py "$EP" --tipo "$TIPO" --salida "$RUNNER_TEMP/g3"
+          fi
+      - name: Subir resultados (sin los datos intermedios)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g3-${{ matrix.ep.episodio }}
+          path: |
+            ${{ runner.temp }}/g3/${{ matrix.ep.episodio }}/
+          retention-days: 30
+          if-no-files-found: warn
