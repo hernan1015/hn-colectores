@@ -1,0 +1,19 @@
+HN AGRO · PROPUESTA (sin activar) · alternativa al Worker: el mismo disparo desde cron-job.org (gratis, por donaciones).
+
+Trabajo nuevo en cron-job.org (cuenta del maker; NO creada):
+  URL:      https://api.github.com/repos/hernan1015/hn-colectores/actions/workflows/colector.yml/dispatches
+  Método:   POST
+  Horario:  cada hora, minuto 7 (zona UTC)
+  Cabeceras:
+    Authorization: Bearer <GH_DISPATCH_TOKEN>      (fine-grained, sólo hn-colectores, «Actions: Read and write»)
+    Accept: application/vnd.github+json
+    X-GitHub-Api-Version: 2022-11-28
+    Content-Type: application/json
+  Cuerpo:   {"ref":"main"}
+  Éxito:    HTTP 204 (activar «avisar si falla» al mail del maker)
+
+Notas:
+- cron-job.org ignora la cabecera User-Agent (manda la suya, que GitHub acepta).
+- El token queda guardado en un servicio de terceros: por eso conviene el permiso mínimo (sólo Actions de
+  hn-colectores; con eso se pueden lanzar o cancelar corridas, no leer ni escribir el código ni los datos).
+- Preferible el Worker de Cloudflare si ya hay cuenta: el secreto queda cifrado y el log es propio.

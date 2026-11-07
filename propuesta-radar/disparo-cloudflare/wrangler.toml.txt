@@ -1,0 +1,8 @@
+# HN AGRO · PROPUESTA (sin activar). Renombrar a wrangler.toml y `wrangler deploy` SOLO con el OK de local.
+name = "hn-disparo-radar"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = false          # sin ruta pública: el Worker sólo corre por el cron
+
+[triggers]
+crons = ["7 * * * *"]        # minuto 7 de cada hora (UTC); el slot más nuevo ya publicado es el de ~20 min antes

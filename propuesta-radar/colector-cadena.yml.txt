@@ -1,0 +1,40 @@
+# HN AGRO · PROPUESTA (sin activar; va como .txt: el token de pc-nanci no tiene permiso `workflow`).
+# Opción C, sin secreto nuevo ni servicio externo: un job hace 5 pasadas de colectar.sh, una por hora, y al final
+# se vuelve a lanzar solo con workflow_dispatch (GitHub sí permite que GITHUB_TOKEN dispare workflow_dispatch).
+# Para activarla: copiar a .github/workflows/colector-cadena.yml en main, crear la variable del repo
+# RADAR_CADENA=si y lanzarla una vez a mano. Para frenarla: RADAR_CADENA=no (termina al final del eslabón).
+# Contras: ocupa un runner las 24 h (gratis en repo público, pero roza el uso «ajeno al proyecto» de los términos
+# de Actions) y, si un eslabón se corta, la retoma sólo el cron de respaldo de colector.yml si se le agrega
+# `gh workflow run colector-cadena.yml` (no incluido para no tocar el workflow que anda).
+name: colector-radar-cadena
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write          # sólo para lanzar el eslabón siguiente
+concurrency:
+  group: colector-radar-cadena
+  cancel-in-progress: false
+jobs:
+  colectar:
+    if: vars.RADAR_CADENA == 'si'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cinco pasadas, una por hora
+        env:
+          GH_TOKEN: ${{ secrets.RADAR_TOKEN }}        # permiso SÓLO para escribir en hn-radar (privado)
+          GH_REPO: hernan1015/hn-radar
+        run: |
+          for i in 1 2 3 4 5; do
+            bash colectar.sh || echo "pasada $i con error (sigue)"
+            [ $i = 5 ] && break
+            ahora=$(date +%s); prox=$(( (ahora / 3600 + 1) * 3600 + 420 ))   # próximo minuto 7
+            sleep $(( prox - ahora ))
+          done
+      - name: Eslabón siguiente
+        if: always() && vars.RADAR_CADENA == 'si'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run colector-cadena.yml --ref main -R "${{ github.repository }}"
