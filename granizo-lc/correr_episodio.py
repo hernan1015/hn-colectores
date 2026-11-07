@@ -90,14 +90,14 @@ def glm(horas, salida, falt):
             if not claves:
                 falt.add("glm", h, h + timedelta(hours=1), "hora sin archivos en %s" % b)
                 continue
-            # huecos: los archivos son de 20 s; más de 40 s entre inicios es un faltante
+            # huecos: los archivos son de 20 s; más de 30 s entre inicios es un faltante (falta al menos un archivo)
             inicios = [t_de_nombre(k) for k in claves]
-            if (inicios[0] - h).total_seconds() > 20:
+            if (inicios[0] - h).total_seconds() > 10:   # el primero arranca en HH:00:00
                 falt.add("glm", h, inicios[0], "hueco al inicio de la hora")
             for a, c in zip(inicios[:-1], inicios[1:]):
-                if (c - a).total_seconds() > 40:
+                if (c - a).total_seconds() > 30:   # 20 s entre inicios; 40 s = un archivo menos
                     falt.add("glm", a + timedelta(seconds=20), c, "hueco entre archivos de 20 s")
-            if (h + timedelta(hours=1) - inicios[-1]).total_seconds() > 40:
+            if (h + timedelta(hours=1) - inicios[-1]).total_seconds() > 30:
                 falt.add("glm", inicios[-1] + timedelta(seconds=20), h + timedelta(hours=1), "hueco al final de la hora")
             for k in claves:
                 try:
