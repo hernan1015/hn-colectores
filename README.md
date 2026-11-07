@@ -10,5 +10,6 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | colector-smap | diario | NASA SMAP L4, con token de Earthdata |
 | colector-lagunas | lunes | NASA SWOT (Hydrocron) |
 | colector-imerg | diario | NASA IMERG-Late (lluvia satelital), con token de Earthdata |
+| granizo-g3 | sólo a mano | NOAA GOES-16/19 ABI y GLM (buckets públicos); ver `granizo-g3/LEEME.md`. Salida: artefactos de la corrida |
 
 Los registros de cada corrida muestran sólo cantidades.

@@ -1,0 +1,43 @@
+episodio,tipo,eventos_o_horas
+2022-02-27,confirmado,C-20220227-01
+2022-11-09,confirmado,C-20221109-01
+2023-04-03,confirmado,C-20230403-01
+2023-05-25,confirmado,C-20230525-01
+2023-08-21,confirmado,C-20230821-01
+2023-10-29,confirmado,C-20231029-02
+2023-11-14,confirmado,C-20231114-01
+2024-01-01,confirmado,C-20240101-01
+2024-03-08,confirmado,C-20240308-01
+2024-11-06,confirmado,C-20241106-01
+2024-12-05,confirmado,C-20241205-01
+2025-02-04,confirmado,C-20250204-01
+2025-02-24,confirmado,C-20250224-01
+2025-03-27,confirmado,C-20250327-01
+2025-05-17,confirmado,C-20250517-01
+2025-08-01,confirmado,C-20250801-01
+2025-09-01,confirmado,C-20250901-01
+2025-10-04,confirmado,C-20251004-01 C-20251004-03
+2025-10-11,confirmado,C-20251011-01
+2025-12-11,confirmado,C-20251211-01
+2026-03-02,confirmado,C-20260302-01
+2026-05-06,confirmado,C-20260506-01
+2026-07-31,confirmado,C-20260731-01
+2026-08-26,confirmado,C-20260826-01
+2026-08-27,confirmado,C-20260827-01 C-20260827-02 C-20260827-03
+2026-10-07,confirmado,C-20261007-01
+2026-10-29,confirmado,C-20261029-01
+2026-11-03,confirmado,C-20261103-02 C-20261103-03 C-20261103-04
+2026-03-27,control_ausencia_alta,Rosario_Aero=5
+2026-04-01,control_ausencia_alta,Río_Cuarto_Aero=5 Rosario_Aero=7
+2026-04-02,control_ausencia_alta,Río_Cuarto_Aero=6
+2026-04-03,control_ausencia_alta,Río_Cuarto_Aero=6 Rosario_Aero=7
+2026-04-06,control_ausencia_alta,Rosario_Aero=5
+2026-04-25,control_ausencia_alta,Río_Cuarto_Aero=4 Rosario_Aero=2
+2026-06-18,control_ausencia_alta,Rosario_Aero=5
+2026-08-06,control_ausencia_alta,Rosario_Aero=4 Río_Cuarto_Aero=2
+2026-08-29,control_ausencia_alta,Río_Cuarto_Aero=6
+2026-09-09,control_ausencia_alta,Río_Cuarto_Aero=5
+2026-09-10,control_ausencia_alta,Río_Cuarto_Aero=5
+2026-09-11,control_ausencia_alta,Río_Cuarto_Aero=7
+2026-09-20,control_ausencia_alta,Rosario_Aero=11
+2026-10-02,control_ausencia_alta,Rosario_Aero=5

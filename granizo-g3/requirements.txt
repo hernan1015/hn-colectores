@@ -1,0 +1,13 @@
+# Licencias: tobac BSD-3 · trackpy BSD-3 · numpy/scipy/pandas/scikit-image/scikit-learn BSD · xarray Apache-2.0
+# h5py BSD · pyproj MIT · requests Apache-2.0 · matplotlib (PSF/BSD) · scitools-iris BSD-3 · cartopy BSD-3 (desde 0.23)
+tobac==1.6.4
+trackpy==0.7
+numpy
+scipy
+pandas
+xarray
+h5py
+pyproj
+requests
+scikit-image
+cartopy>=0.23
