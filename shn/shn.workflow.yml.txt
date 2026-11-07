@@ -1,0 +1,92 @@
+# HN AGRO · colector del SHN (alturas del Río de la Plata, modelo, pronóstico; uso interno). Ver shn/LEEME.md.
+# Va en .github/workflows/shn.yml (copiarlo tal cual desde shn/shn.workflow.yml.txt).
+# Los datos van a un depósito R2 PRIVADO (prefijo shn/); este repo es público y no guarda nada.
+# A mano: Actions → colector-shn → Run workflow (modo). «pruebas» corre los tests sin tocar R2 ni el SHN.
+name: colector-shn
+on:
+  # PROGRAMACIÓN APAGADA hasta cargar los secretos R2_* y probar una corrida a mano.
+  # Para activarla: sacar los «#» de las 7 líneas de abajo (horas en UTC; Argentina = UTC-3).
+  # Si se cambia una hora, cambiarla IGUAL en el paso «Elegir modo».
+  # schedule:
+  #   - cron: '23 0,6,12,18 * * *'   # horario, cada 6 h: 21:23, 03:23, 09:23, 15:23 ART
+  #   - cron: '47 11,23 * * *'       # modelo, 2 por día: 08:47 y 20:47 ART
+  #   - cron: '15 2,10,18 * * *'     # pronostico, 3 por día: 23:15, 07:15, 15:15 ART
+  #   - cron: '31 12 2 * *'          # referencia, día 2 de cada mes 09:31 ART
+  #   - cron: '53 12 * * *'          # chequeo, diario 09:53 ART
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'qué correr'
+        type: choice
+        options: [horario, modelo, pronostico, referencia, chequeo, pruebas]
+        default: horario
+      forzar:
+        description: 'pedir aunque haya un bloqueo anotado (429/403)'
+        type: boolean
+        default: false
+      estacion:
+        description: 'sólo horario/chequeo: estaciones separadas por coma (vacío = las 7)'
+        required: false
+        default: ''
+      maxatras:
+        description: 'sólo horario: horas hacia atrás como máximo (vacío = 72)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: colector-shn          # una corrida por vez, de cualquier modo
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Elegir modo
+        id: modo
+        env:
+          PROG: ${{ github.event.schedule }}
+          MANUAL: ${{ inputs.modo }}
+        run: |
+          case "$PROG" in
+            '23 0,6,12,18 * * *') m=horario ;;
+            '47 11,23 * * *')     m=modelo ;;
+            '15 2,10,18 * * *')   m=pronostico ;;
+            '31 12 2 * *')        m=referencia ;;
+            '53 12 * * *')        m=chequeo ;;
+            '')                   m="$MANUAL" ;;
+            *) echo "programación sin modo asignado: $PROG"; exit 1 ;;
+          esac
+          case "$m" in horario|modelo|pronostico|referencia|chequeo|pruebas) ;; *) echo "modo inválido: $m"; exit 1 ;; esac
+          echo "modo=$m" >> "$GITHUB_OUTPUT"
+      - name: Pruebas (sin R2 ni SHN)
+        if: steps.modo.outputs.modo == 'pruebas'
+        run: node --test "shn/test/*.test.mjs" && node shn/test/control-negativo.mjs
+      - name: Colectar
+        if: steps.modo.outputs.modo != 'pruebas'
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          MODO: ${{ steps.modo.outputs.modo }}
+          FORZAR: ${{ inputs.forzar }}
+          ESTACION: ${{ inputs.estacion }}
+          MAXATRAS: ${{ inputs.maxatras }}
+        run: |
+          set -u
+          extra=()
+          if [ "${FORZAR:-false}" = "true" ]; then extra+=(--forzar); fi
+          if [ -n "${ESTACION:-}" ]; then
+            [[ "$ESTACION" =~ ^[A-Z]{4}(,[A-Z]{4})*$ ]] || { echo "estación inválida"; exit 1; }
+            extra+=(--estacion "$ESTACION")
+          fi
+          if [ -n "${MAXATRAS:-}" ]; then
+            [[ "$MAXATRAS" =~ ^[0-9]{1,4}$ ]] || { echo "maxatras inválido"; exit 1; }
+            extra+=(--maxatras "$MAXATRAS")
+          fi
+          node shn/shn.mjs "$MODO" "${extra[@]}"

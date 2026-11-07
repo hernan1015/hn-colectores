@@ -10,5 +10,6 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | colector-smap | diario | NASA SMAP L4, con token de Earthdata |
 | colector-lagunas | lunes | NASA SWOT (Hydrocron) |
 | colector-imerg | diario | NASA IMERG-Late (lluvia satelital), con token de Earthdata |
+| colector-shn | cada 6 h y otros (ver shn/LEEME.md; programación todavía apagada) | SHN (alturas del Río de la Plata); los datos van a un depósito R2 privado |
 
 Los registros de cada corrida muestran sólo cantidades.
