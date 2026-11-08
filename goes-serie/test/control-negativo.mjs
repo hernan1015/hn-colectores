@@ -50,7 +50,7 @@ function correrCon(nombre, cambios) {
   fs.cpSync(path.join(RAIZ, 'lib'), path.join(DIR, 'lib'), { recursive: true });
   for (const [archivo, viejo, nuevo] of cambios) {
     const p = path.join(DIR, 'lib', archivo);
-    const txt = fs.readFileSync(p, 'utf8');
+    const txt = fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');      // un checkout con CRLF no rompe los mutantes de varias líneas
     const veces = txt.split(viejo).length - 1;
     if (veces !== 1) { fs.rmSync(DIR, { recursive: true, force: true }); throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces en ${archivo} (tiene que ser 1)`); }
     fs.writeFileSync(p, txt.replace(viejo, () => nuevo));
