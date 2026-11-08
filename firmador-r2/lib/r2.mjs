@@ -3,6 +3,7 @@
 // R2_BUCKET. Nunca se imprimen, y tampoco las URL firmadas (dan acceso al objeto por 7 días).
 import { firmar } from '../../rayos-hora/lib/almacen.mjs';
 import { presignGet, enc, MAX_EXPIRA } from './presign.mjs';
+import { errorCodigo } from './errores.mjs';
 
 const xmlTexto = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
@@ -20,11 +21,11 @@ export function leerPagina(xml) {
 }
 
 export function r2Firmador({ cuenta, clave, secreto, deposito, fetchFn = fetch, expira = MAX_EXPIRA } = {}) {
-  if (!cuenta || !clave || !secreto || !deposito) throw new Error('faltan R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET');
+  if (!cuenta || !clave || !secreto || !deposito) throw errorCodigo('faltan_secretos_r2');
   const host = `${cuenta}.r2.cloudflarestorage.com`;
   return {
     host,
-    /** → [{clave, bytes}] ordenadas; falla con HTTP xxx (sin URL ni llaves en el mensaje) */
+    /** → [{clave, bytes}] ordenadas; falla con un código fijo (r2_listar_http_NNN), sin URL ni llaves */
     async listar(prefijo) {
       const out = [];
       let token = null;
@@ -36,11 +37,11 @@ export function r2Firmador({ cuenta, clave, secreto, deposito, fetchFn = fetch, 
         delete h._firma;
         const qs = Object.keys(query).sort().map((x) => `${enc(x)}=${enc(query[x])}`).join('&');
         const r = await fetchFn(`https://${host}${ruta.split('/').map(enc).join('/')}?${qs}`, { method: 'GET', headers: h, signal: AbortSignal.timeout(60000) });
-        if (!r.ok) throw new Error(`R2 listar ${prefijo}: HTTP ${r.status}`);
+        if (!r.ok) throw errorCodigo('r2_listar_http_' + (Number.isInteger(r.status) ? r.status : 0));
         const p = leerPagina(await r.text());
         out.push(...p.objetos);
         if (!p.truncado) break;
-        if (!p.token) throw new Error(`R2 listar ${prefijo}: página truncada sin token`);
+        if (!p.token) throw errorCodigo('r2_listar_sin_token');
         token = p.token;
       }
       return out.sort((a, b) => (a.clave < b.clave ? -1 : a.clave > b.clave ? 1 : 0));

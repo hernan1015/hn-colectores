@@ -19,8 +19,8 @@ async function baseNueva() {
   const q = async (s, p) => { await db.exec('set role firmador_r2'); try { return await db.query(s, p); } finally { await db.exec('reset role'); } };
   return { db, upsert: (filas) => upsertEnlaces(q, filas) };
 }
-function armar({ objetos, porPagina = 1000, secretoCliente, ahoraR2 = AHORA.getTime() } = {}) {
-  const r2 = r2Falso({ objetos: objetos || depositoTipico(AHORA.getTime()), porPagina, ahora: () => ahoraR2 });
+function armar({ objetos, porPagina = 1000, secretoCliente, ahoraR2 = AHORA.getTime(), fallar = {} } = {}) {
+  const r2 = r2Falso({ objetos: objetos || depositoTipico(AHORA.getTime()), porPagina, ahora: () => ahoraR2, fallar });
   const cli = r2Firmador({ cuenta: r2.cuenta, clave: r2.clave, secreto: secretoCliente || r2.secreto, deposito: r2.deposito, fetchFn: r2.fetchFn });
   return { r2, cli };
 }
@@ -106,6 +106,7 @@ test('idempotente · dos corridas iguales dejan la misma tabla y ninguna fila nu
   await db.close();
 });
 
+
 test('lo que falta se dice, no se inventa (y lo que hay se escribe igual)', async () => {
   const { db, upsert } = await baseNueva();
   const objetos = depositoTipico(AHORA.getTime(), { horasRayos: 0, quitar: ['escenarios/parana.json', 'opera/cog/cuenca-del-plata/2026-09-10.tif'] });
@@ -115,25 +116,142 @@ test('lo que falta se dice, no se inventa (y lo que hay se escribe igual)', asyn
   assert.deepEqual(r.grupos.escenarios.faltan, ['escenarios/parana.json']);
   assert.deepEqual(r.grupos.opera.faltan, ['opera/cog/cuenca-del-plata/2026-09-10.tif']);
   assert.ok(r.grupos.opera.avisos.some((a) => /90 \(se esperaban 91\)/.test(a)));
-  assert.equal(r.grupos.rayos.faltan.length, 0);                         // las horas: aviso, no falla
-  assert.ok(r.grupos.rayos.avisos.some((a) => /72 de 72/.test(a)));
+  // 2.ª vuelta (arreglo 5): las horas de rayos que faltan SON faltantes, no un aviso
+  assert.equal(r.grupos.rayos.faltan.length, 72);
+  assert.equal(r.faltan, 1 + 1 + 72);
   const claves = (await filas(db)).map((f) => f.clave);
   assert.equal(claves.length, 1 + 3 + 1 + 90);
   assert.ok(!claves.includes('escenarios/parana.json'));
-  assert.match(resumenMd(r), /\*\*falta\*\* escenarios\/parana\.json/);
+  const md = resumenMd(r);
+  assert.match(md, /\*\*falta\*\* escenarios\/parana\.json/);
+  assert.match(md, /\*\*faltan 72 de 72 horas\*\* de rayos-hora/);
+  assert.match(md, /CON PROBLEMAS \(74 faltan, 0 errores\)/);
   await db.close();
 });
 
-test('sin rayos y todo lo demás bien → OK (la ventana vacía es aviso)', async () => {
+// ── 2.ª vuelta · arreglo 5: dado vuelta. Antes exigía «sin rayos → OK»; ahora sin rayos NO es OK ──
+test('sin rayos y todo lo demás bien → NO es OK: faltan 24 de 24 horas', async () => {
   const { db, upsert } = await baseNueva();
   const { r2, cli } = armar({ objetos: depositoTipico(AHORA.getTime(), { horasRayos: 0 }) });
   const r = await correr(dep(cli, r2, upsert), { ahora: AHORA, diasRayos: 1 });
-  assert.equal(r.codigo, 0);
+  assert.equal(r.ok, false);
+  assert.equal(r.codigo, 1);
   assert.equal(r.grupos.rayos.ventana, 24);
+  assert.equal(r.grupos.rayos.faltan.length, 24);
+  assert.equal(r.faltan, 24);
+  assert.doesNotMatch(resumenMd(r), / · OK$/m);
   await db.close();
 });
 
-// ── control negativo contado ──
+test('control negativo · rayos: cada hora que falta se cuenta (contado)', async () => {
+  const fin = Math.floor(AHORA.getTime() / 3600e3) * 3600e3;
+  const sacar = [1, 5, 30, 72].map((i) => CLAVES_FUNCTIONS.rayos(fin - i * 3600e3));
+  const { db, upsert } = await baseNueva();
+  const { r2, cli } = armar({ objetos: depositoTipico(AHORA.getTime(), { quitar: sacar }) });
+  const r = await correr(dep(cli, r2, upsert), { ahora: AHORA });
+  assert.deepEqual([...r.grupos.rayos.faltan].sort(), [...sacar].sort());
+  assert.equal(r.faltan, sacar.length);
+  assert.equal(r.codigo, 1);
+  assert.equal(r.grupos.rayos.verificados, 72 - sacar.length);
+  await db.close();
+});
+
+// ── 2.ª vuelta · arreglo 4: cada objeto se verifica uno por uno; con UN solo objeto fallido ──
+const PC = 'https://pc/bueno';
+async function unoFalla(clave, modo, { objetos } = {}) {
+  const { db, upsert } = await baseNueva();
+  await db.query("insert into public.r2_enlaces (clave, url, vence) values ($1, $2, '2026-11-14T05:15:00Z')", [clave, PC]);
+  const { r2, cli } = armar({ objetos, fallar: modo ? { [clave]: modo } : {} });
+  const r = await correr(dep(cli, r2, upsert), { ahora: AHORA });
+  const F = await filas(db);
+  await db.close();
+  return { r, F, por: Object.fromEntries(F.map((f) => [f.clave, f])) };
+}
+const NO_JSON = (k) => { const o = depositoTipico(AHORA.getTime()); o[k] = '{ esto no es json'; return o; };
+const CASOS_UNO = [
+  ['JSON inválido (escenarios/brasil.json)', 'escenarios/brasil.json', null, NO_JSON('escenarios/brasil.json')],
+  ['JSON inválido (opera/cog/pasadas.json)', 'opera/cog/pasadas.json', null, NO_JSON('opera/cog/pasadas.json')],
+  ['cuerpo cortado (tormentas)', 'tormentas/proyeccion_tormentas.json', 'cuerpo'],
+  ['403 en un solo mosaico, no el primero', 'opera/cog/cuenca-del-plata/2026-09-10.tif', 'http403'],
+  ['cuerpo cortado en un mosaico', 'opera/cog/cuenca-del-plata/2026-10-25.tif', 'cuerpo'],
+  ['500 en una sola hora de rayos, no la primera', CLAVES_FUNCTIONS.rayos(Math.floor(AHORA.getTime() / 3600e3) * 3600e3 - 40 * 3600e3), 'http500'],
+  ['red caída en una sola hora de rayos', CLAVES_FUNCTIONS.rayos(Math.floor(AHORA.getTime() / 3600e3) * 3600e3 - 3600e3), 'red'],
+];
+
+test('control negativo · un solo objeto que no pasa no reemplaza su enlace bueno; los demás sí se escriben (contado)', async () => {
+  let detectados = 0;
+  for (const [nombre, clave, modo, objetos] of CASOS_UNO) {
+    const { r, F, por } = await unoFalla(clave, modo, { objetos });
+    assert.equal(por[clave].url, PC, nombre + ': queda el enlace de la PC');
+    assert.equal(F.length, 169, nombre + ': los otros 168 se escriben');
+    assert.equal(F.filter((f) => f.url === PC).length, 1, nombre);
+    assert.equal(r.codigo, 1, nombre);
+    assert.equal(Object.values(r.grupos).reduce((n, g) => n + g.rechazados, 0), 1, nombre + ': un rechazo');
+    assert.ok(Object.values(r.grupos).some((g) => g.errores.some((e) => e.startsWith(clave + ':'))), nombre);
+    detectados++;
+  }
+  assert.equal(detectados, CASOS_UNO.length, `casos de un objeto: ${detectados}/${CASOS_UNO.length}`);
+});
+
+test('control de la prueba: sin falla, el mismo objeto sí se renueva (si no, el negativo de arriba no prueba nada)', async () => {
+  const { r, por } = await unoFalla('opera/cog/cuenca-del-plata/2026-09-10.tif', null);
+  assert.notEqual(por['opera/cog/cuenca-del-plata/2026-09-10.tif'].url, PC);
+  assert.equal(r.codigo, 0);
+});
+
+// ── 2.ª vuelta · arreglo 3: ni URL firmada, ni host, ni llaves, ni contraseña en los caminos de error ──
+const FIRMADA = 'https://cuentafalsa.r2.cloudflarestorage.com/satchi-mapas/tormentas/proyeccion_tormentas.json?X-Amz-Credential=CLAVEFALSA%2F20261107&X-Amz-Signature=abcdef0123456789';
+const SECRETO_BASE = 'postgresql://firmador_r2.ref:clave-base-secreta@pooler.supabase.com:5432/postgres';
+const PROHIBIDO = /X-Amz-|r2\.cloudflarestorage|CLAVEFALSA|secreto-falso|clave-base-secreta|pooler\.supabase|https?:\/\//;
+const limpio = (r) => { const md = resumenMd(r); const js = JSON.stringify(r); return !PROHIBIDO.test(md) && !PROHIBIDO.test(js); };
+
+test('control negativo · secretos en los caminos de error: nada crudo llega al resumen (contado)', async () => {
+  const caminos = {
+    'upsert: error de Postgres con la URL firmada y la conexión': async () => {
+      const { r2, cli } = armar();
+      return correr(dep(cli, r2, async () => { throw Object.assign(new Error(`duplicate key value (url)=(${FIRMADA}) en ${SECRETO_BASE}`), { code: '23505' }); }), { ahora: AHORA });
+    },
+    'upsert: error sin código, con la URL': async () => {
+      const { r2, cli } = armar();
+      return correr(dep(cli, r2, async () => { throw new Error('falló ' + FIRMADA); }), { ahora: AHORA });
+    },
+    'listar: error con la URL': async () => {
+      const { r2, cli } = armar();
+      return correr({ ...dep(cli, r2, async () => ({})), listar: async () => { throw new Error('GET ' + FIRMADA + ' 403'); } }, { ahora: AHORA });
+    },
+    'GET firmado: la red cae con la URL en el mensaje': async () => {
+      const { r2, cli } = armar();
+      return correr({ ...dep(cli, r2, async () => ({ nuevas: 0, actualizadas: 0, sinCambio: 0 })), fetchFn: async (u) => { throw new Error('fetch failed ' + u); } }, { ahora: AHORA });
+    },
+    'GET firmado: el cuerpo se corta con la URL en el mensaje': async () => {
+      const { r2, cli } = armar({ fallar: { 'tormentas/proyeccion_tormentas.json': 'cuerpo', 'opera/cog/cuenca-del-plata/2026-08-01.tif': 'cuerpo' } });
+      return correr(dep(cli, r2, async () => ({ nuevas: 0, actualizadas: 0, sinCambio: 0 })), { ahora: AHORA });
+    },
+    'presign: tira con el secreto en el mensaje': async () => {
+      const { r2, cli } = armar();
+      return correr({ ...dep(cli, r2, async () => ({})), presignar: () => { throw new Error('firma con secreto-falso para ' + FIRMADA); } }, { ahora: AHORA });
+    },
+  };
+  let limpios = 0;
+  for (const [nombre, fn] of Object.entries(caminos)) {
+    const r = await fn();
+    assert.equal(r.codigo, 1, nombre);
+    assert.ok(r.errores > 0, nombre + ': el error se cuenta');
+    assert.ok(limpio(r), nombre + ': ' + resumenMd(r).split('\n').find((l) => PROHIBIDO.test(l)));
+    limpios++;
+  }
+  assert.equal(limpios, Object.keys(caminos).length, `caminos de error limpios: ${limpios}/${Object.keys(caminos).length}`);
+  // y el chequeo detecta una filtración (si no, el test de arriba no prueba nada)
+  assert.equal(limpio({ grupos: {}, base: { error: 'upsert: falló ' + FIRMADA }, fecha: '', ok: false, faltan: 0, errores: 1 }), false);
+});
+
+test('el código del upsert es el SQLSTATE, no el mensaje', async () => {
+  const { r2, cli } = armar();
+  const r = await correr(dep(cli, r2, async () => { throw Object.assign(new Error('permission denied ' + FIRMADA), { code: '42501' }); }), { ahora: AHORA });
+  assert.equal(r.base.error, 'upsert: 42501');
+});
+
+// ── control negativo (1.ª vuelta, ajustado) ──
 test('control negativo · firma rota, fecha rota, upsert roto, R2 que no lista: nada malo llega a la base', async () => {
   const casos = [];
   const caso = async (nombre, fn) => { casos.push(nombre); await fn(); };
@@ -143,7 +261,7 @@ test('control negativo · firma rota, fecha rota, upsert roto, R2 que no lista: 
     const { r2, cli } = armar({ secretoCliente: 'otro-secreto' });
     const r = await correr(dep(cli, r2, upsert), { ahora: AHORA });
     assert.equal(r.codigo, 1);
-    assert.ok(r.grupos.tormentas.errores.some((e) => /HTTP 403/.test(e)));
+    assert.ok(r.grupos.tormentas.errores.some((e) => /r2_listar_http_403/.test(e)));
     assert.equal((await filas(db)).length, 0);
     await db.close();
   });
@@ -155,6 +273,7 @@ test('control negativo · firma rota, fecha rota, upsert roto, R2 que no lista: 
     const r = await correr(roto, { ahora: AHORA });
     assert.equal(r.codigo, 1);
     for (const g of Object.values(r.grupos)) assert.ok(g.errores.some((e) => /HTTP 403/.test(e)), g.nombre);
+    assert.equal(Object.values(r.grupos).reduce((n, g) => n + g.rechazados, 0), 169, 'cada uno de los 169 rechazado');
     assert.equal((await filas(db)).length, 0, 'con la verificación caída no se escribe nada');
     await db.close();
   });
@@ -179,10 +298,10 @@ test('control negativo · firma rota, fecha rota, upsert roto, R2 que no lista: 
 
   await caso('upsert roto (la base falla)', async () => {
     const { r2, cli } = armar();
-    const r = await correr(dep(cli, r2, async () => { throw new Error('permission denied for table r2_enlaces'); }), { ahora: AHORA });
+    const r = await correr(dep(cli, r2, async () => { throw Object.assign(new Error('permission denied for table r2_enlaces'), { code: '42501' }); }), { ahora: AHORA });
     assert.equal(r.codigo, 1);
-    assert.match(r.base.error, /permission denied/);
-    assert.match(resumenMd(r), /\*\*upsert: permission denied/);
+    assert.equal(r.base.error, 'upsert: 42501');
+    assert.match(resumenMd(r), /\*\*upsert: 42501\*\*/);
   });
 
   await caso('upsert que pierde filas (devuelve menos) se ve en el resumen', async () => {

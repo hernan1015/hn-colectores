@@ -5,7 +5,9 @@
 import { firmar } from '../../rayos-hora/lib/almacen.mjs';
 import { presignGet, deAmzFecha, MAX_EXPIRA } from '../lib/presign.mjs';
 
-export function r2Falso({ cuenta = 'cuentafalsa', clave = 'CLAVEFALSA', secreto = 'secreto-falso', deposito = 'satchi-mapas', objetos = {}, porPagina = 1000, ahora = () => Date.now() } = {}) {
+export function r2Falso({ cuenta = 'cuentafalsa', clave = 'CLAVEFALSA', secreto = 'secreto-falso', deposito = 'satchi-mapas', objetos = {}, porPagina = 1000, ahora = () => Date.now(), fallar = {} } = {}) {
+  // fallar: { clave: 'http403' | 'http500' | 'cuerpo' | 'red' } — el GET firmado de ESE objeto falla (los demás no).
+  // Los mensajes de error llevan la URL firmada a propósito: el firmador no los tiene que imprimir nunca.
   const host = `${cuenta}.r2.cloudflarestorage.com`;
   const obj = new Map(Object.entries(objetos).map(([k, v]) => [k, Buffer.isBuffer(v) ? v : Buffer.from(v)]));
   const cuenta_ = { listados: 0, gets: 0, rechazos: 0 };
@@ -34,6 +36,12 @@ export function r2Falso({ cuenta = 'cuentafalsa', clave = 'CLAVEFALSA', secreto 
       if (ahora() < fecha.getTime() - 15 * 60e3) { cuenta_.rechazos++; return resp(403, 'Request is not valid yet'); }
       const b = obj.get(k);
       if (!b) return resp(404, 'NoSuchKey');
+      if (fallar[k] === 'http403') return resp(403, 'AccessDenied');
+      if (fallar[k] === 'http500') return resp(500, 'InternalError');
+      if (fallar[k] === 'red') throw new TypeError('fetch failed: ' + url);
+      if (fallar[k] === 'cuerpo') {
+        return new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array([123])); c.error(new Error('se cortó ' + url)); } }), { status: headers.range ? 206 : 200 });
+      }
       const m = /^bytes=(\d+)-(\d+)$/.exec(headers.range || '');
       if (m) return resp(206, b.subarray(+m[1], +m[2] + 1));
       return resp(200, b);

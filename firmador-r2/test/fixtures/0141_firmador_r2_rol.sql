@@ -1,11 +1,13 @@
 -- 0141 · rol mínimo firmador_r2 para el firmador de enlaces R2 en la nube (hn-colectores, firmador-r2/)
--- PROPUESTA PREPARADA POR pc-nanci el 7/11/2026 · NO APLICADA. La aplica local, a mano, con su OK.
+-- PROPUESTA PREPARADA POR pc-nanci el 7/11/2026 (2.ª vuelta el 8/11) · NO APLICADA. La aplica local, a mano, con su OK.
 --
 -- Qué hace: crea el rol de login firmador_r2 con SELECT, INSERT y UPDATE sobre public.r2_enlaces (0129) y NADA más:
 --   - sin DELETE, sin TRUNCATE, sin REFERENCES/TRIGGER;
 --   - sin acceso a ninguna otra tabla (USAGE en el schema public sólo para poder nombrar la tabla);
 --   - r2_enlaces tiene RLS activa y sin políticas (0129), así que se agregan 3 políticas SÓLO para firmador_r2
---     (select, insert, update). anon y authenticated siguen sin ver nada; service_role/postgres no cambian.
+--     (select, insert, update), LAS TRES limitadas a los 4 prefijos tormentas/, escenarios/, opera/cog/ y rayos-hora/
+--     (también los USING de select y update: 2.ª vuelta, 8/11, revisión Codex n3). anon y authenticated siguen sin
+--     ver nada; service_role/postgres no cambian.
 -- Lo usa el paso de Actions con el secreto SUPABASE_FIRMADOR_URL (lo carga local).
 --
 -- LA CONTRASEÑA NO VA EN ESTE ARCHIVO (ni en el repo, ni en el canal). Después de aplicar, local la pone así:
@@ -38,8 +40,13 @@ grant select, insert, update on table public.r2_enlaces to firmador_r2;
 drop policy if exists firmador_r2_lee on public.r2_enlaces;
 drop policy if exists firmador_r2_agrega on public.r2_enlaces;
 drop policy if exists firmador_r2_cambia on public.r2_enlaces;
-create policy firmador_r2_lee on public.r2_enlaces for select to firmador_r2 using (true);
-create policy firmador_r2_agrega on public.r2_enlaces for insert to firmador_r2 with check (clave ~ '^(tormentas|escenarios|opera/cog|rayos-hora)/');
-create policy firmador_r2_cambia on public.r2_enlaces for update to firmador_r2 using (true) with check (clave ~ '^(tormentas|escenarios|opera/cog|rayos-hora)/');
+-- Las tres, también los USING: una fila de otro prefijo no se ve, no se cambia y no se puede mover a uno autorizado.
+create policy firmador_r2_lee on public.r2_enlaces for select to firmador_r2
+  using (clave ~ '^(tormentas|escenarios|opera/cog|rayos-hora)/');
+create policy firmador_r2_agrega on public.r2_enlaces for insert to firmador_r2
+  with check (clave ~ '^(tormentas|escenarios|opera/cog|rayos-hora)/');
+create policy firmador_r2_cambia on public.r2_enlaces for update to firmador_r2
+  using (clave ~ '^(tormentas|escenarios|opera/cog|rayos-hora)/')
+  with check (clave ~ '^(tormentas|escenarios|opera/cog|rayos-hora)/');
 
 comment on role firmador_r2 is 'Firmador de enlaces R2 en la nube (hn-colectores/firmador-r2): sólo select/insert/update en public.r2_enlaces. 0141.';

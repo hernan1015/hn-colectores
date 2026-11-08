@@ -3,7 +3,9 @@
 **Qué hace:** un solo paso de Actions que, para `tormentas/`, `escenarios/`, `opera/cog/` y `rayos-hora/` del depósito privado de R2:
 1. lista los objetos (ListObjectsV2, con la firma de cabeceras de `rayos-hora/lib/almacen.mjs`);
 2. firma un GET por objeto (SigV4 por query, `X-Amz-Expires=604800`, `UNSIGNED-PAYLOAD`, región `auto`);
-3. prueba el enlace recién firmado: los JSON se bajan enteros (de ahí sale `emitido`); de un `.tif` y de una hora de rayos se pide 1 byte;
+3. prueba **cada** enlace recién firmado, uno por uno:
+   - los JSON se bajan enteros, tienen que leerse y parsear, y de ahí sale `emitido`;
+   - de cada `.tif` y de cada hora de rayos se pide 1 byte (Range, 206);
 4. hace upsert en `public.r2_enlaces` (hn-agro, migración 0129) con el rol `firmador_r2`.
 
 **Para qué:** hoy esos enlaces los renueva la PC de local con tareas programadas. Así dejan de depender de esa PC.
@@ -43,28 +45,34 @@
 - **Nunca borra filas.** Si una hora de rayos ya no está en la ventana, su fila queda como estaba (vence sola).
 - **No pisa un enlace que vence después.** Si la PC firmó más tarde, queda el de la PC (`where t.vence <= excluded.vence`). Las dos pueden convivir mientras dure la mudanza.
 - **Es idempotente.** Correrlo dos veces deja la tabla igual.
-- **Si la prueba del enlace falla en un prefijo, ese prefijo no se escribe.** Así no se reemplaza un enlace bueno por uno malo.
-- **Lo que falta se dice, no se inventa.**
-  - Si falta algo de tormentas, escenarios u OPERA, la corrida sale con código 1 (rojo en Actions), pero lo que había se escribe igual.
-  - Si faltan horas de rayos, es sólo un aviso, porque el colector `rayos-hora` todavía puede no estar activo.
+- **Un objeto que no pasa su prueba no se escribe, y queda el enlace que había.** Puede fallar por un HTTP que no es 2xx o 206, por la red, por un cuerpo cortado o por un JSON inválido. Los demás objetos del grupo sí se escriben. Se cuenta como «rechazado» y como error.
+- **Lo que falta se dice, no se inventa.** Si falta algo de tormentas, escenarios u OPERA, o **una hora de rayos de la ventana**, la corrida sale con código 1 (rojo en Actions), pero lo que pasó la prueba se escribe igual.
+  - **Las horas de rayos que faltan se cuentan como faltantes, no como aviso:** el resumen dice «faltan N de M horas».
+  - Mientras el colector `rayos-hora` no esté activo, cada corrida va a salir en rojo por eso, y es lo que corresponde.
 - **Resumen al final**, en la consola y en el resumen de Actions:
-  - por prefijo: en R2, firmados, ignorados, faltan y errores;
+  - por prefijo: en R2, firmados, verificados y escritos, rechazados, ignorados, faltan y errores;
   - en la base: nuevas, actualizadas y sin cambio.
-  - **Nunca se imprimen URL firmadas ni llaves.**
+- **Nunca se imprime `e.message`.** Un error de Postgres, de fetch o de R2 puede traer la URL firmada, el host o la conexión. Al resumen y a la consola sólo llegan las claves de los objetos y códigos (`lib/errores.mjs`):
+  - el código propio, por ejemplo `r2_listar_http_403` o `base_sin_ca`;
+  - el SQLSTATE de Postgres, por ejemplo `42501`;
+  - el código de Node, por ejemplo `ECONNREFUSED`;
+  - el nombre de una clase estándar de error.
 
 ## Secretos (sólo los nombres; los carga local)
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` y `R2_BUCKET`: los mismos de `rayos-hora`.
   - Alcanza con una llave de R2 **de sólo lectura** sobre el depósito: los enlaces firmados con ella sirven para GET.
   - Si se quiere separar de la de `rayos-hora`, que escribe, se puede usar un *environment* de Actions con los mismos nombres.
 - `SUPABASE_FIRMADOR_URL`: la conexión con el rol `firmador_r2`, por el pooler. Las máquinas de Actions no tienen IPv6 para la conexión directa. El formato está en `0141_firmador_r2_rol.sql`.
-- `SUPABASE_FIRMADOR_CA` (opcional): el certificado de Supabase en PEM.
-  - Con él, la conexión TLS verifica la cadena.
-  - Sin él, va como en hn-agro y hn-agro-modelos: TLS sin verificar la cadena.
+- `SUPABASE_FIRMADOR_CA` (**obligatorio**): el certificado raíz de Supabase en PEM. Se baja de Dashboard → Database → SSL configuration → Download certificate.
+  - **Sin él, o con algo que no es un PEM, no se conecta:** sale con código 2 antes de tocar R2.
+  - La conexión va siempre con `ssl: { ca, rejectUnauthorized: true }`.
+  - Los parámetros `ssl*` de la URL se descartan: un `sslmode=disable` o `no-verify` no apaga la verificación.
+  - **A confirmar en la primera corrida:** que el certificado del pooler valide contra esa CA y ese host. Si no valida, falla con `base_no_conecta_…`, no se conecta sin verificar.
 
 ## La base: rol `firmador_r2`
 - **La migración propuesta está en hn-agro:** rama `feat/firmador-r2-rol`, archivo `migrations/0141_firmador_r2_rol.sql`. **No está aplicada.**
 - **Qué permite:** SELECT, INSERT y UPDATE sobre `public.r2_enlaces`, más USAGE del schema `public`. Nada más.
-- **RLS:** 3 políticas sólo para ese rol. El INSERT y el UPDATE se limitan a los 4 prefijos.
+- **RLS:** 3 políticas sólo para ese rol, y **las tres se limitan a los 4 prefijos**: el `USING` del SELECT, el `USING` y el `WITH CHECK` del UPDATE, y el `WITH CHECK` del INSERT. Una fila de otro prefijo no se ve, no se cambia y no se puede mover a uno autorizado.
 - **Límites del rol:** `statement_timeout` de 30 s y `connection limit 3`.
 - **La contraseña no va en el archivo.** Local la pone al aplicarla, con `\password firmador_r2`.
 - **Copias en este repo:** `test/fixtures/0129_r2_enlaces.sql` y `test/fixtures/0141_firmador_r2_rol.sql` son copias literales para los tests. Si cambia la de hn-agro, se vuelve a copiar.
@@ -104,7 +112,7 @@ Eso se muda después, uno por uno.
 ## Instalarlo
 1. Copiar `firmador-r2/firmador-r2.workflow.yml.txt` a `.github/workflows/firmador-r2.yml`. El token de la rama no tiene permiso `workflow`.
 2. Aplicar 0141 y ponerle la contraseña al rol.
-3. Cargar `SUPABASE_FIRMADOR_URL`.
+3. Cargar `SUPABASE_FIRMADOR_URL` y `SUPABASE_FIRMADOR_CA`.
 4. Primera corrida a mano: Actions → firmador-r2 → Run workflow.
 5. Recién después, el disparo diario desde Supabase.
 
@@ -119,7 +127,12 @@ PGlite es devDependency y se instala por usuario. En Actions no se instala, porq
   - Prueba el contrato: renueva, no pisa uno más nuevo, `coalesce` de emitido, idempotente y sin borrar.
   - Prueba los permisos: 9 operaciones negadas, `anon` y `authenticated` sin acceso, privilegios exactos.
   - Control negativo: 5 upserts mutados, todos en rojo.
+  - **RLS:** se siembran filas de otros prefijos (`usuarios/`, `respaldos/`). Como `firmador_r2` no se leen, no se pisan y no se mueven, ni siquiera con un UPDATE sin WHERE, que aplica sólo el `USING` de update. Control negativo: 4 de 4 versiones de 0141 con `USING (true)` en rojo, incluida la de la 1.ª vuelta.
+  - **TLS:** siempre `{ ca, rejectUnauthorized: true }`, verificado en el `pg.Client` real, y ningún parámetro de la URL lo apaga. Control negativo: 7 de 7 conexiones rechazadas sin construir el cliente (sin CA, CA vacía o inválida, URL inválida). Un fallo de conexión sale con código, sin la contraseña.
 - **`test/firmador.test.mjs`:** de punta a punta, con un R2 falso que verifica las firmas como R2 (incluido el vencimiento) y con PGlite.
   - Las claves esperadas están escritas a mano, copiadas de las functions.
   - Prueba la paginación, lo que falta, la idempotencia y que el resumen salga sin URL.
-  - Control negativo contado (6): secreto equivocado, firma del GET rota, reloj 8 días adelante, enlace bueno de la PC que no se pisa, base caída y base que pierde filas.
+  - **Un solo objeto fallido (7 de 7):** JSON inválido de una zona; JSON inválido de `pasadas.json`; cuerpo cortado de tormentas; 403 y cuerpo cortado en un solo mosaico; 500 y red caída en una sola hora. Queda el enlace de la PC de ese objeto y se escriben los otros 168. Más el control de que, sin la falla, ese mismo objeto sí se renueva.
+  - **Secretos en los caminos de error (6 de 6):** error de Postgres con la URL y la conexión; error sin código; listar; la red; el cuerpo cortado; y el presign. Ni la URL, ni el host, ni las llaves, ni la contraseña llegan al resumen ni al resultado. Se controla además que el chequeo detecta una filtración.
+  - **Rayos:** una ventana sin horas da «faltan 24 de 24» y código 1. 4 horas quitadas dan exactamente esas 4 faltantes.
+  - Control negativo contado (6): secreto equivocado, firma del GET rota (los 169 rechazados), reloj 8 días adelante, enlace bueno de la PC que no se pisa, base caída (sale `upsert: 42501`) y base que pierde filas.
