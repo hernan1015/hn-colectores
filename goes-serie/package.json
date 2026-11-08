@@ -1,0 +1,12 @@
+{
+  "name": "hn-colector-goes-serie",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · serie de imágenes GOES-19 FDCF en R2 (30 días rotando) y ventanas de eventos sin rotación",
+  "scripts": {
+    "serie": "node goes-serie.mjs",
+    "test": "node --test test/goes-serie.test.mjs",
+    "control-negativo": "node test/control-negativo.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

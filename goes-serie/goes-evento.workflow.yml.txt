@@ -1,0 +1,42 @@
+# HN AGRO · ventana de un evento: copia t0 ± 6 h de goes-serie/ a goes-eventos/<evento>/ (SIN rotación). Ver goes-serie/LEEME.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/goes-evento.yml (el token con el que se armó la rama no
+# tiene permiso «workflow», por eso viene como .txt). Tiene que estar en main para workflow_dispatch.
+# Se corre a mano o desde Supabase (workflow_dispatch con los 4 datos). Volver a correrlo con los MISMOS datos
+# completa lo que falte (por ejemplo, las horas después de t0). Con otros datos para el mismo evento, no hace nada.
+name: goes-evento
+on:
+  workflow_dispatch:
+    inputs:
+      evento: { description: 'nombre del evento: minúsculas, números y guiones (3 a 60), ej. incendio-ita-ibate-2026-11-07', required: true }
+      lat: { description: 'latitud del lugar (grados, ej. -27.4512)', required: true }
+      lon: { description: 'longitud del lugar (grados, ej. -57.3378)', required: true }
+      t0: { description: 'hora del evento en UTC, AAAA-MM-DDTHH:MMZ', required: true }
+  repository_dispatch:
+    types: [goes-evento]
+permissions:
+  contents: read
+concurrency:
+  group: goes-serie            # la misma que la serie: no copia mientras la serie escribe índices o rota
+  cancel-in-progress: false
+jobs:
+  evento:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Ventana del evento
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          MODO: evento
+          # los datos van por env (nunca pegados en el script): se validan en lib/evento.mjs
+          EVENTO: ${{ inputs.evento || github.event.client_payload.evento }}
+          LAT: ${{ inputs.lat || github.event.client_payload.lat }}
+          LON: ${{ inputs.lon || github.event.client_payload.lon }}
+          T0: ${{ inputs.t0 || github.event.client_payload.t0 }}
+        run: node goes-serie/goes-serie.mjs
