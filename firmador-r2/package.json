@@ -1,0 +1,17 @@
+{
+  "name": "hn-firmador-r2",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · firma GET de R2 (SigV4 por query, 7 días) y los deja en public.r2_enlaces",
+  "scripts": {
+    "firmar": "node firmar-r2.mjs",
+    "test": "node --test test/presign.test.mjs test/base.test.mjs test/firmador.test.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "pg": "8.13.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.2.17"
+  }
+}
