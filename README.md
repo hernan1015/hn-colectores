@@ -10,5 +10,6 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | colector-smap | diario | NASA SMAP L4, con token de Earthdata |
 | colector-lagunas | lunes | NASA SWOT (Hydrocron) |
 | colector-imerg | diario | NASA IMERG-Late (lluvia satelital), con token de Earthdata |
+| vigia-satchi | cada 15 min (apagado hasta que la variable SATCHI_VIGIA_ON sea «si»; ver vigia/LEEME.md) | SATCHI público (crecidas y focos de calor): manda un mail si hay algo nuevo |
 
 Los registros de cada corrida muestran sólo cantidades.
