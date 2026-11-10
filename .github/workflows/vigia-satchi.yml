@@ -1,0 +1,64 @@
+# HN AGRO · VIGÍA DE SATCHI (crecidas y focos de calor; piloto). Ver vigia/LEEME.md.
+# Va en .github/workflows/vigia-satchi.yml (copiarlo tal cual desde vigia/vigia.workflow.yml.txt).
+# Lee SATCHI público (sin claves), compara con lo ya avisado y manda UN mail por SMTP si hay algo nuevo.
+# El ESTADO (qué ya se avisó) va en la rama huérfana `vigia-estado` de este repo (estado.json, sólo claves públicas):
+# por eso este job, y sólo este, tiene `contents: write` con el GITHUB_TOKEN de Actions (sin PAT).
+# Orden para no mandar doble: primero se guarda el estado; si el push no sale (con un reintento), NO hay mail.
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo SATCHI_VIGIA_ON vale «si»
+# (Settings → Secrets and variables → Actions → Variables). A mano: Actions → vigia-satchi → Run workflow.
+# El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de claves, direcciones ni detalle.
+name: vigia-satchi
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'   # cada 15 min, lejos de la hora en punto (cuando GitHub se atrasa más)
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = calcula y muestra, sin mail ni base · real = estado en Supabase y mail'
+        type: choice
+        options: [seco, real]
+        default: seco
+      todo:
+        description: 'leer también el pronóstico del INA aunque no sea su hora (cada 3 h)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: vigia-satchi
+  cancel-in-progress: false
+jobs:
+  vigia:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.SATCHI_VIGIA_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write          # sólo para subir estado.json a la rama vigia-estado
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests (sin red ni base)
+        run: node --test vigia/test/vigia.test.mjs vigia/test/estado-git.test.mjs
+      - name: Vigía
+        env:
+          SATCHI_VIGIA_ESTADO: ${{ vars.SATCHI_VIGIA_ESTADO }}        # vacío = git (rama vigia-estado); «supabase» = la tabla (opcional)
+          SATCHI_VIGIA_SUPABASE_URL: ${{ secrets.SATCHI_VIGIA_SUPABASE_URL }}   # sólo con SATCHI_VIGIA_ESTADO=supabase
+          SATCHI_VIGIA_SUPABASE_KEY: ${{ secrets.SATCHI_VIGIA_SUPABASE_KEY }}
+          SATCHI_SMTP_HOST: ${{ secrets.SATCHI_SMTP_HOST }}
+          SATCHI_SMTP_PORT: ${{ secrets.SATCHI_SMTP_PORT }}
+          SATCHI_SMTP_USER: ${{ secrets.SATCHI_SMTP_USER }}
+          SATCHI_SMTP_PASS: ${{ secrets.SATCHI_SMTP_PASS }}
+          SATCHI_SMTP_FROM: ${{ secrets.SATCHI_SMTP_FROM }}
+          SATCHI_VIGIA_DESTINO: ${{ secrets.SATCHI_VIGIA_DESTINO }}
+          SATCHI_VIGIA_PROVINCIAS: ${{ vars.SATCHI_VIGIA_PROVINCIAS }}
+          SATCHI_VIGIA_MODO: ${{ vars.SATCHI_VIGIA_MODO }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          TODO: ${{ inputs.todo }}
+        run: |
+          args=()
+          [ "$MODO" != "real" ] && args+=(--seco)
+          [ "$TODO" = "true" ] && args+=(--todo)
+          # en real el script imprime SÓLO la línea de cantidades; en --seco, además, lo que avisaría (datos públicos de SATCHI)
+          node vigia/vigia-satchi.mjs "${args[@]}"
