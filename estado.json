@@ -1,0 +1,21 @@
+[
+{"clave":"escala:18:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"escala:20:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"escala:23:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"escala:24:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"escala:25:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"escala:26:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"escala:28:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"escala:29:evacuacion","tipo":"crecida","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z"},
+{"clave":"foco:catamarca:-29.0:-65.2","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-29.0494,"lon":-65.1545,"provincia":"Catamarca"}},
+{"clave":"foco:chaco:-24.7:-61.3","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-24.702,"lon":-61.2792,"provincia":"Chaco"}},
+{"clave":"foco:chaco:-25.6:-61.4","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-25.603,"lon":-61.383,"provincia":"Chaco"}},
+{"clave":"foco:chaco:-25.8:-61.2","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-25.7859,"lon":-61.2086,"provincia":"Chaco"}},
+{"clave":"foco:formosa:-23.5:-61.6","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-23.4514,"lon":-61.5503,"provincia":"Formosa"}},
+{"clave":"foco:formosa:-23.9:-61.4","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-23.8795,"lon":-61.3761,"provincia":"Formosa"}},
+{"clave":"foco:formosa:-24.5:-60.6","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-24.4969,"lon":-60.578,"provincia":"Formosa"}},
+{"clave":"foco:formosa:-24.5:-60.7","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-24.5302,"lon":-60.7259,"provincia":"Formosa"}},
+{"clave":"foco:formosa:-25.1:-60.2","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-25.0903,"lon":-60.1609,"provincia":"Formosa"}},
+{"clave":"foco:salta:-25.0:-62.9","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-25.0405,"lon":-62.9222,"provincia":"Salta"}},
+{"clave":"foco:santiago-del-estero:-26.1:-63.9","tipo":"foco","activo":true,"primer_aviso":"2026-11-10T22:00:00.228Z","ultimo_aviso":"2026-11-10T22:00:00.228Z","actualizado":"2026-11-10T22:00:00.228Z","detalle":{"lat":-26.0788,"lon":-63.9152,"provincia":"Santiago del Estero"}}
+]
