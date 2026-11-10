@@ -18,9 +18,14 @@ const FALLAS = [
   ['587 manda la clave sin STARTTLS', 'lib/correo.mjs', "if (!/STARTTLS/i.test(ehlo.todo)) throw new Error('el servidor no ofrece STARTTLS: no se manda la clave en claro');", ''],
   ['escalas a medias se usan igual', 'vigia-satchi.mjs', "if (!escalas || escalas.ok === false || !escalas.parana || !escalas.parana.ok) faltan.push('escalas');", "if (!escalas || escalas.ok === false || !escalas.parana) faltan.push('escalas');"],
   ['pronóstico a cualquier hora', 'vigia-satchi.mjs', 'const prono = (todo || horaProno) ?', 'const prono = true ?'],
+  ['manda aunque no se guardó', 'vigia-satchi.mjs', 'if (guardado && van.length) {', 'if (van.length || avisar.length) {'],
+  ['sin reintento con rebase', 'lib/estado-git.mjs', "if (git([...QUIEN, 'pull', '-q', '--rebase', remoto, rama], dir, true) == null) {", 'if (true) {'],
+  ['push fallido cuenta como guardado', 'lib/estado-git.mjs', "return git(['push', '-q', remoto, 'HEAD:refs/heads/' + rama], dir, true) != null ? efectivos : false;", 'return efectivos;'],
+  ['pisa lo que guardó otra corrida', 'lib/estado-git.mjs', 'const m = new Map(ultimo);', 'const m = new Map(base || []);'],
+  ['repite lo que ya avisó otra corrida', 'lib/estado-git.mjs', 'const efectivos = nuevos(avisar, ultimo, ahoraMs);', 'const efectivos = avisar;'],
 ];
 function correrTests(dir) {
-  const r = spawnSync(process.execPath, ['--test', 'test/vigia.test.mjs'], { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, ['--test', 'test/vigia.test.mjs', 'test/estado-git.test.mjs'], { cwd: dir, encoding: 'utf8' });
   const n = (k) => Number(((r.stdout || '').match(new RegExp('(?:ℹ|#) ' + k + ' ([0-9]+)')) || [])[1] ?? NaN);
   return { pasan: n('pass'), fallan: n('fail') };
 }

@@ -2,6 +2,19 @@
 
 Corre solo en GitHub Actions de este repo público, cada 15 minutos. **No usa ninguna PC y no deja tareas de fondo en Netlify.** Lee SATCHI público (`satchi-publico`, con la caché de la red de Netlify), se fija qué hay de nuevo respecto de lo que ya avisó y, si hay algo, manda **un** mail por SMTP.
 
+## El estado (qué ya se avisó)
+
+**Por defecto, el estado vive en el repo.** Es el archivo `estado.json` de la rama huérfana **`vigia-estado`**. Lo decidió local el 10/11, con el OK del maker.
+- **Qué guarda:** sólo claves públicas: la escala o el foco, si está activo y las fechas. De los focos guarda también la posición, que hace falta para no repetirlos.
+- **Qué no guarda:** destinatarios ni datos de nadie.
+- **Permisos:** el job escribe con el `GITHUB_TOKEN` de Actions (`contents: write` sólo en ese job), sin PAT.
+- **El orden, para no mandar dos veces el mismo aviso:**
+  1. Se aplica lo de la corrida **sobre el estado más nuevo del remoto**. Si otra corrida avisó lo mismo mientras tanto, ese aviso se cae de la lista.
+  2. Se hace commit y push. Si el push se rechaza, hay **un** reintento con `git pull --rebase`.
+  3. **Si el estado no se pudo guardar, no se manda el mail**, y la próxima corrida lo vuelve a intentar.
+  4. Si el mail falla **después** de guardar, ese aviso se pierde. Es mejor perder uno que mandarlo dos veces.
+- **Opcional:** Supabase, con la variable `SATCHI_VIGIA_ESTADO` = `supabase`, la migración de `vigia/migracion/` y los dos secretos `SATCHI_VIGIA_SUPABASE_*`. Hoy no hace falta.
+
 **Este repo es público.** En el código no hay claves, ni direcciones de mail, ni datos de nadie. El registro de Actions muestra sólo cantidades.
 
 ## Qué avisa
@@ -25,19 +38,18 @@ Si SATCHI no contesta, o contesta a medias, **no se avisa con lo viejo**: esa fu
 - **FIRMS y el INA no se piden directo:** los lee SATCHI una vez por ciclo de su caché. Por eso **no hace falta la clave de FIRMS**.
 
 ## Para prenderlo (lo hace local)
-1. **La migración.** `vigia/migracion/satchi_vigia_avisos.sql`, escrita y **sin aplicar**. Hay que copiarla a `hn-agro/migrations/` con el número que siga y aplicarla con el OK del maker. Crea la tabla `satchi_vigia_avisos` (RLS prendida, nada para anon/authenticated) y el rol `satchi_vigia`, que sólo ve esa tabla.
+1. **El estado:** no hace falta nada. La rama `vigia-estado` la crea la primera corrida real. La migración de Supabase queda como opción, sin aplicar.
 2. **Los secretos del repo** (Settings → Secrets and variables → Actions → *Secrets*):
 
    | secreto | qué es |
    |---|---|
-   | `SATCHI_VIGIA_SUPABASE_URL` | la URL del proyecto (`https://<ref>.supabase.co`) |
-   | `SATCHI_VIGIA_SUPABASE_KEY` | un JWT con `{"role":"satchi_vigia"}`, firmado con el *JWT secret* del proyecto. Es lo recomendado: sólo ve la tabla. Si no, la `service_role` |
+   | `SATCHI_VIGIA_SUPABASE_URL` y `SATCHI_VIGIA_SUPABASE_KEY` | **sólo** con `SATCHI_VIGIA_ESTADO=supabase`, que es opcional: la URL del proyecto y un JWT con `{"role":"satchi_vigia"}` (o la `service_role`) |
    | `SATCHI_SMTP_HOST`, `SATCHI_SMTP_PORT` | el servidor de la cuenta info@ (465 = TLS; 587 = STARTTLS obligatorio) |
    | `SATCHI_SMTP_USER`, `SATCHI_SMTP_PASS` | la cuenta info@ y su clave, o una clave de aplicación |
    | `SATCHI_SMTP_FROM` | opcional: el remitente (si no está, el usuario) |
    | `SATCHI_VIGIA_DESTINO` | los destinatarios, separados por coma. **Para la prueba: hernanr y nancio**, nada más |
 
-   **El JWT del rol** se arma una vez, en una máquina de local y no en el repo. Con el JWT secret en una variable de entorno:
+   **El JWT del rol** hace falta sólo con Supabase. Se arma una vez, en una máquina de local y no en el repo. Con el JWT secret en una variable de entorno:
    ```
    node -e "const c=require('crypto'),b=o=>Buffer.from(JSON.stringify(o)).toString('base64url');const h=b({alg:'HS256',typ:'JWT'}),p=b({role:'satchi_vigia',iss:'supabase',iat:Math.floor(Date.now()/1e3),exp:Math.floor(Date.now()/1e3)+3e7});console.log(h+'.'+p+'.'+c.createHmac('sha256',process.env.JWT_SECRET).update(h+'.'+p).digest('base64url'))"
    ```
@@ -52,6 +64,6 @@ Si SATCHI no contesta, o contesta a medias, **no se avisa con lo viejo**: esa fu
 6. **Prenderlo:** la variable `SATCHI_VIGIA_ON` = `si`. Para apagarlo, cualquier otro valor o borrarla.
 
 ## Probar
-- `node --test vigia/test/vigia.test.mjs`: 21 tests con datos reales del 10/11, sin red ni base.
-- `node vigia/test/control-negativo.mjs`: rompe 9 cosas, una por vez, y cada una tiene que poner algún test en rojo.
+- `node --test vigia/test/vigia.test.mjs vigia/test/estado-git.test.mjs`: 28 tests. Usan datos reales del 10/11 y, para el estado, un repo git temporal (un remoto «bare» y dos clones). Sin red ni base.
+- `node vigia/test/control-negativo.mjs`: rompe 14 cosas, una por vez, y cada una tiene que poner algún test en rojo.
 - `node vigia/vigia-satchi.mjs --seco [--todo] [--estado archivo.json]`: contra SATCHI de verdad, sin mail ni base.

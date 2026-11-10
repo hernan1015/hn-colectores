@@ -1,4 +1,5 @@
-// HN AGRO · vigía de SATCHI · EL ESTADO (qué ya se avisó) en Supabase, tabla satchi_vigia_avisos (migracion/).
+// HN AGRO · vigía de SATCHI · EL ESTADO EN SUPABASE (OPCIONAL: SATCHI_VIGIA_ESTADO=supabase; por defecto va en el repo,
+// ver estado-git.mjs). Tabla satchi_vigia_avisos (migracion/, sin aplicar).
 // Por la API REST de Supabase (PostgREST), sin dependencias. Las credenciales llegan por variables de entorno que el
 // workflow lee de secrets.* (nunca en el código): SATCHI_VIGIA_SUPABASE_URL y SATCHI_VIGIA_SUPABASE_KEY.
 // En --seco no se usa: el estado sale de un archivo local opcional (--estado archivo.json) o vacío.
@@ -34,6 +35,10 @@ export function crearEstadoSupabase({ url, clave, fetchFn = globalThis.fetch }) 
       const t = new Date(ahoraMs).toISOString();
       await pedir('POST', '?on_conflict=clave', avisos.map((a) => ({ clave: a.clave, tipo: a.tipo, activo: true, detalle: a, primer_aviso: t, ultimo_aviso: t, actualizado: t })),
         { Prefer: 'resolution=merge-duplicates,return=minimal' });
+    },
+    /** lo de esta corrida, en el mismo orden que el backend git: primero se guarda, después (si salió) va el mail */
+    async guardar({ avisar = [], rearmar = [], ahoraMs }) {
+      try { await this.avisado(avisar, ahoraMs); await this.rearmar(rearmar, ahoraMs); return avisar; } catch (e) { return false; }
     },
     /** rearma: las claves que ya no cruzan el umbral dejan de estar activas (sin mail) */
     async rearmar(claves, ahoraMs) {

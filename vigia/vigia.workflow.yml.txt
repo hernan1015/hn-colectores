@@ -1,6 +1,9 @@
 # HN AGRO · VIGÍA DE SATCHI (crecidas y focos de calor; piloto). Ver vigia/LEEME.md.
 # Va en .github/workflows/vigia-satchi.yml (copiarlo tal cual desde vigia/vigia.workflow.yml.txt).
-# Lee SATCHI público (sin claves), compara con lo ya avisado (Supabase) y manda UN mail por SMTP si hay algo nuevo.
+# Lee SATCHI público (sin claves), compara con lo ya avisado y manda UN mail por SMTP si hay algo nuevo.
+# El ESTADO (qué ya se avisó) va en la rama huérfana `vigia-estado` de este repo (estado.json, sólo claves públicas):
+# por eso este job, y sólo este, tiene `contents: write` con el GITHUB_TOKEN de Actions (sin PAT).
+# Orden para no mandar doble: primero se guarda el estado; si el push no sale (con un reintento), NO hay mail.
 # APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo SATCHI_VIGIA_ON vale «si»
 # (Settings → Secrets and variables → Actions → Variables). A mano: Actions → vigia-satchi → Run workflow.
 # El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de claves, direcciones ni detalle.
@@ -29,16 +32,19 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || vars.SATCHI_VIGIA_ON == 'si' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: write          # sólo para subir estado.json a la rama vigia-estado
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Tests (sin red ni base)
-        run: node --test vigia/test/vigia.test.mjs
+        run: node --test vigia/test/vigia.test.mjs vigia/test/estado-git.test.mjs
       - name: Vigía
         env:
-          SATCHI_VIGIA_SUPABASE_URL: ${{ secrets.SATCHI_VIGIA_SUPABASE_URL }}
+          SATCHI_VIGIA_ESTADO: ${{ vars.SATCHI_VIGIA_ESTADO }}        # vacío = git (rama vigia-estado); «supabase» = la tabla (opcional)
+          SATCHI_VIGIA_SUPABASE_URL: ${{ secrets.SATCHI_VIGIA_SUPABASE_URL }}   # sólo con SATCHI_VIGIA_ESTADO=supabase
           SATCHI_VIGIA_SUPABASE_KEY: ${{ secrets.SATCHI_VIGIA_SUPABASE_KEY }}
           SATCHI_SMTP_HOST: ${{ secrets.SATCHI_SMTP_HOST }}
           SATCHI_SMTP_PORT: ${{ secrets.SATCHI_SMTP_PORT }}
