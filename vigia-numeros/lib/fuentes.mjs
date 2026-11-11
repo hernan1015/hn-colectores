@@ -82,6 +82,7 @@ export function crearLector({ fetchFn = globalThis.fetch, urls = URLS } = {}) {
     async bcr() { const r = await pedir(urls.bcr, false); return r.ok ? parsearBCR(r.txt) : r; },
     /* fecha 'dd/mm/aaaa' (la de la app): primaria y, si no, la alternativa */
     async magyp(fechaDMY) {
+      let motivo = 'MAGyP no contestó (primaria ni alternativa)';
       for (const base of urls.magyp) {
         const r = await pedir(base + '?Fecha=' + encodeURIComponent(fechaDMY), true);
         if (!r.ok) continue;
@@ -90,9 +91,10 @@ export function crearLector({ fetchFn = globalThis.fetch, urls = URLS } = {}) {
         /* sólo los posts DEL DÍA pedido (Codex, 10/11): una respuesta de otro día no se atribuye a la fecha de la app */
         const iso = String(fechaDMY).split('/').reverse().map((x) => x.padStart(2, '0')).join('-');
         const delDia = j.posts.filter((p) => String(p.fecha || '').slice(0, 10) === iso);
-        return delDia.length ? { ok: true, posts: delDia } : { ok: false, motivo: 'MAGyP sin dato del ' + fechaDMY };
+        if (delDia.length) return { ok: true, posts: delDia };
+        motivo = 'MAGyP sin dato del ' + fechaDMY;          // de otro día: se prueba la otra URL antes de declararlo faltante
       }
-      return { ok: false, motivo: 'MAGyP no contestó (primaria ni alternativa)' };
+      return { ok: false, motivo };
     },
   };
 }

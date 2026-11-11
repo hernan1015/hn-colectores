@@ -27,6 +27,17 @@ La banda de la pizarra es ancha a propósito. No mide la retención: caza errore
 - **No hay estado**, así que no se espera a un segundo día.
 - Si la que no contesta es **la app**, se avisa como desvío (`app_no_sirve`).
 
+## Códigos de salida (lo que ve Actions)
+| código | cuándo |
+|---|---|
+| **0** | la verificación está **completa**. Si hubo desvío, el mail salió |
+| **1** | **INCOMPLETO** (alguna comparación no se pudo hacer, aunque sea una, o ninguna), **`ENVIO_FALLO`** (el mail no salió) o un error del vigía |
+
+- **El orden en el registro:** primero sale la línea de cantidades y recién después se intenta el envío. Si el envío falla, se agrega `{"envio":"ENVIO_FALLO"}`, un código fijo: el error del SMTP puede traer el nombre del servidor o del certificado.
+- **El módulo SMTP** (`vigia/lib/correo.mjs`) es el mismo del vigía de SATCHI.
+  - Si el servidor cierra a mitad del diálogo, o no contesta dentro del tope, **rechaza**: nunca queda colgado ni termina en silencio.
+  - Un cierre después de que el servidor aceptó el mensaje no cuenta como falla.
+
 ## Lo que queda afuera
 - **A3, los futuros de MATba-Rofex:** su API pide usuario y clave, y el endpoint de futuros de la app (`precios-futuros-ver`) pide sesión. No entra hasta que haya una fuente pública sin clave.
 - **La pizarra con «S/C» (sin cotización):** se saltea. El valor estimado «(E)» no se usa.
@@ -46,8 +57,8 @@ La banda de la pizarra es ancha a propósito. No mide la retención: caza errore
 
 ## Probar
 ```
-node --test vigia-numeros/test/vigia-numeros.test.mjs     # 25 tests, con respuestas reales guardadas el 10/11/2026
-node vigia-numeros/test/control-negativo.mjs              # rompe 16 cosas, una por vez: cada una tiene que hacer caer algún test
+node --test vigia-numeros/test/vigia-numeros.test.mjs vigia-numeros/test/correo-y-cli.test.mjs   # 35 tests: respuestas reales del 10/11/2026, SMTP falso local y el CLI con su código de salida
+node vigia-numeros/test/control-negativo.mjs              # rompe 21 cosas, una por vez: cada una tiene que hacer caer algún test
 node vigia-numeros/vigia-numeros.mjs --seco               # contra la red de verdad, sin mandar nada: imprime SÓLO la línea de cantidades (lo mismo que en Actions)
 node vigia-numeros/vigia-numeros.mjs --seco --detalle     # en una PC: además muestra el mail que mandaría (no usarlo en Actions)
 ```

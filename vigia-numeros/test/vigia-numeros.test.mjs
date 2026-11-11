@@ -118,7 +118,9 @@ test('⭐ real con desvío: UN mail, con «[prueba]» por defecto; el registro l
   assert.equal(mails.length, 1);
   assert.match(mails[0].asunto, /^\[prueba\] HN AGRO · vigía de números: 2 desvíos/);
   assert.match(mails[0].cuerpo, /FOB de soja: la app muestra 313/);
-  assert.equal(logs.length, 1); assert.ok(!/313|535000|1545/.test(logs[0]), 'el registro público no lleva números de precios');
+  assert.equal(logs.length, 2); assert.deepEqual(JSON.parse(logs[1]), { envio: 'mandado' });
+  assert.ok(!/313|535000|1545/.test(logs.join(' ')), 'el registro público no lleva números de precios');
+  assert.equal(JSON.parse(logs[0]).mail, 'a mandar');   // el resumen sale ANTES de mandar
 });
 test('real sin desvíos: no manda', async () => {
   const mails = [];
@@ -162,9 +164,13 @@ test('el texto del mail dice los umbrales y lo que quedó afuera', () => {
 test('repo público: ni el código ni los datos de prueba traen mails, claves ni tokens', () => {
   const raiz = path.resolve(D, '..', '..');
   const archivos = []; const andar = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) andar(p); else archivos.push(p); } }; andar(raiz);
+  andar(path.resolve(raiz, '..', 'vigia', 'lib'));   // también el módulo SMTP compartido (Codex, 2.ª vuelta)
+  assert.ok(archivos.some((x) => /correo.mjs$/.test(x)));
   for (const f of archivos) {
     const s = fs.readFileSync(f, 'utf8');
-    assert.ok(!/[\w.+-]+@[\w-]+\.[\w.]+/.test(s.replace(/@[a-z]+\.(mjs|json|html)/g, '')), 'mail en ' + f);
+    /* se permiten sólo los dominios RESERVADOS para pruebas (RFC 2606: .test, .example, .invalid), que no son de nadie */
+    const mails = (s.replace(/@[a-z]+\.(mjs|json|html)/g, '').match(/[\w.+-]+@[\w-]+\.[\w.]+/g) || []).filter((m) => !/\.(test|example|invalid)\b/.test(m));
+    assert.deepEqual(mails, [], 'mail en ' + f);
     assert.ok(!/(api[_-]?key|token|password|secret)\s*[:=]\s*['"][^'"]{8,}/i.test(s), 'clave en ' + f);
   }
 });

@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: '22'
       - name: Tests (sin red)
-        run: node --test vigia-numeros/test/vigia-numeros.test.mjs
+        run: node --test vigia-numeros/test/vigia-numeros.test.mjs vigia-numeros/test/correo-y-cli.test.mjs
       - name: Vigía de números
         env:
           SATCHI_SMTP_HOST: ${{ secrets.SATCHI_SMTP_HOST }}

@@ -20,16 +20,21 @@ const FALLAS = [
   ['lo que faltó se ve como tranquilidad (Codex)', 'vigia-numeros/lib/reglas.mjs', 'incompleto: faltan.length > U.faltantes_tolerados', 'incompleto: false'],
   ['el mail sale sólo con desvíos', 'vigia-numeros/vigia-numeros.mjs', 'const mail = r.desvios.length || r.incompleto ?', 'const mail = r.desvios.length ?'],
   ['MAGyP de otro día se compara igual', 'vigia-numeros/lib/fuentes.mjs', "j.posts.filter((p) => String(p.fecha || '').slice(0, 10) === iso)", 'j.posts'],
+  ['SMTP: un cierre limpio a mitad del diálogo no se ve (Codex 2.ª)', 'vigia/lib/correo.mjs', "    s.on('end', () => fallar('el servidor cerró la conexión antes de terminar'));\n    s.on('close', () => fallar('la conexión se cerró antes de terminar'));\n", ''],
+  ['SMTP: el tope de tiempo vía destroy (Codex 2.ª)', 'vigia/lib/correo.mjs', "const tope = setTimeout(() => fallar('tiempo'), tiempoMs);", "const tope = setTimeout(() => sock && sock.destroy(new Error('tiempo')), tiempoMs);"],
+  ['el envío fallido copia el mensaje crudo', 'vigia-numeros/vigia-numeros.mjs', "catch { envio = 'ENVIO_FALLO'; }", 'catch (e) { envio = String(e && e.message); }'],
+  ['el CLI sale con 0 aunque esté INCOMPLETO o falle el envío', 'vigia-numeros/vigia-numeros.mjs', "if (x.r.incompleto || x.resumen.comparaciones === 0 || x.envio === 'ENVIO_FALLO') process.exitCode = 1;", 'if (x.resumen.comparaciones === 0) process.exitCode = 2;'],
+  ['MAGyP de otro día en la primaria no prueba la alternativa', 'vigia-numeros/lib/fuentes.mjs', "        motivo = 'MAGyP sin dato del ' + fechaDMY;", "        return { ok: false, motivo: 'MAGyP sin dato del ' + fechaDMY };"],
   ['--seco imprime el mail en Actions', 'vigia-numeros/vigia-numeros.mjs', 'if (seco && detalle) log(', 'if (seco) log('],
   ['no mira el respaldo de la app', 'vigia-numeros/lib/reglas.mjs', "if (String(app.fuente_tc || '').startsWith('fallback'))", 'if (false)'],
-  ['--seco manda el mail', 'vigia-numeros/vigia-numeros.mjs', 'if (!seco && mail) mandado', 'if (mail) mandado'],
+  ['--seco manda el mail', 'vigia-numeros/vigia-numeros.mjs', 'if (!seco && mail) {', 'if (mail) {'],
   ['sin la URL alternativa de MAGyP', 'vigia-numeros/lib/fuentes.mjs', 'for (const base of urls.magyp) {', 'for (const base of urls.magyp.slice(0, 1)) {'],
   ['el registro público lleva el detalle', 'vigia-numeros/vigia-numeros.mjs', 'log(JSON.stringify(resumen));', 'log(JSON.stringify({ ...resumen, r }));'],
 ];
 function correrTests(dir) {
-  const r = spawnSync(process.execPath, ['--test', 'vigia-numeros/test/vigia-numeros.test.mjs'], { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, ['--test', 'vigia-numeros/test/vigia-numeros.test.mjs', 'vigia-numeros/test/correo-y-cli.test.mjs'], { cwd: dir, encoding: 'utf8' });
   const n = (k) => Number(((r.stdout || '').match(new RegExp('(?:ℹ|#) ' + k + ' ([0-9]+)')) || [])[1] ?? NaN);
-  return { pasan: n('pass'), fallan: n('fail') };
+  return { pasan: n('pass'), fallan: n('fail') + (n('cancelled') || 0) };   // un test que se cuelga (timeout) cuenta como caído
 }
 const base = correrTests(RAIZ);
 console.log('sin fallas: ' + base.pasan + ' pasan, ' + base.fallan + ' fallan');
