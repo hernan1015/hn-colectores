@@ -37,7 +37,7 @@ La banda de la pizarra es ancha a propósito. No mide la retención: caza errore
 2. **Variables:**
    - `VIGIA_NUMEROS_MODO`: `prueba` (por defecto; el asunto dice «[prueba]») o `produccion`.
    - **`VIGIA_NUMEROS_ON` = `si`** prende el horario. Mientras no esté, el workflow corre sólo a mano.
-3. **El workflow:** copiar `vigia-numeros/vigia-numeros.workflow.yml.txt` a `.github/workflows/vigia-numeros.yml`. El token de pc-nanci no tiene el permiso «workflow» de GitHub, igual que con el vigía de SATCHI.
+3. **El workflow:** copiar `vigia-numeros/vigia-numeros.workflow.yml.txt` a `.github/workflows/vigia-numeros.yml`. El token con el que se sube este código no tiene el permiso «workflow» de GitHub, igual que con el vigía de SATCHI.
 4. **La primera corrida, a mano:** Actions → `vigia-numeros` → Run workflow con `seco`. Después, una con `real`.
 
 ## Probar
