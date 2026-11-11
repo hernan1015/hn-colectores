@@ -67,3 +67,11 @@ Si SATCHI no contesta, o contesta a medias, **no se avisa con lo viejo**: esa fu
 - `node --test vigia/test/vigia.test.mjs vigia/test/estado-git.test.mjs`: 28 tests. Usan datos reales del 10/11 y, para el estado, un repo git temporal (un remoto «bare» y dos clones). Sin red ni base.
 - `node vigia/test/control-negativo.mjs`: rompe 14 cosas, una por vez, y cada una tiene que poner algún test en rojo.
 - `node vigia/vigia-satchi.mjs --seco [--todo] [--estado archivo.json]`: contra SATCHI de verdad, sin mail ni base.
+
+## Vigía de frescura de los mosaicos OPERA (`vigia/opera-frescura.workflow.yml.txt`, diseño: APAGADO)
+- **Qué hace:** una vez por día lee `satchi-publico?que=opera&zona=corrientes&pasadas=1` (público, sin llaves) y manda **un** mail si `hoy − hasta` > 3 días, si `fuente` no es `r2` o si la respuesta es `ok:false` o no llega. Script: `vigia/opera-frescura.mjs`.
+- **No repite:** la clave del aviso lleva `hasta` (`opera-atraso-<hasta>`). Se guarda en la caché de Actions **sólo si el mail salió**; si la clave ya está, no se manda. Un `hasta` nuevo que se vuelve a trabar avisa otra vez. La caché que no se usa en 7 días la borra GitHub: en el peor caso, un atraso de varias semanas avisa una vez por semana.
+- **El mail:** los mismos secretos del vigía de SATCHI (`SATCHI_SMTP_HOST/PORT/USER/PASS`, `SATCHI_SMTP_FROM` opcional, `SATCHI_VIGIA_DESTINO`). No hay `MAIL_*` en este repo.
+- **Costo:** ~0,5 s la consulta (medido el 11/11 desde pc-nanci: 3 corridas en 1,5 s) y ~10-20 s el job entero (el vigía de SATCHI, con setup-node, midió 18 s). GitHub cobra cada job redondeado al minuto ⇒ **~30 min/mes**; en este repo público, **0 USD**. En Netlify, 1 pedido por día (la respuesta queda en la caché de la red).
+- **Tests:** `node --test vigia/test/opera-frescura.test.mjs` (8): el fixture de hace 4 días avisa, el de hace 1 día no, el borde de 3 días, `fuente` ≠ `r2`, `ok:false`, la clave estable por `hasta`, el CLI con `GITHUB_OUTPUT` y un control negativo (con el umbral roto, el de 4 días dejaría de avisar).
+- **Para prenderlo** (con el OK, lo hace local): copiar `vigia/opera-frescura.workflow.yml.txt` a `.github/workflows/opera-frescura.yml`, descomentar el `schedule` y sacar el `if: false` del job.
