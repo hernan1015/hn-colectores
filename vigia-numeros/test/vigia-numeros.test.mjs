@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsearBNA, parsearBCR, numeroAR, URLS } from '../lib/fuentes.mjs';
@@ -175,14 +176,26 @@ test('repo público: ni el código ni los datos de prueba traen mails, claves ni
   }
 });
 test('repo público: ningún archivo del repo nombra a los destinatarios de prueba ni a la máquina', () => {
-  /* los nombres van codificados para que este mismo test no los contenga */
-  const prohibidos = ['aGVybmFucg==', 'bmFuY2lv', 'cGMtbmFuY2k='].map((b) => Buffer.from(b, 'base64').toString('utf8'));
+  /* Codex 3.ª vuelta: los identificadores NO van en ninguna forma reversible. Sólo el sha256 de cada uno, en minúsculas.
+     Se tokeniza cada archivo (todo lo que no sea letra, número, punto o guion separa), se hashea cada token (y el token sin
+     puntos ni guiones en los bordes) y se compara. VIGIA_PRIVADOS (separados por coma) agrega más sin commitearlos. */
+  const sha = (x) => createHash('sha256').update(x).digest('hex');
+  const prohibidos = new Set(['f59f64ae4352b2e2b91b4719a4b3bbe4994f41a5a51112a95226c047b33c7005', 'fc28bbc7ba496fa94772cf3259b91a570d749499a10e59c226df8097e1be52df',
+    '6f8e5802103a6efab5da76f20680b5dc2961bf652a3519cb83400721f678cfff',
+    ...String(process.env.VIGIA_PRIVADOS || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean).map(sha)]);
   const raiz = path.resolve(D, '..', '..', '..');
   const archivos = [];
   const andar = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.name === '.git' || e.name === 'node_modules') continue; const p = path.join(d, e.name); if (e.isDirectory()) andar(p); else archivos.push(p); } };
   andar(raiz);
   assert.ok(archivos.some((x) => x.endsWith(path.join('vigia', 'LEEME.md'))), 'tiene que recorrer el repo entero');
   const hallados = [];
-  for (const f of archivos) { let s; try { s = fs.readFileSync(f, 'utf8').toLowerCase(); } catch { continue; } for (const n of prohibidos) if (s.includes(n)) hallados.push(path.relative(raiz, f) + ' → ' + Buffer.from(n).toString('base64')); }
-  assert.deepEqual(hallados, []);
+  for (const f of archivos) {
+    let txt; try { txt = fs.readFileSync(f, 'utf8').toLowerCase(); } catch { continue; }
+    for (const t of txt.split(/[^\p{L}\p{N}.-]+/u)) {
+      if (!t) continue;
+      const limpio = t.replace(/^[.-]+|[.-]+$/g, '');
+      if (prohibidos.has(sha(t)) || (limpio && prohibidos.has(sha(limpio)))) { hallados.push(path.relative(raiz, f)); break; }
+    }
+  }
+  assert.deepEqual(hallados, [], 'archivos con un identificador privado (no se dice cuál)');
 });

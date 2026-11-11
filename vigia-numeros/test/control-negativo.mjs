@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // la raíz del repo (el vigía importa ../vigia/lib/correo.mjs)
+const PRIVADO_DE_PRUEBA = ['zz', 'privado', 'de', 'prueba'].join('-');
 const FALLAS = [
   ['umbral del dólar al 20 %', 'vigia-numeros/lib/reglas.mjs', 'tc_desvio_rel: 0.02,', 'tc_desvio_rel: 0.20,'],
   ['no mira el dólar viejo', 'vigia-numeros/lib/reglas.mjs', '> U.tc_dias_atraso) desvios.push', '> 999) desvios.push'],
@@ -25,9 +26,10 @@ const FALLAS = [
   ['el envío fallido copia el mensaje crudo', 'vigia-numeros/vigia-numeros.mjs', "catch { envio = 'ENVIO_FALLO'; }", 'catch (e) { envio = String(e && e.message); }'],
   ['el CLI sale con 0 aunque esté INCOMPLETO o falle el envío', 'vigia-numeros/vigia-numeros.mjs', "if (x.r.incompleto || x.resumen.comparaciones === 0 || x.envio === 'ENVIO_FALLO') process.exitCode = 1;", 'if (x.resumen.comparaciones === 0) process.exitCode = 2;'],
   ['MAGyP de otro día en la primaria no prueba la alternativa', 'vigia-numeros/lib/fuentes.mjs', "        motivo = 'MAGyP sin dato del ' + fechaDMY;", "        return { ok: false, motivo: 'MAGyP sin dato del ' + fechaDMY };"],
-  /* el nombre va codificado: este archivo también está en el repo y el test lo recorre */
-  ['vuelve un nombre al LEEME del vigía de SATCHI', 'vigia/LEEME.md', 'sin nombres en este repo', 'sin nombres en este repo (' + Buffer.from('bmFuY2lv', 'base64').toString('utf8') + ')'],
-  ['vuelve el nombre de la máquina a un LEEME', 'vigia-numeros/LEEME.md', '# Vigía de números (diario)', '# Vigía de números (diario) ' + Buffer.from('cGMtbmFuY2k=', 'base64').toString('utf8')],
+  /* identificador privado: el control NO repone ningún nombre real. Inyecta un token de prueba (armado en partes, para que
+     este archivo no lo contenga entero) y lo agrega a VIGIA_PRIVADOS sólo durante el control (ver correrTests). */
+  ['vuelve un identificador privado al LEEME del vigía de SATCHI', 'vigia/LEEME.md', 'sin nombres en este repo', 'sin nombres en este repo (' + PRIVADO_DE_PRUEBA + ')'],
+  ['vuelve un identificador privado al LEEME del vigía de números', 'vigia-numeros/LEEME.md', '# Vigía de números (diario)', '# Vigía de números (diario) ' + PRIVADO_DE_PRUEBA],
   ['--seco imprime el mail en Actions', 'vigia-numeros/vigia-numeros.mjs', 'if (seco && detalle) log(', 'if (seco) log('],
   ['no mira el respaldo de la app', 'vigia-numeros/lib/reglas.mjs', "if (String(app.fuente_tc || '').startsWith('fallback'))", 'if (false)'],
   ['--seco manda el mail', 'vigia-numeros/vigia-numeros.mjs', 'if (!seco && mail) {', 'if (mail) {'],
@@ -35,7 +37,8 @@ const FALLAS = [
   ['el registro público lleva el detalle', 'vigia-numeros/vigia-numeros.mjs', 'log(JSON.stringify(resumen));', 'log(JSON.stringify({ ...resumen, r }));'],
 ];
 function correrTests(dir) {
-  const r = spawnSync(process.execPath, ['--test', 'vigia-numeros/test/vigia-numeros.test.mjs', 'vigia-numeros/test/correo-y-cli.test.mjs'], { cwd: dir, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, ['--test', 'vigia-numeros/test/vigia-numeros.test.mjs', 'vigia-numeros/test/correo-y-cli.test.mjs'], { cwd: dir, encoding: 'utf8',
+    env: { ...process.env, VIGIA_PRIVADOS: [process.env.VIGIA_PRIVADOS, PRIVADO_DE_PRUEBA].filter(Boolean).join(',') } });
   const n = (k) => Number(((r.stdout || '').match(new RegExp('(?:ℹ|#) ' + k + ' ([0-9]+)')) || [])[1] ?? NaN);
   return { pasan: n('pass'), fallan: n('fail') + (n('cancelled') || 0) };   // un test que se cuelga (timeout) cuenta como caído
 }
