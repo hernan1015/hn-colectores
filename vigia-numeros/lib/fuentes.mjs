@@ -85,9 +85,14 @@ export function crearLector({ fetchFn = globalThis.fetch, urls = URLS } = {}) {
       for (const base of urls.magyp) {
         const r = await pedir(base + '?Fecha=' + encodeURIComponent(fechaDMY), true);
         if (!r.ok) continue;
-        try { const j = JSON.parse(r.txt); if (j && Array.isArray(j.posts) && j.posts.length) return { ok: true, posts: j.posts }; } catch { /* la otra */ }
+        let j = null; try { j = JSON.parse(r.txt); } catch { continue; }   // la primaria a veces contesta 200 con un texto de error
+        if (!j || !Array.isArray(j.posts) || !j.posts.length) continue;
+        /* sólo los posts DEL DÍA pedido (Codex, 10/11): una respuesta de otro día no se atribuye a la fecha de la app */
+        const iso = String(fechaDMY).split('/').reverse().map((x) => x.padStart(2, '0')).join('-');
+        const delDia = j.posts.filter((p) => String(p.fecha || '').slice(0, 10) === iso);
+        return delDia.length ? { ok: true, posts: delDia } : { ok: false, motivo: 'MAGyP sin dato del ' + fechaDMY };
       }
-      return { ok: false, motivo: 'MAGyP no contestó' };
+      return { ok: false, motivo: 'MAGyP no contestó (primaria ni alternativa)' };
     },
   };
 }

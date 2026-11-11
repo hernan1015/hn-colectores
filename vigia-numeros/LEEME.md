@@ -21,7 +21,11 @@ Los valores que se midieron al escribir los umbrales, el 10/11/2026:
 
 La banda de la pizarra es ancha a propósito. No mide la retención: caza errores gruesos, como pesos tomados como dólares, un ×10, un respaldo de meses o el precio de otro grano.
 
-**Si una fuente no contesta, esa comparación no se hace**: queda en `faltan` y no se avisa con un dato viejo. Si la que no contesta es **la app**, se avisa (`app_no_sirve`).
+**Si una fuente no contesta, esa comparación no se hace y no se avisa con un dato viejo.** Pero **no se calla**: una comparación que no se pudo hacer es un aviso en sí mismo.
+- **Qué cuenta como faltante:** la fuente caída o ilegible, MAGyP sin dato del día pedido (los posts de otro día no se usan) y la pizarra «S/C» o vieja.
+- **Tolerancia: cero** (`faltantes_tolerados`). Con un solo faltante, el resumen dice `verificacion: INCOMPLETO`, el mail sale **el mismo día** con lo que no se pudo comparar y su motivo, y la corrida termina con **código 1**: Actions queda en rojo.
+- **No hay estado**, así que no se espera a un segundo día.
+- Si la que no contesta es **la app**, se avisa como desvío (`app_no_sirve`).
 
 ## Lo que queda afuera
 - **A3, los futuros de MATba-Rofex:** su API pide usuario y clave, y el endpoint de futuros de la app (`precios-futuros-ver`) pide sesión. No entra hasta que haya una fuente pública sin clave.
@@ -42,12 +46,13 @@ La banda de la pizarra es ancha a propósito. No mide la retención: caza errore
 
 ## Probar
 ```
-node --test vigia-numeros/test/vigia-numeros.test.mjs     # 21 tests, con respuestas reales guardadas el 10/11/2026
-node vigia-numeros/test/control-negativo.mjs              # rompe 12 cosas, una por vez: cada una tiene que hacer caer algún test
-node vigia-numeros/vigia-numeros.mjs --seco               # contra la red de verdad: muestra lo que mandaría, no manda nada
+node --test vigia-numeros/test/vigia-numeros.test.mjs     # 25 tests, con respuestas reales guardadas el 10/11/2026
+node vigia-numeros/test/control-negativo.mjs              # rompe 16 cosas, una por vez: cada una tiene que hacer caer algún test
+node vigia-numeros/vigia-numeros.mjs --seco               # contra la red de verdad, sin mandar nada: imprime SÓLO la línea de cantidades (lo mismo que en Actions)
+node vigia-numeros/vigia-numeros.mjs --seco --detalle     # en una PC: además muestra el mail que mandaría (no usarlo en Actions)
 ```
 
 ## Este repo es público
 En el código no hay claves, ni direcciones de mail, ni datos de nadie.
 - **Los datos de prueba:** son las respuestas públicas del 10/11/2026, recortadas a la parte que se usa. Un test verifica que no traigan direcciones ni claves.
-- **El registro de Actions:** muestra sólo cantidades. El detalle va en el mail.
+- **El registro de Actions:** muestra sólo cantidades, también en `--seco`. El detalle va en el mail, y en una PC con `--detalle`.

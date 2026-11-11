@@ -20,6 +20,11 @@ export const UMBRALES = Object.freeze({
   pizarra_cociente: { trigo: [0.70, 1.05], soja: [0.55, 1.00] },
   /* la pizarra tiene que ser de los últimos 7 días corridos contra la fecha FOB de la app; si no, no se compara */
   pizarra_dias_max: 7,
+  /* INCOMPLETO (Codex, n3-colectores-vigia-numeros, 10/11): una comparación declarada que NO se pudo hacer no es «todo
+     bien». Tolerancia: CERO. Si falta cualquiera (fuente caída, ilegible, sin dato del día, pizarra S/C o vieja), el vigía
+     lo AVISA el mismo día en el mail y la corrida termina con código 1 (Actions queda en rojo). No hay estado para esperar
+     a un segundo día, así que no se espera. */
+  faltantes_tolerados: 0,
 });
 /* NCM de MAGyP: el mismo mapeo que la app (precios-granos.js) */
 export const NCM = Object.freeze({ trigo: '100199', soja: '120190' });
@@ -32,9 +37,10 @@ export const isoDeDMY = (s) => { const m = /(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(
 
 /** Compara. Devuelve { desvios: [...], faltan: [...], hechas: [...], afuera: [...] }. Ningún desvío sale de una fuente que faltó. */
 export function comparar({ app, bna, fob, bcr }, U = UMBRALES) {
-  const desvios = [], faltan = [], hechas = [];
+  const desvios = [], faltan = [], hechas = [], motivos = {};
+  const falta = (que, motivo) => { faltan.push(que); motivos[que] = motivo || 'sin dato'; };
   const afuera = ['A3 (futuros de MATba-Rofex): la API pide usuario y clave, y el endpoint de futuros de la app pide sesión. Queda afuera.'];
-  if (!app || app.ok === false) { desvios.push({ tipo: 'app_no_sirve', detalle: (app && app.motivo) || 'sin respuesta' }); return { desvios, faltan, hechas, afuera }; }
+  if (!app || app.ok === false) { desvios.push({ tipo: 'app_no_sirve', detalle: (app && app.motivo) || 'sin respuesta' }); return { desvios, faltan, hechas, afuera, motivos, incompleto: false }; }
   const precios = app.precios || {};
 
   /* 1 · la app avisa ella misma que sirve un respaldo */
@@ -43,7 +49,7 @@ export function comparar({ app, bna, fob, bcr }, U = UMBRALES) {
   for (const c of CULTIVOS) if ((app.estimados || []).includes(c)) desvios.push({ tipo: 'precio_estimado', cultivo: c });
 
   /* 2 · TC contra BNA divisa vendedora */
-  if (!bna || bna.ok === false) faltan.push('bna');
+  if (!bna || bna.ok === false) falta('bna', bna && bna.motivo);
   else if (!(app.tc_ars_usd > 0)) desvios.push({ tipo: 'tc_sin_numero' });
   else {
     hechas.push('tc');
@@ -53,10 +59,10 @@ export function comparar({ app, bna, fob, bcr }, U = UMBRALES) {
   }
 
   /* 3 · FOB de trigo y soja dentro del rango oficial del día */
-  if (!fob || fob.ok === false) faltan.push('magyp');
+  if (!fob || fob.ok === false) falta('magyp', fob && fob.motivo);
   else for (const c of CULTIVOS) {
     const usd = precios[c] && precios[c].usd, lista = (fob.posts || []).filter((p) => String(p.posicion || '').startsWith(NCM[c]) && typeof p.precio === 'number').map((p) => p.precio);
-    if (!lista.length) { faltan.push('magyp_' + c); continue; }
+    if (!lista.length) { falta('magyp_' + c, 'MAGyP no publicó ' + c + ' ese día'); continue; }
     if (!(usd > 0)) { desvios.push({ tipo: 'fob_sin_numero', cultivo: c }); continue; }
     hechas.push('fob_' + c);
     const lo = Math.min(...lista) * (1 - U.fob_margen_rel), hi = Math.max(...lista) * (1 + U.fob_margen_rel);
@@ -65,17 +71,17 @@ export function comparar({ app, bna, fob, bcr }, U = UMBRALES) {
 
   /* 4 · pizarra Rosario contra FOB × TC (sanidad gruesa) */
   const fApp = isoDeDMY(app.magyp_fecha);
-  if (!bcr || bcr.ok === false) faltan.push('bcr');
-  else if (!fApp || Math.abs(dias(fApp, bcr.fecha)) > U.pizarra_dias_max) faltan.push('bcr_vieja');
+  if (!bcr || bcr.ok === false) falta('bcr', bcr && bcr.motivo);
+  else if (!fApp || Math.abs(dias(fApp, bcr.fecha)) > U.pizarra_dias_max) falta('bcr_vieja', 'pizarra del ' + bcr.fecha + ' contra FOB del ' + (fApp || '?'));
   else for (const c of CULTIVOS) {
     const pz = bcr.precios && bcr.precios[c], usd = precios[c] && precios[c].usd;
-    if (!pz || pz.sin_cotizacion || !(pz.ars > 0)) { faltan.push('bcr_' + c); continue; }
+    if (!pz || pz.sin_cotizacion || !(pz.ars > 0)) { falta('bcr_' + c, pz && pz.sin_cotizacion ? 'pizarra «S/C»' : 'sin precio en la pizarra'); continue; }
     if (!(usd > 0 && app.tc_ars_usd > 0)) continue;
     hechas.push('pizarra_' + c);
     const q = pz.ars / (usd * app.tc_ars_usd), [lo, hi] = U.pizarra_cociente[c];
     if (q < lo || q > hi) desvios.push({ tipo: 'pizarra_fuera_de_banda', cultivo: c, cociente: +q.toFixed(3), banda: [lo, hi], pizarra_ars: pz.ars, fob_usd: usd, tc: app.tc_ars_usd, fecha_pizarra: bcr.fecha });
   }
-  return { desvios, faltan, hechas, afuera };
+  return { desvios, faltan, hechas, afuera, motivos, incompleto: faltan.length > U.faltantes_tolerados };
 }
 
 const LINEA = {
@@ -91,8 +97,12 @@ const LINEA = {
   pizarra_fuera_de_banda: (d) => `Pizarra Rosario de ${d.cultivo} (${d.fecha_pizarra}): $${d.pizarra_ars} contra FOB ${d.fob_usd} × ${d.tc} de la app: cociente ${d.cociente}, fuera de ${d.banda[0]}-${d.banda[1]}.`,
 };
 export function textoDe(r, { prueba = true, hoy = new Date().toISOString().slice(0, 10) } = {}) {
-  const asunto = (prueba ? '[prueba] ' : '') + 'HN AGRO · vigía de números: ' + r.desvios.length + (r.desvios.length === 1 ? ' desvío' : ' desvíos') + ' (' + hoy + ')';
-  const cuerpo = ['Lo que muestra la app no coincide con la fuente pública:', '', ...r.desvios.map((d) => '· ' + (LINEA[d.tipo] ? LINEA[d.tipo](d) : d.tipo)), '',
+  const partes = [];
+  if (r.desvios.length) partes.push(r.desvios.length + (r.desvios.length === 1 ? ' desvío' : ' desvíos'));
+  if (r.incompleto) partes.push('INCOMPLETO');
+  const asunto = (prueba ? '[prueba] ' : '') + 'HN AGRO · vigía de números: ' + partes.join(' · ') + ' (' + hoy + ')';
+  const cuerpo = [...(r.desvios.length ? ['Lo que muestra la app no coincide con la fuente pública:', '', ...r.desvios.map((d) => '· ' + (LINEA[d.tipo] ? LINEA[d.tipo](d) : d.tipo)), ''] : ['Sin desvíos en lo que se pudo comparar.', '']),
+    ...(r.incompleto ? ['VERIFICACIÓN INCOMPLETA: no se pudo comparar', ...r.faltan.map((q) => '· ' + q + ': ' + ((r.motivos || {})[q] || 'sin dato')), ''] : []),
     'Comparado: ' + (r.hechas.join(', ') || 'nada') + (r.faltan.length ? ' · no se pudo comparar: ' + r.faltan.join(', ') : ''),
     'Fuera de este vigía: ' + r.afuera.join(' '), '', 'Umbrales y motivos: vigia-numeros/lib/reglas.mjs del repo hn-colectores.'].join('\n');
   return { asunto, cuerpo };

@@ -7,7 +7,8 @@
 # APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo VIGIA_NUMEROS_ON vale «si»
 # (Settings → Secrets and variables → Actions → Variables). A mano: Actions → vigia-numeros → Run workflow (seco por defecto).
 # Sin secretos nuevos: usa los del vigía de SATCHI (SATCHI_SMTP_*, SATCHI_VIGIA_DESTINO). No guarda estado: sólo lee.
-# El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de claves, direcciones ni detalle.
+# El registro de Actions es PÚBLICO: el script imprime sólo cantidades (también en seco: el detalle sale sólo con --detalle,
+# que acá NO se usa); nada de claves, direcciones ni detalle. Una comparación que no se pudo hacer = INCOMPLETO: mail y job en rojo.
 name: vigia-numeros
 on:
   schedule:

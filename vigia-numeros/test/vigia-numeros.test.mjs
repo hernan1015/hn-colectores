@@ -97,13 +97,18 @@ test('la app no contesta → un solo aviso: app_no_sirve', () => {
 });
 
 /* ── la corrida entera, sin red ──────────────────────────────────────── */
-test('⭐ --seco: lee las 4 fuentes (MAGyP primaria rota → la alternativa), no manda nada, y con desvío MUESTRA el mail', async () => {
+test('⭐ --seco: lee las 4 fuentes (MAGyP primaria rota → la alternativa) y no manda nada; el registro (Actions) lleva SÓLO cantidades', async () => {
   let mandados = 0; const logs = [];
   const f = red({ app: JSON.stringify({ ...APP, tc_ars_usd: 1300 }) });
   const x = await correr({ seco: true, fetchFn: f, mandarFn: async () => { mandados++; return { ok: true }; }, log: (s) => logs.push(s), env: {} });
   assert.equal(mandados, 0); assert.equal(x.resumen.desvios, 1); assert.equal(x.resumen.comparaciones, 5);
   assert.ok(f.pedidos.some((u) => u.startsWith(URLS.magyp[1])), 'cayó a la URL alternativa de MAGyP');
   assert.equal(f.pedidos.length, 5);   // app, bna, bcr, magyp primaria y alternativa
+  assert.equal(logs.length, 1); assert.ok(!/1300|1545|lo que mandaría/.test(logs[0]), 'en --seco sin --detalle no sale el detalle');
+});
+test('--seco --detalle (en una PC): muestra el mail que mandaría', async () => {
+  const logs = [];
+  await correr({ seco: true, detalle: true, fetchFn: red({ app: JSON.stringify({ ...APP, tc_ars_usd: 1300 }) }), mandarFn: async () => ({ ok: true }), log: (s) => logs.push(s), env: {} });
   assert.ok(logs.join('\n').includes('lo que mandaría'));
 });
 test('⭐ real con desvío: UN mail, con «[prueba]» por defecto; el registro lleva sólo cantidades', async () => {
@@ -120,11 +125,35 @@ test('real sin desvíos: no manda', async () => {
   const x = await correr({ seco: false, fetchFn: red(), mandarFn: async (m) => { mails.push(m); return { ok: true }; }, log: () => {}, env: {} });
   assert.equal(mails.length, 0); assert.equal(x.resumen.mail, 'nada que avisar');
 });
-test('todas las fuentes públicas caídas: no hay comparaciones ni mail del desvío (sólo cuenta lo que faltó)', async () => {
+test('todas las fuentes públicas caídas: 0 comparaciones, INCOMPLETO, y el mail lo dice (sin inventar desvíos)', async () => {
   const mails = [];
   const x = await correr({ seco: false, fetchFn: red({ caidas: ['bna', 'bcr', 'magyp0', 'magyp1'] }), mandarFn: async (m) => { mails.push(m); return { ok: true }; }, log: () => {}, env: {} });
-  assert.equal(x.resumen.comparaciones, 0); assert.equal(mails.length, 0);
+  assert.equal(x.resumen.comparaciones, 0); assert.equal(x.resumen.desvios, 0); assert.equal(x.resumen.verificacion, 'INCOMPLETO');
   assert.deepEqual(x.resumen.faltan.sort(), ['bcr', 'bna', 'magyp']);
+  assert.equal(mails.length, 1); assert.match(mails[0].asunto, /INCOMPLETO/);
+});
+test('⭐ (Codex) MAGyP caído (primaria y alternativa) con dólar y pizarra bien: NO es «nada que avisar» → INCOMPLETO, mail y salida 1', async () => {
+  const mails = [];
+  const x = await correr({ seco: false, fetchFn: red({ caidas: ['magyp0', 'magyp1'] }), mandarFn: async (m) => { mails.push(m); return { ok: true }; }, log: () => {}, env: {} });
+  assert.equal(x.resumen.desvios, 0); assert.equal(x.resumen.comparaciones, 3);   // tc y las 2 pizarras
+  assert.equal(x.resumen.verificacion, 'INCOMPLETO'); assert.deepEqual(x.resumen.faltan, ['magyp']);
+  assert.equal(x.r.incompleto, true);
+  assert.equal(mails.length, 1);
+  assert.match(mails[0].asunto, /vigía de números: INCOMPLETO/);
+  assert.match(mails[0].cuerpo, /no se pudo comparar\n· magyp: MAGyP no contestó \(primaria ni alternativa\)/);
+  assert.notEqual(x.resumen.mail, 'nada que avisar');
+  assert.equal(UMBRALES.faltantes_tolerados, 0);
+});
+test('⭐ (Codex) MAGyP devuelve posts de OTRO día: no se comparan («sin dato del día») e INCOMPLETO', async () => {
+  const otroDia = JSON.stringify({ posts: FOB.posts.map((p) => ({ ...p, fecha: '2026-11-07 00:00:00.000' })) });
+  const x = await correr({ seco: true, fetchFn: red({ magyp: otroDia }), log: () => {}, env: {} });
+  assert.ok(!x.r.hechas.some((h) => h.startsWith('fob_')));
+  assert.deepEqual(x.r.faltan, ['magyp']); assert.match(x.r.motivos.magyp, /sin dato del 10\/11\/2026/);
+  assert.equal(x.r.incompleto, true);
+});
+test('el día real completo: verificación completa, sin mail', async () => {
+  const x = await correr({ seco: true, fetchFn: red(), log: () => {}, env: {} });
+  assert.equal(x.resumen.verificacion, 'completa'); assert.equal(x.mail, null);
 });
 test('el texto del mail dice los umbrales y lo que quedó afuera', () => {
   const m = textoDe(comparar({ app: conApp((a) => (a.tc_ars_usd = 1300)), bna: BNA, fob: FOBR, bcr: BCR }), { hoy: '2026-11-10' });
