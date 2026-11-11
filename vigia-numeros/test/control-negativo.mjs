@@ -1,0 +1,48 @@
+#!/usr/bin/env node
+// Control negativo del vigía de números: rompe UNA cosa por vez (en una copia temporal) y verifica que algún test caiga.
+// Si una falla pasa sin que ningún test la detecte, el control falla. Uso: node vigia-numeros/test/control-negativo.mjs
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');   // la raíz del repo (el vigía importa ../vigia/lib/correo.mjs)
+const FALLAS = [
+  ['umbral del dólar al 20 %', 'vigia-numeros/lib/reglas.mjs', 'tc_desvio_rel: 0.02,', 'tc_desvio_rel: 0.20,'],
+  ['no mira el dólar viejo', 'vigia-numeros/lib/reglas.mjs', '> U.tc_dias_atraso) desvios.push', '> 999) desvios.push'],
+  ['compara contra BILLETES en vez de divisas', 'vigia-numeros/lib/fuentes.mjs', "indexOf('id=\"divisas\"')", "indexOf('id=\"billetes\"')"],
+  ['FOB sin rango (cualquier número pasa)', 'vigia-numeros/lib/reglas.mjs', 'if (usd < lo || usd > hi) desvios.push', 'if (false) desvios.push'],
+  ['FOB con el NCM del candeal', 'vigia-numeros/lib/reglas.mjs', "trigo: '100199'", "trigo: '100119'"],
+  ['banda de pizarra que acepta todo', 'vigia-numeros/lib/reglas.mjs', 'if (q < lo || q > hi) desvios.push', 'if (false) desvios.push'],
+  ['usa el estimado (E) de la pizarra', 'vigia-numeros/lib/fuentes.mjs', '/S\\/C/.test(txt) ?', 'false ?'],
+  ['compara con el BNA caído', 'vigia-numeros/lib/reglas.mjs', "if (!bna || bna.ok === false) faltan.push('bna');", "if (!bna) faltan.push('bna');"],
+  ['no mira el respaldo de la app', 'vigia-numeros/lib/reglas.mjs', "if (String(app.fuente_tc || '').startsWith('fallback'))", 'if (false)'],
+  ['--seco manda el mail', 'vigia-numeros/vigia-numeros.mjs', 'if (!seco && mail) mandado', 'if (mail) mandado'],
+  ['sin la URL alternativa de MAGyP', 'vigia-numeros/lib/fuentes.mjs', 'for (const base of urls.magyp) {', 'for (const base of urls.magyp.slice(0, 1)) {'],
+  ['el registro público lleva el detalle', 'vigia-numeros/vigia-numeros.mjs', 'log(JSON.stringify(resumen));', 'log(JSON.stringify({ ...resumen, r }));'],
+];
+function correrTests(dir) {
+  const r = spawnSync(process.execPath, ['--test', 'vigia-numeros/test/vigia-numeros.test.mjs'], { cwd: dir, encoding: 'utf8' });
+  const n = (k) => Number(((r.stdout || '').match(new RegExp('(?:ℹ|#) ' + k + ' ([0-9]+)')) || [])[1] ?? NaN);
+  return { pasan: n('pass'), fallan: n('fail') };
+}
+const base = correrTests(RAIZ);
+console.log('sin fallas: ' + base.pasan + ' pasan, ' + base.fallan + ' fallan');
+if (!(base.pasan > 0) || base.fallan !== 0) { console.log('la suite tiene que pasar entera antes del control'); process.exit(1); }
+let malos = 0;
+for (const [nombre, archivo, de, a] of FALLAS) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'vnum-ctrl-'));
+  for (const sub of ['vigia', 'vigia-numeros']) fs.cpSync(path.join(RAIZ, sub), path.join(d, sub), { recursive: true });
+  const f = path.join(d, archivo), src = fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
+  const veces = src.split(de).length - 1;
+  if (veces !== 1) { console.log('✗ ' + nombre + ': el texto a romper aparece ' + veces + ' veces'); malos++; fs.rmSync(d, { recursive: true, force: true }); continue; }
+  fs.writeFileSync(f, src.replace(de, a));
+  const r = correrTests(d);
+  const ok = r.fallan > 0;
+  console.log((ok ? '✓ ' : '✗ ') + nombre + ': ' + r.fallan + ' test(s) caen');
+  if (!ok) malos++;
+  fs.rmSync(d, { recursive: true, force: true });
+}
+console.log(malos ? malos + ' falla(s) SIN detectar' : 'las ' + FALLAS.length + ' fallas se detectan');
+process.exit(malos ? 1 : 0);

@@ -1,0 +1,52 @@
+# HN AGRO · VIGÍA DE NÚMEROS (diario). Ver vigia-numeros/LEEME.md.
+# Va en .github/workflows/vigia-numeros.yml: copiarlo tal cual desde vigia-numeros/vigia-numeros.workflow.yml.txt (lo hace local:
+# el token de esta PC no tiene el permiso «workflow» de GitHub, igual que con el vigía de SATCHI).
+# Compara lo que sirve la app (endpoint público precios-granos, sin sesión) contra fuentes públicas sin clave:
+# dólar contra BNA, FOB de trigo y soja contra MAGyP, pizarra de Rosario (BCR) como control grueso. Si algo se
+# desvía más que su umbral (vigia-numeros/lib/reglas.mjs, con su motivo), manda UN mail por SMTP.
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo VIGIA_NUMEROS_ON vale «si»
+# (Settings → Secrets and variables → Actions → Variables). A mano: Actions → vigia-numeros → Run workflow (seco por defecto).
+# Sin secretos nuevos: usa los del vigía de SATCHI (SATCHI_SMTP_*, SATCHI_VIGIA_DESTINO). No guarda estado: sólo lee.
+# El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de claves, direcciones ni detalle.
+name: vigia-numeros
+on:
+  schedule:
+    - cron: '17 15 * * 1-5'   # 12:17 de Argentina, de lunes a viernes: el BNA y MAGyP ya publicaron el día
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = calcula y muestra, sin mail · real = manda el mail si hay desvío'
+        type: choice
+        options: [seco, real]
+        default: seco
+permissions:
+  contents: read
+concurrency:
+  group: vigia-numeros
+  cancel-in-progress: false
+jobs:
+  vigia:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.VIGIA_NUMEROS_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests (sin red)
+        run: node --test vigia-numeros/test/vigia-numeros.test.mjs
+      - name: Vigía de números
+        env:
+          SATCHI_SMTP_HOST: ${{ secrets.SATCHI_SMTP_HOST }}
+          SATCHI_SMTP_PORT: ${{ secrets.SATCHI_SMTP_PORT }}
+          SATCHI_SMTP_USER: ${{ secrets.SATCHI_SMTP_USER }}
+          SATCHI_SMTP_PASS: ${{ secrets.SATCHI_SMTP_PASS }}
+          SATCHI_SMTP_FROM: ${{ secrets.SATCHI_SMTP_FROM }}
+          SATCHI_VIGIA_DESTINO: ${{ secrets.SATCHI_VIGIA_DESTINO }}
+          VIGIA_NUMEROS_MODO: ${{ vars.VIGIA_NUMEROS_MODO }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+        run: |
+          args=()
+          [ "$MODO" != "real" ] && args+=(--seco)
+          node vigia-numeros/vigia-numeros.mjs "${args[@]}"

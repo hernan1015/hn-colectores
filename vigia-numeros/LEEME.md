@@ -1,0 +1,53 @@
+# Vigía de números (diario)
+
+Corre en GitHub Actions de este repo público, **una vez por día hábil** (12:17 de Argentina).
+
+Lee los números que **sirve la app**, del endpoint público `precios-granos` (es el que usa la pantalla de precios y no pide sesión), y los compara con fuentes públicas **sin clave**. Si algo se desvía más que su umbral, manda **un** mail.
+
+**No usa ninguna PC, no guarda estado y no escribe en ningún lado.**
+
+## Qué compara
+| comparación | contra | umbral (en `lib/reglas.mjs`, con su motivo) |
+|---|---|---|
+| **El dólar** de la app (BCRA, Com. A 3500) | BNA, cotización **divisa**, vendedor (página pública de cotizaciones) | más de **2 %** de diferencia, o un dólar **más de 3 días corridos** más viejo que el último del BNA |
+| **FOB de trigo pan y soja** de la app | MAGyP, precios FOB oficiales **del mismo día** (la fuente que declara la app) | fuera del rango de precios publicados ese día para el NCM, con **1 %** de margen |
+| **Pizarra de Rosario** (control grueso) | BCR, Cámara Arbitral, pizarra del día | el cociente pizarra / (FOB × dólar) fuera de **0,70-1,05 en trigo** y de **0,55-1,00 en soja** |
+| **Respaldos** | lo que dice la propia app | dólar de respaldo, precios de respaldo o marcados como estimados |
+
+Los valores que se midieron al escribir los umbrales, el 10/11/2026:
+- **El dólar:** app 1545 y BNA 1545,50, una diferencia de 0,03 %.
+- **El FOB:** trigo 234 USD, dentro del rango de MAGyP (234-261), y soja 483 USD, dentro de 444-503.
+- **El cociente de la pizarra:** trigo 0,87 y soja 0,72.
+
+La banda de la pizarra es ancha a propósito. No mide la retención: caza errores gruesos, como pesos tomados como dólares, un ×10, un respaldo de meses o el precio de otro grano.
+
+**Si una fuente no contesta, esa comparación no se hace**: queda en `faltan` y no se avisa con un dato viejo. Si la que no contesta es **la app**, se avisa (`app_no_sirve`).
+
+## Lo que queda afuera
+- **A3, los futuros de MATba-Rofex:** su API pide usuario y clave, y el endpoint de futuros de la app (`precios-futuros-ver`) pide sesión. No entra hasta que haya una fuente pública sin clave.
+- **La pizarra con «S/C» (sin cotización):** se saltea. El valor estimado «(E)» no se usa.
+
+## Costo
+- **Pedidos por corrida:** son 4, más 1 si la URL primaria de MAGyP no contesta y hay que ir a la alternativa: la app, el BNA, la BCR y MAGyP.
+- **El pedido a la app:** su caché pública es de 30 min. Cuando no hay nada guardado, la app consulta a MAGyP y al BCRA.
+- **Actions:** unos 20-30 s por día. En un repo público no tiene costo.
+
+## Para prenderlo (lo hace local)
+1. **Secretos:** no hace falta ninguno nuevo. Usa los del vigía de SATCHI: `SATCHI_SMTP_HOST`, `SATCHI_SMTP_PORT`, `SATCHI_SMTP_USER`, `SATCHI_SMTP_PASS`, `SATCHI_SMTP_FROM` y `SATCHI_VIGIA_DESTINO`.
+2. **Variables:**
+   - `VIGIA_NUMEROS_MODO`: `prueba` (por defecto; el asunto dice «[prueba]») o `produccion`.
+   - **`VIGIA_NUMEROS_ON` = `si`** prende el horario. Mientras no esté, el workflow corre sólo a mano.
+3. **El workflow:** copiar `vigia-numeros/vigia-numeros.workflow.yml.txt` a `.github/workflows/vigia-numeros.yml`. El token de pc-nanci no tiene el permiso «workflow» de GitHub, igual que con el vigía de SATCHI.
+4. **La primera corrida, a mano:** Actions → `vigia-numeros` → Run workflow con `seco`. Después, una con `real`.
+
+## Probar
+```
+node --test vigia-numeros/test/vigia-numeros.test.mjs     # 21 tests, con respuestas reales guardadas el 10/11/2026
+node vigia-numeros/test/control-negativo.mjs              # rompe 12 cosas, una por vez: cada una tiene que hacer caer algún test
+node vigia-numeros/vigia-numeros.mjs --seco               # contra la red de verdad: muestra lo que mandaría, no manda nada
+```
+
+## Este repo es público
+En el código no hay claves, ni direcciones de mail, ni datos de nadie.
+- **Los datos de prueba:** son las respuestas públicas del 10/11/2026, recortadas a la parte que se usa. Un test verifica que no traigan direcciones ni claves.
+- **El registro de Actions:** muestra sólo cantidades. El detalle va en el mail.
