@@ -174,3 +174,15 @@ test('repo público: ni el código ni los datos de prueba traen mails, claves ni
     assert.ok(!/(api[_-]?key|token|password|secret)\s*[:=]\s*['"][^'"]{8,}/i.test(s), 'clave en ' + f);
   }
 });
+test('repo público: ningún archivo del repo nombra a los destinatarios de prueba ni a la máquina', () => {
+  /* los nombres van codificados para que este mismo test no los contenga */
+  const prohibidos = ['aGVybmFucg==', 'bmFuY2lv', 'cGMtbmFuY2k='].map((b) => Buffer.from(b, 'base64').toString('utf8'));
+  const raiz = path.resolve(D, '..', '..', '..');
+  const archivos = [];
+  const andar = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { if (e.name === '.git' || e.name === 'node_modules') continue; const p = path.join(d, e.name); if (e.isDirectory()) andar(p); else archivos.push(p); } };
+  andar(raiz);
+  assert.ok(archivos.some((x) => x.endsWith(path.join('vigia', 'LEEME.md'))), 'tiene que recorrer el repo entero');
+  const hallados = [];
+  for (const f of archivos) { let s; try { s = fs.readFileSync(f, 'utf8').toLowerCase(); } catch { continue; } for (const n of prohibidos) if (s.includes(n)) hallados.push(path.relative(raiz, f) + ' → ' + Buffer.from(n).toString('base64')); }
+  assert.deepEqual(hallados, []);
+});

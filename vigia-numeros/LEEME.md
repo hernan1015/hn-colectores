@@ -57,8 +57,8 @@ La banda de la pizarra es ancha a propósito. No mide la retención: caza errore
 
 ## Probar
 ```
-node --test vigia-numeros/test/vigia-numeros.test.mjs vigia-numeros/test/correo-y-cli.test.mjs   # 35 tests: respuestas reales del 10/11/2026, SMTP falso local y el CLI con su código de salida
-node vigia-numeros/test/control-negativo.mjs              # rompe 21 cosas, una por vez: cada una tiene que hacer caer algún test
+node --test vigia-numeros/test/vigia-numeros.test.mjs vigia-numeros/test/correo-y-cli.test.mjs   # 36 tests: respuestas reales del 10/11/2026, SMTP falso local y el CLI con su código de salida
+node vigia-numeros/test/control-negativo.mjs              # rompe 23 cosas, una por vez: cada una tiene que hacer caer algún test
 node vigia-numeros/vigia-numeros.mjs --seco               # contra la red de verdad, sin mandar nada: imprime SÓLO la línea de cantidades (lo mismo que en Actions)
 node vigia-numeros/vigia-numeros.mjs --seco --detalle     # en una PC: además muestra el mail que mandaría (no usarlo en Actions)
 ```

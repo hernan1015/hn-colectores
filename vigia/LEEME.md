@@ -47,7 +47,7 @@ Si SATCHI no contesta, o contesta a medias, **no se avisa con lo viejo**: esa fu
    | `SATCHI_SMTP_HOST`, `SATCHI_SMTP_PORT` | el servidor de la cuenta info@ (465 = TLS; 587 = STARTTLS obligatorio) |
    | `SATCHI_SMTP_USER`, `SATCHI_SMTP_PASS` | la cuenta info@ y su clave, o una clave de aplicación |
    | `SATCHI_SMTP_FROM` | opcional: el remitente (si no está, el usuario) |
-   | `SATCHI_VIGIA_DESTINO` | los destinatarios, separados por coma. **Para la prueba: hernanr y nancio**, nada más |
+   | `SATCHI_VIGIA_DESTINO` | los destinatarios, separados por coma. destinatarios de prueba: las cuentas configuradas en `SATCHI_VIGIA_DESTINO`, sin nombres en este repo |
 
    **El JWT del rol** hace falta sólo con Supabase. Se arma una vez, en una máquina de local y no en el repo. Con el JWT secret en una variable de entorno:
    ```

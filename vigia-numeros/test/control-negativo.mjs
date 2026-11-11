@@ -25,6 +25,9 @@ const FALLAS = [
   ['el envío fallido copia el mensaje crudo', 'vigia-numeros/vigia-numeros.mjs', "catch { envio = 'ENVIO_FALLO'; }", 'catch (e) { envio = String(e && e.message); }'],
   ['el CLI sale con 0 aunque esté INCOMPLETO o falle el envío', 'vigia-numeros/vigia-numeros.mjs', "if (x.r.incompleto || x.resumen.comparaciones === 0 || x.envio === 'ENVIO_FALLO') process.exitCode = 1;", 'if (x.resumen.comparaciones === 0) process.exitCode = 2;'],
   ['MAGyP de otro día en la primaria no prueba la alternativa', 'vigia-numeros/lib/fuentes.mjs', "        motivo = 'MAGyP sin dato del ' + fechaDMY;", "        return { ok: false, motivo: 'MAGyP sin dato del ' + fechaDMY };"],
+  /* el nombre va codificado: este archivo también está en el repo y el test lo recorre */
+  ['vuelve un nombre al LEEME del vigía de SATCHI', 'vigia/LEEME.md', 'sin nombres en este repo', 'sin nombres en este repo (' + Buffer.from('bmFuY2lv', 'base64').toString('utf8') + ')'],
+  ['vuelve el nombre de la máquina a un LEEME', 'vigia-numeros/LEEME.md', '# Vigía de números (diario)', '# Vigía de números (diario) ' + Buffer.from('cGMtbmFuY2k=', 'base64').toString('utf8')],
   ['--seco imprime el mail en Actions', 'vigia-numeros/vigia-numeros.mjs', 'if (seco && detalle) log(', 'if (seco) log('],
   ['no mira el respaldo de la app', 'vigia-numeros/lib/reglas.mjs', "if (String(app.fuente_tc || '').startsWith('fallback'))", 'if (false)'],
   ['--seco manda el mail', 'vigia-numeros/vigia-numeros.mjs', 'if (!seco && mail) {', 'if (mail) {'],
