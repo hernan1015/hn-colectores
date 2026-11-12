@@ -1,0 +1,119 @@
+# HN AGRO · MOSAICO DIARIO OPERA DSWx-S1 → R2 (DISEÑO: APAGADO; no se prende sin el OK de local y el maker).
+# Va en .github/workflows/opera-mosaico-diario.yml (copiarlo tal cual desde opera-mosaico/opera-mosaico-diario.workflow.yml.txt;
+# el token de pc-nanci no tiene el permiso `workflow`, como con el vigía de SATCHI y el de frescura).
+# Cada noche, ANTES de la tarea de enlaces de local (02:40 ART), arma SÓLO las fechas que cambiaron en los últimos N días
+# (hoy − 2 hacia atrás) y las suma a satchi-mapas/opera/cog/ SIN PISAR LA HISTORIA: catálogo completo y pasadas.json fusionados.
+# Scripts: los de hn-agro tools/satchi/cog/ (rama fix/opera-mosaicos, ya en main cuando se prenda) + opera-mosaico/fusionar.mjs.
+# Secretos (los carga local; ninguno se imprime, GitHub los enmascara):
+#   EARTHDATA_TOKEN       · ya existe (cuenta del maker, vence 08/12/2026)
+#   HN_AGRO_LECTURA       · token fine-grained SÓLO lectura de contenidos de hernan1015/hn-agro (los scripts y datos/calado)
+#   R2_OPERA_CUENTA, R2_OPERA_ACCESS_KEY_ID, R2_OPERA_SECRET_ACCESS_KEY · token de R2 con lectura y escritura SÓLO en el depósito satchi-mapas
+# El registro de Actions es PÚBLICO: se imprimen claves de objeto, fechas y cantidades; nunca URL firmadas.
+# Diseño y costo: hn-cortex docs/opera-mosaicos-2026-11-11/AUTOMATICO.md
+name: opera-mosaico-diario
+on:
+  # APAGADO: el horario va comentado. Para prenderlo, descomentar y sacar el `if: false` del job.
+  # schedule:
+  #   - cron: '10 4 * * *'     # 04:10 UTC = 01:10 ART: termina antes de la tarea de enlaces de local (02:40 ART)
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'cuántos días hacia atrás mira CMR (desde hoy − 2)'
+        default: '6'
+      subir:
+        description: 'subir a R2 (si no, arma y muestra el plan)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: opera-mosaico-diario
+  cancel-in-progress: false
+jobs:
+  mosaico:
+    if: false                  # APAGADO también a mano, hasta el OK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      HN_AGRO: ${{ github.workspace }}/hn-agro
+      OUT: ${{ github.workspace }}/salida
+      DIAS: ${{ inputs.dias || '6' }}
+      SUBIR: ${{ github.event_name == 'schedule' && 'si' || (inputs.subir && 'si' || 'no') }}
+      R2_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: opera-mosaico
+      - uses: actions/checkout@v4
+        with:
+          repository: hernan1015/hn-agro
+          ref: main
+          token: ${{ secrets.HN_AGRO_LECTURA }}
+          path: hn-agro
+          sparse-checkout: |
+            tools/satchi/cog
+            datos/calado
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: GDAL (apt) y dependencias (pip, geotiff)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin > /dev/null
+          pip install -q -r hn-agro/tools/satchi/cog/requirements.txt
+          npm i -s --no-save --no-package-lock --prefix "$GITHUB_WORKSPACE" geotiff@2.1.3
+          gdalwarp --version
+      - name: Tests (sin red ni llaves)
+        run: node --test opera-mosaico/test/fusionar.test.mjs
+      - name: Estado de R2 (catálogo completo e índice)
+        run: |
+          set -euo pipefail
+          node opera-mosaico/fusionar.mjs bajar opera/cog/catalogo.json r2/catalogo.json
+          node opera-mosaico/fusionar.mjs bajar opera/cog/pasadas.json r2/pasadas.json
+      - name: CMR (abierto, sin cuenta) · hasta hoy − 2
+        run: node hn-agro/tools/satchi/cog/buscar-cmr.mjs --dias "$DIAS" --salida cmr
+      - name: Qué fechas cambian
+        id: dec
+        run: node opera-mosaico/fusionar.mjs decidir --cmr cmr/opera-wtr-urls.txt --previo r2/catalogo.json --salida plan
+      - name: Bajar de la NASA (de a 2, .part y renombre)
+        if: steps.dec.outputs.hay == 'si'
+        env:
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p crudo
+          # curl no manda la cabecera Authorization al host de la redirección (S3 firmado de PO.DAAC)
+          xargs -P 2 -n 1 sh -c 'f="crudo/$(basename "$0")"; curl -fsSL --retry 3 --retry-delay 15 -H "Authorization: Bearer $EARTHDATA_TOKEN" -o "$f.part" "$0" && mv "$f.part" "$f"' < plan/urls-a-bajar.txt
+          n=$(ls crudo/*.tif | wc -l); echo "bajados $n de ${{ steps.dec.outputs.granulos }}"
+          [ "$n" -eq "${{ steps.dec.outputs.granulos }}" ]
+      - name: Armar (opera_a_cog.py) sólo esas fechas
+        if: steps.dec.outputs.hay == 'si'
+        run: |
+          set -euo pipefail
+          python hn-agro/tools/satchi/cog/opera_a_cog.py --entrada crudo --salida "$OUT" --hasta "${{ steps.dec.outputs.hasta }}" --dias "${{ steps.dec.outputs.dias }}" | tail -1
+          cp "$OUT/opera/cog/catalogo.json" nuevo.json
+      - name: Fusionar con R2 (catálogo completo, subida y latest)
+        if: steps.dec.outputs.hay == 'si'
+        run: node opera-mosaico/fusionar.mjs fusionar --previo r2/catalogo.json --nuevo nuevo.json --raiz "$OUT" --completo completo.json
+      - name: Índice (pasadas.json) sin pisar la historia
+        if: steps.dec.outputs.hay == 'si'
+        run: |
+          set -euo pipefail
+          node hn-agro/tools/satchi/cog/pasadas-por-zona.mjs completo.json --mosaicos "$OUT/opera/cog/cuenca-del-plata" --salida nuevo-pasadas.json
+          node opera-mosaico/fusionar.mjs indice --previo r2/pasadas.json --nuevo nuevo-pasadas.json --fechas plan/fechas.txt --salida pasadas.json
+      - name: Subir a R2 (COG, latest, catálogo completo y LEEME; después el índice)
+        if: steps.dec.outputs.hay == 'si'
+        run: |
+          set -euo pipefail
+          if [ "$SUBIR" = "si" ]; then
+            node hn-agro/tools/satchi/cog/subir-r2.mjs "$OUT/opera/cog/subida.json" --subir | tail -3
+            node opera-mosaico/fusionar.mjs subir-indice pasadas.json
+          else
+            node hn-agro/tools/satchi/cog/subir-r2.mjs "$OUT/opera/cog/subida.json" | head -3
+            echo "seco: no se subió nada"
+          fi
