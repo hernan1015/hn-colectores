@@ -1,11 +1,13 @@
 # HN AGRO · VIGÍA DE FRESCURA DE LOS MOSAICOS OPERA (DISEÑO: APAGADO, no se prende sin el OK de local y el maker).
 # Va en .github/workflows/opera-frescura.yml (copiarlo tal cual desde vigia/opera-frescura.workflow.yml.txt; el token de pc-nanci no tiene el permiso `workflow`, igual que con el vigía de SATCHI).
 # Una vez por día lee el índice PÚBLICO de pasadas OPERA de SATCHI (satchi-publico?que=opera&zona=corrientes&pasadas=1,
-# sin llaves) y manda UN mail si `hoy − hasta` > 3 días, si `fuente` no es `r2` o si responde `ok:false`.
-# NO REPITE: la clave lleva `hasta` y se guarda en la caché de Actions sólo DESPUÉS de mandar el mail.
+# sin llaves) y manda UN mail si `hoy − hasta` > 3 días, si `fuente` no es `r2` o si responde `ok:false` o no contesta.
+# UNA SOLA CONSULTA por corrida: `evaluar` guarda la evaluación en un archivo y `mandar` manda eso, sin volver a consultar.
+# NO REPITE, POR EPISODIO: la clave lleva `hasta` (atraso, fuente) o el último día sano (caída), y se guarda en la caché de
+# Actions sólo DESPUÉS de mandar el mail. El «último día sano» lo deja cada corrida con el índice sano (opera-frescura-sano-<día>).
 # El mail usa los MISMOS secretos que el vigía de SATCHI: SATCHI_SMTP_HOST/PORT/USER/PASS (FROM opcional) y SATCHI_VIGIA_DESTINO.
 # Detalle: vigia/opera-frescura.mjs y hn-cortex docs/opera-mosaicos-2026-11-11/DIAGNOSTICO.md §7.
-# El registro de Actions es PÚBLICO: el script imprime sólo el veredicto y la clave (datos públicos).
+# El registro de Actions es PÚBLICO: el script imprime sólo el veredicto y la clave (datos públicos) y redacta los errores.
 name: opera-frescura
 on:
   # APAGADO: el horario va comentado. Para prenderlo, descomentar y sacar el `if: false` del job.
@@ -28,9 +30,29 @@ jobs:
           sparse-checkout: vigia
       - name: Tests (sin red ni mail)
         run: node --test vigia/test/opera-frescura.test.mjs
-      - name: Evaluar el índice público
+      - name: Último día sano (de corridas anteriores)
+        uses: actions/cache/restore@v4
+        with:
+          path: .opera-frescura-sano
+          key: opera-frescura-sano-${{ github.run_id }}
+          restore-keys: opera-frescura-sano-
+      - name: Evaluar el índice público (la ÚNICA consulta)
         id: ev
-        run: node vigia/opera-frescura.mjs evaluar
+        run: node vigia/opera-frescura.mjs evaluar --salida opera-frescura-eval.json --sano-archivo .opera-frescura-sano/fecha
+      - name: Anotar hoy como día sano
+        id: sano
+        if: steps.ev.outputs.sano == 'si'
+        run: |
+          mkdir -p .opera-frescura-sano
+          date -u +%F > .opera-frescura-sano/fecha
+          echo "hoy=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - name: Guardar el día sano
+        if: steps.ev.outputs.sano == 'si'
+        continue-on-error: true          # si otra corrida ya lo guardó hoy, la clave existe y no pasa nada
+        uses: actions/cache/save@v4
+        with:
+          path: .opera-frescura-sano
+          key: opera-frescura-sano-${{ steps.sano.outputs.hoy }}
       - name: ¿Ya se avisó esta clave?
         if: steps.ev.outputs.avisar == 'si'
         id: ya
@@ -39,7 +61,7 @@ jobs:
           path: .opera-frescura-aviso
           key: opera-frescura-${{ steps.ev.outputs.clave }}
           lookup-only: true
-      - name: Mandar el mail
+      - name: Mandar el mail (la evaluación de arriba, sin consultar de nuevo)
         if: steps.ev.outputs.avisar == 'si' && steps.ya.outputs.cache-hit != 'true'
         env:
           SATCHI_SMTP_HOST: ${{ secrets.SATCHI_SMTP_HOST }}
@@ -48,8 +70,7 @@ jobs:
           SATCHI_SMTP_PASS: ${{ secrets.SATCHI_SMTP_PASS }}
           SATCHI_SMTP_FROM: ${{ secrets.SATCHI_SMTP_FROM }}
           SATCHI_VIGIA_DESTINO: ${{ secrets.SATCHI_VIGIA_DESTINO }}
-          CLAVE: ${{ steps.ev.outputs.clave }}
-        run: node vigia/opera-frescura.mjs mandar --clave "$CLAVE"
+        run: node vigia/opera-frescura.mjs mandar --evaluacion opera-frescura-eval.json
       - name: Recordar la clave (sólo si el mail salió)
         if: steps.ev.outputs.avisar == 'si' && steps.ya.outputs.cache-hit != 'true' && hashFiles('.opera-frescura-aviso/clave') != ''
         uses: actions/cache/save@v4
