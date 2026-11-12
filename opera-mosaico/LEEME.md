@@ -9,7 +9,7 @@
   - `fusionar`: arma el catálogo completo, el de subida y `latest`;
   - `indice`: arma `pasadas.json`, conservando la cobertura medida de las fechas que no se tocaron;
   - `bajar` / `subir-indice`: GET y PUT con la llave del entorno.
-- `test/fusionar.test.mjs`: `node --test opera-mosaico/test/fusionar.test.mjs` (6 tests). Control negativo: `OPERA_DIARIO_MUTAR=indice` (el índice pisa la historia) u `OPERA_DIARIO_MUTAR=conservar` (se re-arma aunque falten pasadas) dan rojo.
+- `test/fusionar.test.mjs`: `node --test opera-mosaico/test/fusionar.test.mjs` (7 tests). Control negativo: `OPERA_DIARIO_MUTAR=indice` (el índice pisa la historia), `=conservar` (se re-arma aunque falten pasadas) o `=latest` (latest cae en un provisional) dan rojo. Sin ningún mosaico definitivo, latest se queda en el anterior y esa noche no se sube.
 
 **Secretos**
 - `EARTHDATA_TOKEN`: ya está.

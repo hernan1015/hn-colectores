@@ -58,17 +58,23 @@ export function fechasARearmar(cmr, previo) {
   return r;
 }
 export function esProvisional(fecha, hoy) { return (Date.parse(hoy + 'T00:00:00Z') - Date.parse(fecha + 'T00:00:00Z')) / 864e5 < PROVISIONAL_DIAS; }
-function elegirLatest(mosaicos) {
-  const o = mosaicos.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)), f = o.filter((m) => !m.provisional);
-  return (f.length ? f : o).pop() || null;
+/** PURA. el mosaico más nuevo NO provisional; null si no hay ninguno definitivo (entonces latest NO se mueve) */
+export function elegirLatest(mosaicos) {
+  return mosaicos.slice().sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).filter((m) => !m.provisional).pop() || null;
 }
-/** PURA. catálogo de R2 (completo) + catálogo de hoy → { completo, subida, latest } */
+/** PURA. catálogo de R2 (completo) + catálogo de hoy → { completo, subida, latest, sinDefinitivo }
+    Sin ningún mosaico definitivo (todos provisionales), latest queda el ANTERIOR (el de R2), subida = null y esa noche no se sube:
+    un latest provisional puede estar a medias (el 25/10), y revisar() de hn-agro no aceptaría el anterior. */
 export function fusionarCatalogo(previo, nuevo, hoy) {
   const N = new Set((nuevo.mosaicos || []).map((m) => m.fecha));
   const teselas = (previo.teselas || []).filter((t) => !N.has(t.fecha)).concat(nuevo.teselas || []).sort((a, b) => (a.r2 < b.r2 ? -1 : a.r2 > b.r2 ? 1 : 0));
   const mosaicos = (previo.mosaicos || []).filter((m) => !N.has(m.fecha)).concat(nuevo.mosaicos || [])
     .map((m) => Object.assign({}, m, { provisional: esProvisional(m.fecha, hoy) })).sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
   const ult = elegirLatest(mosaicos);
+  if (!ult) {
+    const completo = Object.assign({}, previo, { teselas, mosaicos, latest: previo.latest || null });
+    return { completo, subida: null, latest: previo.latest || null, latestNuevo: false, sinDefinitivo: true };
+  }
   const latest = ult ? { r2: RUTA_LATEST, es: ult.r2, fecha: ult.fecha, bytes: ult.bytes, sha256: ult.sha256, cog_valido: ult.cog_valido !== false, errores: [], avisos: [] } : null;
   const vent = [previo.ventana && previo.ventana[0], nuevo.ventana && nuevo.ventana[0]].filter(Boolean).sort()[0];
   const ventH = [previo.ventana && previo.ventana[1], nuevo.ventana && nuevo.ventana[1]].filter(Boolean).sort().pop();
@@ -79,7 +85,7 @@ export function fusionarCatalogo(previo, nuevo, hoy) {
   const sT = teselas.filter((t) => N.has(t.fecha)), sM = mosaicos.filter((m) => N.has(m.fecha) || (ult && m.fecha === ult.fecha));
   const fechasS = sM.map((m) => m.fecha).sort();
   const subida = Object.assign({}, base, { ventana: [fechasS[0], fechasS[fechasS.length - 1]], teselas: sT, mosaicos: sM, latest, resumen: resumen(sT, sM, latest) });
-  return { completo, subida, latest, latestNuevo: !!(ult && N.has(ult.fecha)) };
+  return { completo, subida, latest, latestNuevo: !!(ult && N.has(ult.fecha)), sinDefinitivo: false };
 }
 /** PURA. pasadas.json de R2 + el armado hoy sobre el catálogo completo → el índice nuevo, SIN PISAR la historia:
     las fechas de hoy salen del nuevo (cobertura medida en los mosaicos de hoy); el resto, del viejo (medida en su día). */
@@ -147,7 +153,10 @@ async function cli(a) {
   if (cmd === 'fusionar') {
     const raiz = op('--raiz'), base = path.join(raiz, ...PREFIJO.split('/')), hoy = op('--hoy') || new Date().toISOString().slice(0, 10);
     const F = fusionarCatalogo(leerJ(op('--previo')), leerJ(op('--nuevo')), hoy);
-    if (!F.latest) throw new Error('sin mosaicos');
+    if (F.sinDefinitivo) {
+      console.log('AVISO · ningún mosaico definitivo (todos de menos de ' + PROVISIONAL_DIAS + ' días): latest queda en ' + (F.latest ? F.latest.fecha : '—') + ' y esta noche no se sube nada');
+      salidaGH({ subir: 'no' }); return;
+    }
     const src = path.join(raiz, ...F.latest.es.split('/'));
     if (!fs.existsSync(src)) { fs.mkdirSync(path.dirname(src), { recursive: true }); fs.writeFileSync(src, await r2('GET', F.latest.es)); }
     const b = fs.readFileSync(src);
@@ -156,6 +165,7 @@ async function cli(a) {
     fs.writeFileSync(path.join(base, 'catalogo.json'), JSON.stringify(F.completo, null, 1));   // el que sube subir-r2.mjs con esa clave
     fs.writeFileSync(path.join(base, 'subida.json'), JSON.stringify(F.subida, null, 1));      // el plan: lo de hoy + latest
     fs.writeFileSync(op('--completo') || path.join(raiz, 'catalogo-completo.json'), JSON.stringify(F.completo, null, 1));
+    salidaGH({ subir: 'si' });
     console.log('catálogo · ' + F.completo.mosaicos.length + ' mosaicos ' + F.completo.ventana.join(' → ') + ' · subo ' + F.subida.teselas.length + ' teselas y ' + F.subida.mosaicos.length + ' mosaicos · latest ' + F.latest.fecha + (F.latestNuevo ? '' : ' (bajado de R2)'));
     return;
   }

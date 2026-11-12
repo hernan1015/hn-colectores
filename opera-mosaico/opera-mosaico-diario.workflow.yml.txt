@@ -39,18 +39,18 @@ jobs:
       OUT: ${{ github.workspace }}/salida
       DIAS: ${{ inputs.dias || '6' }}
       SUBIR: ${{ github.event_name == 'schedule' && 'si' || (inputs.subir && 'si' || 'no') }}
-      R2_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+    # Las llaves NO van en el job: cada paso que las usa (estado de R2, fusionar, subir) las recibe en su propio env.
     steps:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: opera-mosaico
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           repository: hernan1015/hn-agro
           ref: main
           token: ${{ secrets.HN_AGRO_LECTURA }}
+          persist-credentials: false   # el token no queda en .git/config para los pasos siguientes
           path: hn-agro
           sparse-checkout: |
             tools/satchi/cog
@@ -71,6 +71,10 @@ jobs:
       - name: Tests (sin red ni llaves)
         run: node --test opera-mosaico/test/fusionar.test.mjs
       - name: Estado de R2 (catálogo completo e índice)
+        env:
+          R2_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           node opera-mosaico/fusionar.mjs bajar opera/cog/catalogo.json r2/catalogo.json
@@ -98,16 +102,25 @@ jobs:
           python hn-agro/tools/satchi/cog/opera_a_cog.py --entrada crudo --salida "$OUT" --hasta "${{ steps.dec.outputs.hasta }}" --dias "${{ steps.dec.outputs.dias }}" | tail -1
           cp "$OUT/opera/cog/catalogo.json" nuevo.json
       - name: Fusionar con R2 (catálogo completo, subida y latest)
+        id: fus
         if: steps.dec.outputs.hay == 'si'
+        env:
+          R2_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
         run: node opera-mosaico/fusionar.mjs fusionar --previo r2/catalogo.json --nuevo nuevo.json --raiz "$OUT" --completo completo.json
       - name: Índice (pasadas.json) sin pisar la historia
-        if: steps.dec.outputs.hay == 'si'
+        if: steps.dec.outputs.hay == 'si' && steps.fus.outputs.subir == 'si'
         run: |
           set -euo pipefail
           node hn-agro/tools/satchi/cog/pasadas-por-zona.mjs completo.json --mosaicos "$OUT/opera/cog/cuenca-del-plata" --salida nuevo-pasadas.json
           node opera-mosaico/fusionar.mjs indice --previo r2/pasadas.json --nuevo nuevo-pasadas.json --fechas plan/fechas.txt --salida pasadas.json
       - name: Subir a R2 (COG, latest, catálogo completo y LEEME; después el índice)
-        if: steps.dec.outputs.hay == 'si'
+        if: steps.dec.outputs.hay == 'si' && steps.fus.outputs.subir == 'si'
+        env:
+          R2_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           if [ "$SUBIR" = "si" ]; then

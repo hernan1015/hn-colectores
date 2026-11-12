@@ -1,6 +1,7 @@
 // Tests del mosaico diario OPERA (opera-mosaico/fusionar.mjs): sin red ni llaves. «hoy» fijo.
 // CONTROL NEGATIVO: OPERA_DIARIO_MUTAR=indice (el índice nuevo pisa la historia) o =conservar (se re-arma aunque falten
-// pasadas) carga una copia rota del módulo → los tests de esa parte dan rojo.
+// pasadas) o =latest (latest cae en un provisional cuando no hay ninguno definitivo) carga una copia rota del módulo →
+// los tests de esa parte dan rojo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,7 +11,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(AQUI, '..', 'fusionar.mjs');
-const MUT = { indice: ["filter((p) => !S.has(p.fecha))", 'filter(() => false)'], conservar: ["return 'conservar';", "return 'rearmar';"] }[process.env.OPERA_DIARIO_MUTAR || ''];
+const MUT = { indice: ["filter((p) => !S.has(p.fecha))", 'filter(() => false)'], conservar: ["return 'conservar';", "return 'rearmar';"],
+  latest: [".filter((m) => !m.provisional).pop() || null;", ".pop() || null;"] }[process.env.OPERA_DIARIO_MUTAR || ''];
 let ruta = SRC;
 if (MUT) {
   const s = fs.readFileSync(SRC, 'utf8'), m = s.split(MUT[0]).join(MUT[1]);
@@ -94,4 +96,18 @@ test('el CLI «decidir» escribe las fechas y sólo las URL de esas fechas (sin 
   assert.match(fs.readFileSync(path.join(d, 's', 'urls-a-bajar.txt'), 'utf8'), /T19LGC_20261108T095000Z/);
   assert.equal(fs.readFileSync(path.join(d, 's', 'urls-a-bajar.txt'), 'utf8').trim().split('\n').length, 1);
   assert.match(fs.readFileSync(out, 'utf8'), /hay=si\nhasta=2026-11-08\ndias=0\ngranulos=1/);
+});
+
+test('elegirLatest sin ningún mosaico definitivo → null; fusionarCatalogo deja el latest ANTERIOR y no arma subida', () => {
+  assert.equal(F.elegirLatest([mos('2026-11-10', '5', { provisional: true }), mos('2026-11-11', '6', { provisional: true })]), null);
+  assert.equal(F.elegirLatest([mos('2026-11-08', '2'), mos('2026-11-10', '5', { provisional: true })]).fecha, '2026-11-08');
+  const ANT = { r2: 'opera/cog/cuenca-del-plata/latest.tif', es: 'opera/cog/cuenca-del-plata/2026-11-05.tif', fecha: '2026-11-05', sha256: sha('9'), bytes: 10 };
+  const previo = { ventana: ['2026-11-10', '2026-11-10'], teselas: [], mosaicos: [mos('2026-11-10', '5')], latest: ANT };
+  const nuevo = { ventana: ['2026-11-11', '2026-11-11'], teselas: [tes('2026-11-11', 'T19LGC', 'f')], mosaicos: [mos('2026-11-11', '6')] };
+  const R = F.fusionarCatalogo(previo, nuevo, '2026-11-12');
+  assert.equal(R.sinDefinitivo, true);
+  assert.deepEqual(R.latest, ANT);
+  assert.deepEqual(R.completo.latest, ANT);
+  assert.equal(R.subida, null);
+  assert.equal(R.completo.mosaicos.every((m) => m.provisional), true);
 });
