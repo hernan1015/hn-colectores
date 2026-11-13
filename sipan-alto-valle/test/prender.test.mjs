@@ -99,9 +99,9 @@ test('apikey: si SIPAN_SUPABASE_ANON_KEY es la clave de servicio, no arranca', (
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
   const servicioLegado = b64({ alg: 'HS256' }) + '.' + b64({ role: 'service_role' }) + '.f';
   assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: servicioLegado, jwt }), /clave de servicio/);
-  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: 'sb_secret_abc123', jwt }), /clave de servicio/);
+  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: ['sb', 'secret', 'falsa'].join('_'), jwt }), /clave de servicio/);
   /* control negativo: la anon legada (role anon) y la publishable nueva sí */
   const anonLegada = b64({ alg: 'HS256' }) + '.' + b64({ role: 'anon' }) + '.f';
   assert.ok(crearBase({ url: 'https://p.supabase.co', apikey: anonLegada, jwt }));
-  assert.ok(crearBase({ url: 'https://p.supabase.co', apikey: 'sb_publishable_abc123', jwt }));
+  assert.ok(crearBase({ url: 'https://p.supabase.co', apikey: ['sb', 'publishable', 'falsa'].join('_'), jwt }));
 });
