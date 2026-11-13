@@ -1,0 +1,58 @@
+# HN AGRO · colector de la red agrometeorológica del INTA EEA Alto Valle (SIPAN). Ver sipan-alto-valle/LEEME.md.
+# ⛔ USO INTERNO hasta que el INTA lo autorice: nada de esto se muestra en SATCHI ni en HN AGRO.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/sipan-alto-valle.yml (el token con el que se armó la rama no
+# tiene permiso «workflow», por eso viene como .txt, igual que rayos-hora y opera-mosaico). Lo prende local o el maker.
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo SIPAN_ON vale «si». A mano: Run workflow (seco).
+# El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de valores, claves ni direcciones.
+name: colector-sipan-alto-valle
+on:
+  schedule:
+    - cron: '23 0,6,12,18 * * *'   # cada 6 h (21:23, 03:23, 09:23 y 15:23 de Argentina): el archivo trae ~40 h, sobra
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = baja y calcula, sin base ni R2 · real = guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+      barrer:
+        description: 'buscar en clima.htm los ids que faltan (Vista Alegre, Río Colorado, la nueva) y probarlos (tope 15, 30 s entre pedidos)'
+        type: boolean
+        default: false
+      aceptar_formato:
+        description: 'aceptar un formato nuevo ya revisado: id=firma (la firma sale en registro_procesos)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: colector-sipan
+  cancel-in-progress: false
+jobs:
+  colectar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.SIPAN_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20            # 5 estaciones × 30 s de pausa ≈ 2,5 min; con el barrido, ≈ 10 min
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests (sin red ni base; los fixtures reales no están en este repo público)
+        run: node --test sipan-alto-valle/test/sipan.test.mjs
+      - name: Colectar
+        env:
+          SIPAN_SUPABASE_URL: ${{ secrets.SIPAN_SUPABASE_URL }}
+          SIPAN_SUPABASE_KEY: ${{ secrets.SIPAN_SUPABASE_KEY }}
+          SIPAN_R2_CUENTA: ${{ secrets.SIPAN_R2_CUENTA }}                     # opcional: sin estos 4, no se guardan los crudos
+          SIPAN_R2_ACCESS_KEY_ID: ${{ secrets.SIPAN_R2_ACCESS_KEY_ID }}
+          SIPAN_R2_SECRET_ACCESS_KEY: ${{ secrets.SIPAN_R2_SECRET_ACCESS_KEY }}
+          SIPAN_R2_DEPOSITO: ${{ secrets.SIPAN_R2_DEPOSITO }}                 # un depósito PRIVADO (no satchi-mapas)
+          SIPAN_ACEPTAR_FORMATO: ${{ inputs.aceptar_formato }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          BARRER: ${{ inputs.barrer }}
+        run: |
+          args=()
+          [ "$MODO" != "real" ] && args+=(--seco)
+          [ "$BARRER" = "true" ] && args+=(--barrer)
+          node sipan-alto-valle/sipan.mjs "${args[@]}"

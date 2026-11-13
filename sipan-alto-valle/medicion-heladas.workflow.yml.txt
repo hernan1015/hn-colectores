@@ -1,0 +1,44 @@
+# HN AGRO · la medición de cada mañana: la mínima que pronosticaba SATCHI HELADAS (Open-Meteo best_match, con 1 y 2
+# días de anticipación) contra la mínima de la noche (18 a 9 h) en cada estación del SIPAN. Ver sipan-alto-valle/LEEME.md.
+# ⛔ USO INTERNO. PARA INSTALARLO: copiar a .github/workflows/medicion-heladas.yml. Apagado por defecto: el schedule corre
+# sólo si la VARIABLE SIPAN_ON vale «si» (la misma del colector). Necesita la 0147 aplicada.
+name: medicion-heladas-sipan
+on:
+  schedule:
+    - cron: '41 12 * * *'   # 09:41 de Argentina: después del colector de las 09:23, con la noche ya cerrada a las 9
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'cuántos días para atrás (re-medir: hasta 60)'
+        required: false
+        default: '7'
+      seco:
+        description: 'calcular sin guardar'
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: medicion-heladas-sipan
+  cancel-in-progress: false
+jobs:
+  medir:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.SIPAN_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Medir
+        env:
+          SIPAN_SUPABASE_URL: ${{ secrets.SIPAN_SUPABASE_URL }}
+          SIPAN_SUPABASE_KEY: ${{ secrets.SIPAN_SUPABASE_KEY }}
+          DIAS: ${{ inputs.dias || '7' }}
+          SECO: ${{ github.event_name == 'workflow_dispatch' && inputs.seco || false }}
+        run: |
+          [[ "$DIAS" =~ ^[0-9]{1,2}$ ]] || { echo "días inválidos"; exit 1; }
+          args=(--dias "$DIAS")
+          [ "$SECO" = "true" ] && args+=(--seco)
+          node sipan-alto-valle/medir.mjs "${args[@]}"
