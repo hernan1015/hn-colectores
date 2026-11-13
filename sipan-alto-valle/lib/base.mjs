@@ -1,15 +1,32 @@
 // HN AGRO · SIPAN Alto Valle · la base (Supabase) por la API REST (PostgREST), sin dependencias. Igual que el vigía
 // (vigia/lib/estado.mjs). Las credenciales llegan por variables de entorno que el workflow lee de secrets.* (nunca en
-// el código): SIPAN_SUPABASE_URL y SIPAN_SUPABASE_KEY. Nada de esto se imprime.
+// el código) y nunca se imprimen:
+//   SIPAN_SUPABASE_URL       https://<proyecto>.supabase.co
+//   SIPAN_SUPABASE_ANON_KEY  la clave anon/publishable del proyecto (la pide la puerta de Supabase; sola no da nada)
+//   SIPAN_SUPABASE_JWT       un JWT con {"role":"colector_estaciones"} (migracion/0147b): PostgREST entra con ESE rol,
+//                            que sólo escribe las filas de sus redes. ⛔ NO la clave de servicio: si llega un JWT con otro
+//                            rol (service_role, anon, authenticated…), el colector se niega a arrancar.
 //
 // Tablas: estaciones y estaciones_obs (hn-agro migrations/0110 + las columnas de la 0147), registro_procesos (0075) y
-// pronostico_helada_medicion (0147). Todas con RLS sin políticas: sólo el server.
+// pronostico_helada_medicion (0147).
 export const RED = 'INTA_SIPAN_AV';
+export const ROL = 'colector_estaciones';
 
-export function crearBase({ url, clave, fetchFn = globalThis.fetch }) {
-  if (!url || !clave) throw new Error('faltan SIPAN_SUPABASE_URL o SIPAN_SUPABASE_KEY');
+/** El claim `role` de un JWT (sin verificar la firma: eso lo hace Supabase). null si no es un JWT. */
+export function rolDelJwt(jwt) {
+  try {
+    const p = String(jwt).split('.');
+    if (p.length !== 3) return null;
+    return JSON.parse(Buffer.from(p[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')).role ?? null;
+  } catch { return null; }
+}
+
+export function crearBase({ url, apikey, jwt, fetchFn = globalThis.fetch }) {
+  if (!url || !apikey || !jwt) throw new Error('faltan SIPAN_SUPABASE_URL, SIPAN_SUPABASE_ANON_KEY o SIPAN_SUPABASE_JWT');
+  const rol = rolDelJwt(jwt);
+  if (rol !== ROL) throw new Error(`SIPAN_SUPABASE_JWT tiene que ser del rol ${ROL} (llegó ${rol ? 'otro rol' : 'algo que no es un JWT'}): no se usa la clave de servicio`);
   const base = url.replace(/\/+$/, '') + '/rest/v1/';
-  const H = { apikey: clave, Authorization: 'Bearer ' + clave, 'Content-Type': 'application/json' };
+  const H = { apikey, Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' };
   async function pedir(metodo, ruta, cuerpo, extra = {}) {
     const r = await fetchFn(base + ruta, { method: metodo, headers: { ...H, ...extra }, body: cuerpo ? JSON.stringify(cuerpo) : undefined, signal: AbortSignal.timeout(30000) });
     if (!r.ok) throw new Error(`Supabase ${metodo} ${ruta.split('?')[0]}: HTTP ${r.status}`);

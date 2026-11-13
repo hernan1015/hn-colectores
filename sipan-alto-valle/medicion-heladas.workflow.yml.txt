@@ -34,7 +34,8 @@ jobs:
       - name: Medir
         env:
           SIPAN_SUPABASE_URL: ${{ secrets.SIPAN_SUPABASE_URL }}
-          SIPAN_SUPABASE_KEY: ${{ secrets.SIPAN_SUPABASE_KEY }}
+          SIPAN_SUPABASE_ANON_KEY: ${{ secrets.SIPAN_SUPABASE_ANON_KEY }}
+          SIPAN_SUPABASE_JWT: ${{ secrets.SIPAN_SUPABASE_JWT }}
           DIAS: ${{ inputs.dias || '7' }}
           SECO: ${{ github.event_name == 'workflow_dispatch' && inputs.seco || false }}
         run: |

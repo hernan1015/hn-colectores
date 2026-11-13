@@ -41,7 +41,7 @@ export function resumir(filas) {
 }
 
 export async function correr({ seco = false, dias = 7, env = process.env, fetchFn = globalThis.fetch, base: baseDada = null, ahoraMs = Date.now(), log = console.log, dormir = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
-  const base = baseDada || crearBase({ url: env.SIPAN_SUPABASE_URL, clave: env.SIPAN_SUPABASE_KEY, fetchFn });
+  const base = baseDada || crearBase({ url: env.SIPAN_SUPABASE_URL, apikey: env.SIPAN_SUPABASE_ANON_KEY, jwt: env.SIPAN_SUPABASE_JWT, fetchFn });
   const hoy = new Date(ahoraMs - 3 * 3600e3).toISOString().slice(0, 10);
   const desde = sumarDias(hoy, -dias);
   const obs = await base.obsDesde(desde);

@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       modo:
-        description: 'seco = baja y calcula, sin base ni R2 · real = guarda'
+        description: 'seco = baja y calcula, sin base ni crudos · real = guarda'
         type: choice
         options: [seco, real]
         default: seco
@@ -39,15 +39,16 @@ jobs:
         with:
           node-version: '22'
       - name: Tests (sin red ni base; los fixtures reales no están en este repo público)
-        run: node --test sipan-alto-valle/test/sipan.test.mjs
+        run: node --test sipan-alto-valle/test/sipan.test.mjs sipan-alto-valle/test/crudos-rol.test.mjs
       - name: Colectar
         env:
           SIPAN_SUPABASE_URL: ${{ secrets.SIPAN_SUPABASE_URL }}
-          SIPAN_SUPABASE_KEY: ${{ secrets.SIPAN_SUPABASE_KEY }}
-          SIPAN_R2_CUENTA: ${{ secrets.SIPAN_R2_CUENTA }}                     # opcional: sin estos 4, no se guardan los crudos
-          SIPAN_R2_ACCESS_KEY_ID: ${{ secrets.SIPAN_R2_ACCESS_KEY_ID }}
-          SIPAN_R2_SECRET_ACCESS_KEY: ${{ secrets.SIPAN_R2_SECRET_ACCESS_KEY }}
-          SIPAN_R2_DEPOSITO: ${{ secrets.SIPAN_R2_DEPOSITO }}                 # un depósito PRIVADO (no satchi-mapas)
+          SIPAN_SUPABASE_ANON_KEY: ${{ secrets.SIPAN_SUPABASE_ANON_KEY }}   # la anon/publishable: sola no da nada
+          SIPAN_SUPABASE_JWT: ${{ secrets.SIPAN_SUPABASE_JWT }}             # JWT del rol colector_estaciones (0147b), NO service_role
+          SIPAN_CRUDOS_TOKEN: ${{ secrets.RADAR_TOKEN }}                    # el del radar: Contents read/write SÓLO sobre hn-radar (privado)
+          SIPAN_CRUDOS_REPO: hernan1015/hn-radar                             # crudos de 10 min: un release por día, sipan-AAAA-MM-DD
+          # R2 (opción futura, APAGADA): SIPAN_R2_ON=si + SIPAN_R2_CUENTA / _ACCESS_KEY_ID / _SECRET_ACCESS_KEY / _DEPOSITO.
+          # Con SIPAN_CRUDOS_REPO puesto, R2 no se usa aunque estén.
           SIPAN_ACEPTAR_FORMATO: ${{ inputs.aceptar_formato }}
           MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
           BARRER: ${{ inputs.barrer }}

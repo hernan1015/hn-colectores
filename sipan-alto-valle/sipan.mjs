@@ -20,6 +20,7 @@ import { controlar, resumenDia, resumenNoche, fechasDe, unir, sumarDias } from '
 import { ESTACIONES, urlDe, filaEstacion, idsDePagina, BASE_URL } from './lib/estaciones.mjs';
 import { crearBase, RED } from './lib/base.mjs';
 import { almacenR2 } from './lib/almacen.mjs';
+import { almacenReleases } from './lib/releases.mjs';
 
 export const PAUSA_MS = 30000;
 export const TOPE_PEDIDOS = 12;          // 5 estaciones + clima.htm + margen; el barrido suma hasta 15 (con su propio tope)
@@ -128,12 +129,21 @@ export async function procesarEstacion({ e, texto, meta = {}, aceptar = {}, alma
   };
 }
 
+/** Dónde van los crudos de 10 min. HOY: releases diarias del repo privado (SIPAN_CRUDOS_REPO + SIPAN_CRUDOS_TOKEN).
+ *  R2 queda como opción futura APAGADA: sólo con SIPAN_R2_ON=si y sus 4 variables. Sin ninguno, no se guardan crudos
+ *  (el resumen diario igual se guarda). */
+export function almacenDeEntorno(env, fetchFn = globalThis.fetch) {
+  if (env.SIPAN_CRUDOS_REPO) return almacenReleases({ token: env.SIPAN_CRUDOS_TOKEN, repo: env.SIPAN_CRUDOS_REPO, fetchFn });
+  if (env.SIPAN_R2_ON === 'si' && env.SIPAN_R2_DEPOSITO) {
+    return almacenR2({ cuenta: env.SIPAN_R2_CUENTA, clave: env.SIPAN_R2_ACCESS_KEY_ID, secreto: env.SIPAN_R2_SECRET_ACCESS_KEY, deposito: env.SIPAN_R2_DEPOSITO, fetchFn });
+  }
+  return null;
+}
+
 export async function correr({ seco = true, ids = null, barrer = false, aceptar = {}, archivos = {}, env = process.env, fetchFn = globalThis.fetch,
   dormir, ahoraMs = Date.now(), log = console.log, base: baseDada = null, almacen: almacenDado = null } = {}) {
-  const base = seco ? null : baseDada || crearBase({ url: env.SIPAN_SUPABASE_URL, clave: env.SIPAN_SUPABASE_KEY, fetchFn });
-  const almacen = seco ? null : almacenDado || (env.SIPAN_R2_DEPOSITO
-    ? almacenR2({ cuenta: env.SIPAN_R2_CUENTA, clave: env.SIPAN_R2_ACCESS_KEY_ID, secreto: env.SIPAN_R2_SECRET_ACCESS_KEY, deposito: env.SIPAN_R2_DEPOSITO, fetchFn })
-    : null);
+  const base = seco ? null : baseDada || crearBase({ url: env.SIPAN_SUPABASE_URL, apikey: env.SIPAN_SUPABASE_ANON_KEY, jwt: env.SIPAN_SUPABASE_JWT, fetchFn });
+  const almacen = seco ? null : almacenDado || almacenDeEntorno(env, fetchFn);
   const pedidor = crearPedidor({ fetchFn, ...(dormir ? { dormir } : {}) });
   const lista = ESTACIONES.filter((e) => !ids || ids.includes(e.id));
   const estado = base ? new Map((await base.estaciones()).map((f) => [f.estacion_id, f.metadatos || {}])) : new Map();
@@ -192,7 +202,7 @@ export async function correr({ seco = true, ids = null, barrer = false, aceptar 
   }
 
   if (!seco && filasEst.length) await base.guardarEstaciones(filasEst);
-  const resumen = { modo: seco ? 'seco' : 'real', pedidos: pedidor.pedidos, estaciones: porEstacion, filas_obs: filasObs, crudos_dias: crudosDias, crudos: almacen ? 'r2' : 'sin R2 (sólo el resumen diario)', errores: errores.length, avisos, barrido };
+  const resumen = { modo: seco ? 'seco' : 'real', pedidos: pedidor.pedidos, estaciones: porEstacion, filas_obs: filasObs, crudos_dias: crudosDias, crudos: almacen ? almacen.tipo : 'sin destino (sólo el resumen diario)', errores: errores.length, avisos, barrido };
   if (!seco) { try { await base.registrar(PROCESO, avisos.length === 0 && errores.length === 0, { ...resumen, errores_detalle: errores.slice(0, 20) }); } catch (e) { resumen.registro = 'no se pudo anotar'; } }
   /* al registro público: sólo cantidades y tipos (nada de valores medidos) */
   log(JSON.stringify({ ...resumen, avisos: avisos.map((a) => `${a.tipo}${a.id ? ' ' + a.id : ''}`) }));

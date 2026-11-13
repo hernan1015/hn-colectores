@@ -27,12 +27,17 @@ const MUTANTES = [
   ['el pronóstico con 23 horas cuenta', 'lib/medicion.mjs', "(out[f] ??= {})['d' + d] = ok.length === 24 ? Math.min(...ok) : null;", "(out[f] ??= {})['d' + d] = ok.length ? Math.min(...ok) : null;"],
   ['la radiación con huecos da un total corto', 'lib/resumen.mjs', 'rad_mj_m2: rs.filter((r) => r.ok.rad != null).length === esperados', 'rad_mj_m2: rs.filter((r) => r.ok.rad != null).length > 0'],
   ['falsa alarma contada como acierto', 'lib/medicion.mjs', 'if (po && ob) t.aciertos++; else if (po) t.falsas_alarmas++;', 'if (po) t.aciertos++; else if (false) t.falsas_alarmas++;'],
+  ['crudos: borra el viejo ANTES de subir el nuevo', 'lib/releases.mjs', "      const subido = await pedir('POST',", "      for (const v of viejos) await pedir('DELETE', `${API}/repos/${repo}/releases/assets/${v.id}`);\n      const subido = await pedir('POST',"],
+  ['crudos: mezcla las estaciones del mismo día', 'lib/releases.mjs', "a.name.startsWith(id + '__') && a.name.endsWith('.json.gz')", "a.name.endsWith('.json.gz')"],
+  ['R2 prendido sin pedirlo', 'sipan.mjs', "if (env.SIPAN_R2_ON === 'si' && env.SIPAN_R2_DEPOSITO) {", 'if (env.SIPAN_R2_DEPOSITO) {'],
+  ['acepta un JWT de otro rol (service_role)', 'lib/base.mjs', 'if (rol !== ROL) throw new Error(', 'if (false) throw new Error('],
+  ['el histórico acepta años antes de 2018', 'historico-pdf.mjs', 'Math.max(...anios) < 2018', 'Math.max(...anios) < 1900'],
 ];
 
 function correrCon(nombre, archivo, viejo, nuevo) {
   const dir = path.join(RAIZ, '.mutante');
   fs.rmSync(dir, { recursive: true, force: true });
-  for (const x of ['lib', 'test', 'sipan.mjs', 'medir.mjs']) fs.cpSync(path.join(RAIZ, x), path.join(dir, x), { recursive: true });
+  for (const x of ['lib', 'test', 'migracion', 'sipan.mjs', 'medir.mjs', 'historico-pdf.mjs']) fs.cpSync(path.join(RAIZ, x), path.join(dir, x), { recursive: true });
   if (archivo) {
     const p = path.join(dir, archivo);
     const txt = fs.readFileSync(p, 'utf8');
@@ -40,7 +45,7 @@ function correrCon(nombre, archivo, viejo, nuevo) {
     if (veces !== 1) throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces (tiene que ser 1)`);
     fs.writeFileSync(p, txt.replace(viejo, nuevo));
   }
-  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs')], { encoding: 'utf8', env: process.env });
+  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs')], { encoding: 'utf8', env: process.env });
   return r.status === 0;
 }
 
