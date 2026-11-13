@@ -375,3 +375,17 @@ test('histórico: la lista acepta sólo PDF del SIPAN de 2018 en adelante y no r
   /* control negativo: sin «ya bajado», el de 2023 entra */
   assert.equal(filtrarLista(txt).lista.length, 2);
 });
+
+// ───────────── 15 · filas con campos de más (sin depender de los fixtures reales) ─────────────
+test('formato: filas con un campo de más no se cargan (filas_rotas); una sola se descarta y el resto entra', () => {
+  const lineas = armar(serie('2026-09-10T00:10', '2026-09-10T06:00')).split('\r\n');
+  const rotas = lineas.map((l, i) => (i > 2 && l.trim() ? l + '   9.9' : l)).join('\r\n');
+  const p = leerDavis(rotas);
+  assert.equal(p.ok, false);
+  assert.equal(p.motivo, 'filas_rotas');
+  /* control negativo: con UNA sola fila rota, esa se descarta y las demás se leen */
+  const una = lineas.map((l, i) => (i === 5 ? l + '   9.9' : l)).join('\r\n');
+  const q = leerDavis(una);
+  assert.equal(q.ok, true);
+  assert.equal(q.descartadas.filter((d) => d.motivo === 'campos').length, 1);
+});

@@ -51,7 +51,7 @@ El lector toma los nombres del encabezado.
 Está todo en **`PRENDER.md`**: los secretos nombre por nombre, los comandos `gh` y el orden. También dice cómo verificar que anduvo.
 
 ## Tests
-- `node --test sipan-alto-valle/test/sipan.test.mjs sipan-alto-valle/test/crudos-rol.test.mjs sipan-alto-valle/test/prender.test.mjs`: 28 + 7 + 5 tests, cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales.
+- `node --test sipan-alto-valle/test/sipan.test.mjs sipan-alto-valle/test/crudos-rol.test.mjs sipan-alto-valle/test/prender.test.mjs`: 29 + 7 + 5 tests, cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales.
 - Los dos tests con los **fixtures reales** corren si `SIPAN_FIXTURES` apunta a la carpeta. Son copias de la Wayback Machine (Guerrico 13-14/02/2026, Villa Regina 23-24/01/2020, Cinco Saltos 8-9/10/2020) y están en hn-cortex (privado): `docs/inta-alto-valle-2026-11/fixtures/`.
 - `node sipan-alto-valle/test/control-negativo.mjs`: 29 mutantes, uno por regla. Tienen que morir todos.
 
