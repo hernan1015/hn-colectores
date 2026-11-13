@@ -39,7 +39,7 @@ jobs:
           DIAS: ${{ inputs.dias || '7' }}
           SECO: ${{ github.event_name == 'workflow_dispatch' && inputs.seco || false }}
         run: |
-          [[ "$DIAS" =~ ^[0-9]{1,2}$ ]] || { echo "días inválidos"; exit 1; }
+          { [[ "$DIAS" =~ ^[0-9]{1,2}$ ]] && [ "$DIAS" -ge 1 ] && [ "$DIAS" -le 60 ]; } || { echo "días inválidos (1 a 60)"; exit 1; }
           args=(--dias "$DIAS")
           [ "$SECO" = "true" ] && args+=(--seco)
           node sipan-alto-valle/medir.mjs "${args[@]}"

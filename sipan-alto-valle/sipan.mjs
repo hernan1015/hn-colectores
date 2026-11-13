@@ -34,10 +34,11 @@ const msLocal = (local) => Date.parse(local + ':00Z') + 3 * 3600e3;             
 const diaDe = (local) => new Date(Date.parse(local + ':00Z') - 60e3).toISOString().slice(0, 10);   // «0:00» es del día anterior
 
 /** Un pedidor educado: de a uno, pausa entre pedidos, tope, y se corta ante la primera señal de bloqueo. */
-export function crearPedidor({ fetchFn = globalThis.fetch, dormir = (ms) => new Promise((r) => setTimeout(r, ms)), pausaMs = PAUSA_MS, tope = TOPE_PEDIDOS, ahora = Date.now } = {}) {
-  let ultimo = null, pedidos = 0, cortado = null;
+export function crearPedidor({ fetchFn = globalThis.fetch, dormir = (ms) => new Promise((r) => setTimeout(r, ms)), pausaMs = PAUSA_MS, tope = TOPE_PEDIDOS, ahora = Date.now, ultimoPedido = null } = {}) {
+  /* ultimoPedido: el instante del último pedido de OTRO pedidor (el barrido sigue al principal: la pausa de 30 s vale entre los dos) */
+  let ultimo = ultimoPedido, pedidos = 0, cortado = null;
   return {
-    get pedidos() { return pedidos; }, get cortado() { return cortado; },
+    get pedidos() { return pedidos; }, get cortado() { return cortado; }, get ultimo() { return ultimo; },
     async pedir(url) {
       if (cortado) return { estado: 'cortado' };
       if (pedidos >= tope) return { estado: 'tope' };
@@ -141,14 +142,21 @@ export function almacenDeEntorno(env, fetchFn = globalThis.fetch) {
 }
 
 export async function correr({ seco = true, ids = null, barrer = false, aceptar = {}, archivos = {}, env = process.env, fetchFn = globalThis.fetch,
-  dormir, ahoraMs = Date.now(), log = console.log, base: baseDada = null, almacen: almacenDado = null } = {}) {
+  dormir, reloj, ahoraMs = Date.now(), log = console.log, base: baseDada = null, almacen: almacenDado = null } = {}) {
   const base = seco ? null : baseDada || crearBase({ url: env.SIPAN_SUPABASE_URL, apikey: env.SIPAN_SUPABASE_ANON_KEY, jwt: env.SIPAN_SUPABASE_JWT, fetchFn });
   const almacen = seco ? null : almacenDado || almacenDeEntorno(env, fetchFn);
-  const pedidor = crearPedidor({ fetchFn, ...(dormir ? { dormir } : {}) });
+  const opPed = { fetchFn, ...(dormir ? { dormir } : {}), ...(reloj ? { ahora: reloj } : {}) };
+  const pedidor = crearPedidor(opPed);
   const lista = ESTACIONES.filter((e) => !ids || ids.includes(e.id));
   const estado = base ? new Map((await base.estaciones()).map((f) => [f.estacion_id, f.metadatos || {}])) : new Map();
-  const avisos = []; const porEstacion = {}; const filasEst = [];
+  const avisos = []; const porEstacion = {};
   let filasObs = 0, crudosDias = 0; const errores = [];
+  /* la fila de `estaciones` va ANTES que sus datos: estaciones_obs tiene FK a estaciones (0110). Si no se pudo
+     guardar la estación, no se intentan sus datos (darían 409) y queda en errores. */
+  const guardarEstacion = async (e, meta) => {
+    try { await base.guardarEstaciones([filaEstacion(e, meta)]); return true; }
+    catch (err) { errores.push(`${e.id} estaciones: ${String(err && err.message).slice(0, 80)}`); return false; }
+  };
 
   for (const e of lista) {
     let texto;
@@ -163,16 +171,28 @@ export async function correr({ seco = true, ids = null, barrer = false, aceptar 
       texto = r.texto;
     }
     const meta = estado.get(e.id) || {};
-    const x = await procesarEstacion({ e, texto, meta, aceptar, almacen, base, ahoraMs });
-    if (x.aviso) avisos.push(x.aviso);
-    if (x.estado !== 'ok') { porEstacion[e.id] = x.aviso.tipo; filasEst.push(filaEstacion(e, { ...meta, formato_nuevo_visto: x.aviso.firma_nueva || x.aviso.motivo, formato_nuevo_en: new Date(ahoraMs).toISOString() })); continue; }
-    porEstacion[e.id] = { registros: x.nuevos, nuevos_unidos: x.unidos, fechas: x.filas.length, marcados: Object.values(x.marcas).reduce((s, n) => s + n, 0), horas_desde_ultimo: Math.round((ahoraMs - msLocal(x.ultimo)) / 3600e3) };
-    if (!seco) {
-      if (almacen) crudosDias += await guardarCrudos(almacen, e.id, x.todos, x.p);
+    /* una falla de GitHub o de la base en UNA estación no corta la corrida: queda en errores y se sigue */
+    try {
+      const x = await procesarEstacion({ e, texto, meta, aceptar, almacen, base, ahoraMs });
+      if (x.aviso) avisos.push(x.aviso);
+      if (x.estado !== 'ok') {
+        porEstacion[e.id] = x.aviso.tipo;
+        if (!seco) await guardarEstacion(e, { ...meta, formato_nuevo_visto: x.aviso.firma_nueva || x.aviso.motivo, formato_nuevo_en: new Date(ahoraMs).toISOString() });
+        continue;
+      }
+      porEstacion[e.id] = { registros: x.nuevos, nuevos_unidos: x.unidos, fechas: x.filas.length, marcados: Object.values(x.marcas).reduce((s, n) => s + n, 0), horas_desde_ultimo: Math.round((ahoraMs - msLocal(x.ultimo)) / 3600e3) };
+      if (seco) { filasObs += x.filas.length; continue; }
+      if (!(await guardarEstacion(e, { ...meta, ...x.meta }))) continue;
+      if (almacen) {
+        try { crudosDias += await guardarCrudos(almacen, e.id, x.todos, x.p); }
+        catch (err) { errores.push(`${e.id} crudos: ${String(err && err.message).slice(0, 80)}`); }
+      }
       const g = await base.guardarObs(x.filas);
       filasObs += g.ok; errores.push(...g.errores);
-    } else filasObs += x.filas.length;
-    filasEst.push(filaEstacion(e, { ...meta, ...x.meta }));
+    } catch (err) {
+      porEstacion[e.id] = 'error';
+      errores.push(`${e.id}: ${String(err && err.message).slice(0, 80)}`);
+    }
   }
   /* las que no se pudieron leer en esta corrida: quieta según lo guardado */
   for (const e of lista) {
@@ -184,9 +204,12 @@ export async function correr({ seco = true, ids = null, barrer = false, aceptar 
   }
   if (pedidor.cortado) avisos.push({ tipo: 'sipan_corto', motivo: pedidor.cortado, pedidos: pedidor.pedidos });
 
-  let barrido = null;
+  /* el barrido: su propio tope, pero la pausa de 30 s se cuenta desde el ÚLTIMO pedido del principal. Sólo prueba los
+     ids (no guarda datos de estaciones nuevas): si encuentra alguna, se suma a mano al catálogo y desde la corrida
+     siguiente entra por el camino de arriba, con su fila de `estaciones` antes que sus datos. */
+  let barrido = null, pb = null;
   if (barrer && !pedidor.cortado) {
-    const pb = crearPedidor({ fetchFn, ...(dormir ? { dormir } : {}), tope: TOPE_BARRIDO + 1 });
+    pb = crearPedidor({ ...opPed, tope: TOPE_BARRIDO + 1, ultimoPedido: pedidor.ultimo });
     const pag = await pb.pedir(BASE_URL + 'clima.htm');
     if (pag.estado === 'ok') {
       const vistos = idsDePagina(pag.texto);
@@ -199,10 +222,10 @@ export async function correr({ seco = true, ids = null, barrer = false, aceptar 
         if (pb.cortado) break;
       }
     } else barrido = { clima_htm: pag.estado + (pag.status ? ' ' + pag.status : '') };
+    if (pb.cortado) avisos.push({ tipo: 'sipan_corto', motivo: 'barrido: ' + pb.cortado, pedidos: pb.pedidos });
   }
 
-  if (!seco && filasEst.length) await base.guardarEstaciones(filasEst);
-  const resumen = { modo: seco ? 'seco' : 'real', pedidos: pedidor.pedidos, estaciones: porEstacion, filas_obs: filasObs, crudos_dias: crudosDias, crudos: almacen ? almacen.tipo : 'sin destino (sólo el resumen diario)', errores: errores.length, avisos, barrido };
+  const resumen = { modo: seco ? 'seco' : 'real', pedidos: pedidor.pedidos, pedidos_barrido: pb ? pb.pedidos : 0, estaciones: porEstacion, filas_obs: filasObs, crudos_dias: crudosDias, crudos: almacen ? almacen.tipo : 'sin destino (sólo el resumen diario)', errores: errores.length, avisos, barrido };
   if (!seco) { try { await base.registrar(PROCESO, avisos.length === 0 && errores.length === 0, { ...resumen, errores_detalle: errores.slice(0, 20) }); } catch (e) { resumen.registro = 'no se pudo anotar'; } }
   /* al registro público: sólo cantidades y tipos (nada de valores medidos) */
   log(JSON.stringify({ ...resumen, avisos: avisos.map((a) => `${a.tipo}${a.id ? ' ' + a.id : ''}`) }));

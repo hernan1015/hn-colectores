@@ -39,7 +39,7 @@ jobs:
         with:
           node-version: '22'
       - name: Tests (sin red ni base; los fixtures reales no están en este repo público)
-        run: node --test sipan-alto-valle/test/sipan.test.mjs sipan-alto-valle/test/crudos-rol.test.mjs
+        run: node --test sipan-alto-valle/test/sipan.test.mjs sipan-alto-valle/test/crudos-rol.test.mjs sipan-alto-valle/test/prender.test.mjs
       - name: Colectar
         env:
           SIPAN_SUPABASE_URL: ${{ secrets.SIPAN_SUPABASE_URL }}

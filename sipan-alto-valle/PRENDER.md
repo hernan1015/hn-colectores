@@ -28,6 +28,9 @@ Los comandos son de Git Bash y `gh` es `C:/Users/jeshe/AppData/Local/Programs/gh
   - `0147b_rol_colector_estaciones.sql`.
 - Aplicarlas en Supabase (SQL editor o MCP), primero la 0147.
 - **Verificar** con el bloque «Verificación» del final de la 0147b: `set role colector_estaciones; …`. Tienen que dar 0 filas del SNIH, *permission denied* en `campana.lotes` y en el DELETE, y la política violada con el proceso «otro».
+  - **Si el `insert … 'otro'` PASA,** la RLS de `registro_procesos` no quedó prendida: mirar el NOTICE de la 0147b (`FORCE ROW LEVEL SECURITY`) y no seguir hasta resolverlo.
+  - **Si `set role colector_estaciones` da «permission denied to set role»:** en Supabase, `postgres` no es superusuario y, desde PG16, quien crea un rol no recibe la opción SET. Hay que hacer `grant colector_estaciones to postgres;`, verificar, `reset role;` y al final `revoke colector_estaciones from postgres;`.
+  - **Que lo de siempre siga anotando:** `select relrowsecurity from pg_class where oid = 'public.registro_procesos'::regclass;` tiene que dar `true`, y la próxima corrida de cualquier function de Netlify tiene que seguir apareciendo en `select proceso, max(creado_at) from registro_procesos group by 1;`. Esas functions entran con el dueño de la tabla, que saltea la RLS.
 
 ### 2 · La clave anon y la URL
 ```bash
@@ -38,15 +41,19 @@ $GH secret set SIPAN_SUPABASE_ANON_KEY -R hernan1015/hn-colectores     # pega la
 
 ### 3 · El JWT del rol (una vez; vence en 365 días; anotar la fecha)
 - **El secreto para firmarlo:** Dashboard → Project Settings → **JWT Keys** → «Legacy JWT secret» (HS256), con el botón de revelar.
-- **Se pasa por la entrada estándar** y no queda en el historial:
+- **Nada queda en pantalla ni en el historial:** el secreto y el JWT viven sólo en variables de esta terminal y se borran al final. El JWT se prueba ANTES de cargarlo.
 ```bash
-read -rs SUPABASE_JWT_SECRET && export SUPABASE_JWT_SECRET      # pegar el secreto (no se ve) + Enter
-node sipan-alto-valle/migracion/firmar-jwt.mjs --dias 365 | $GH secret set SIPAN_SUPABASE_JWT -R hernan1015/hn-colectores
+set -o pipefail
+read -rs SUPABASE_JWT_SECRET && export SUPABASE_JWT_SECRET         # pegar el Legacy JWT secret (no se ve) + Enter
+read -rs ANON                                                       # pegar la anon/publishable (la misma del paso 2) + Enter
+JWT=$(node sipan-alto-valle/migracion/firmar-jwt.mjs --dias 365) || { echo "no se firmó: no seguir"; unset SUPABASE_JWT_SECRET ANON JWT; }
 unset SUPABASE_JWT_SECRET
-```
-- **Probarlo antes de seguir.** Tiene que dar `[]` o la lista vacía, y **no** un 401:
-```bash
-curl -s "https://<ref>.supabase.co/rest/v1/estaciones?red=eq.INTA_SIPAN_AV&select=estacion_id" -H "apikey: <anon>" -H "Authorization: Bearer <el JWT>"
+# probarlo: tiene que dar 200 y [] (la lista vacía), NO 401 ni 403
+curl -s -o /dev/null -w '%{http_code}\n' "https://<ref>.supabase.co/rest/v1/estaciones?red=eq.INTA_SIPAN_AV&select=estacion_id" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $JWT"
+# si dio 200: cargarlo
+[ -n "$JWT" ] && printf %s "$JWT" | $GH secret set SIPAN_SUPABASE_JWT -R hernan1015/hn-colectores
+unset JWT ANON
 ```
 - **Plan B**, si el proyecto ya no acepta el JWT secret legado (sólo claves asimétricas), o si da 401 con un JWT bien armado: **no seguir**. Avisarme y paso el colector a Postgres directo:
   - el mismo rol, con `LOGIN` y contraseña;
@@ -70,21 +77,23 @@ git commit -m "ci(sipan): instala el colector y la medición (apagados hasta SIP
 ### 6 · La primera corrida, a mano y en modo SECO (no escribe nada)
 ```bash
 $GH workflow run colector-sipan-alto-valle -R hernan1015/hn-colectores -f modo=seco -f barrer=true
-$GH run watch -R hernan1015/hn-colectores $($GH run list -R hernan1015/hn-colectores -w colector-sipan-alto-valle -L 1 --json databaseId -q '.[0].databaseId')
+# esperar ~10 s a que GitHub la registre; después tomar la de workflow_dispatch más nueva
+$GH run list -R hernan1015/hn-colectores -w colector-sipan-alto-valle --event workflow_dispatch -L 3
+$GH run watch -R hernan1015/hn-colectores <el id de la de recién>
 ```
 **Qué mirar en el registro** (el renglón JSON del paso «Colectar»):
-- `pedidos`: entre 6 y 7 (más el barrido).
+- `pedidos`: **5**, uno por estación. `pedidos_barrido`: 1 (`clima.htm`) más uno por cada id nuevo que aparezca, hasta 15. Todos van con 30 s de pausa, también entre el último `downld02` y `clima.htm`.
 - `estaciones`: las 5, con `registros` ≈ 240 y `horas_desde_ultimo` ≤ 1.
 - `avisos`: vacío. Si aparece **`sipan_corto`**, el SIPAN también corta desde Actions: **no reintentar** ese día y avisarme.
 - `barrido.en_pagina` / `barrido.probados`: los ids de Vista Alegre, Río Colorado y la estación nueva. Pasármelos y los sumo al catálogo.
-- **El primer formato de cada estación queda como el aceptado.** Si alguna dice `formato_no_se_entiende`, pasame el motivo.
+- **El modo seco no guarda nada,** tampoco el formato. El primer formato de cada estación queda como el aceptado recién en la primera corrida **real** (paso 7). Si alguna dice `formato_no_se_entiende`, pasame el motivo.
 
 ### 7 · La primera corrida REAL, a mano
 ```bash
 $GH workflow run colector-sipan-alto-valle -R hernan1015/hn-colectores -f modo=real
 ```
 **Cómo verificar que anduvo:**
-- **El paso termina en verde.** En rojo (código 2) quiere decir avisos: mirar `registro_procesos`.
+- **El paso termina en verde, y desde esta primera corrida** ya hay filas en `estaciones_obs`: la fila de cada estación se guarda antes que sus datos, por la FK. En rojo (código 2) quiere decir avisos o errores: mirar `registro_procesos` (`resumen->'errores_detalle'`). Una falla de GitHub con los crudos queda como error de esa estación, pero su diario se guarda igual.
 - **En Supabase:**
 ```sql
 select estacion_id, fecha, tmin_c, tmax_c, lluvia_mm, eto_mm, tmin_noche_c, tmin_noche_en, noche_registros, registros_validos

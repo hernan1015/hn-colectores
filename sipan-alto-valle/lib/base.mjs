@@ -25,6 +25,11 @@ export function crearBase({ url, apikey, jwt, fetchFn = globalThis.fetch }) {
   if (!url || !apikey || !jwt) throw new Error('faltan SIPAN_SUPABASE_URL, SIPAN_SUPABASE_ANON_KEY o SIPAN_SUPABASE_JWT');
   const rol = rolDelJwt(jwt);
   if (rol !== ROL) throw new Error(`SIPAN_SUPABASE_JWT tiene que ser del rol ${ROL} (llegó ${rol ? 'otro rol' : 'algo que no es un JWT'}): no se usa la clave de servicio`);
+  /* la apikey tiene que ser la anon/publishable: si es la de servicio (JWT legado con role service_role, o una clave
+     nueva sb_secret_…), no se arranca, para que esa clave no quede en los secretos de un repo público. */
+  if (/^sb_secret_/i.test(String(apikey).trim()) || rolDelJwt(apikey) === 'service_role') {
+    throw new Error('SIPAN_SUPABASE_ANON_KEY es la clave de servicio: tiene que ser la anon/publishable');
+  }
   const base = url.replace(/\/+$/, '') + '/rest/v1/';
   const H = { apikey, Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' };
   async function pedir(metodo, ruta, cuerpo, extra = {}) {

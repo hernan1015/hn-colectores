@@ -17,11 +17,11 @@
 --
 -- Qué se guarda dónde (y por qué los crudos NO van acá):
 --   · estaciones_obs, una fila por (red, estación, día local): el diario y la noche. Es chico.
---   · Los crudos (10 min del SIPAN; instantes de WeatherLink) van a R2, en un depósito PRIVADO, un archivo por estación
---     y día. Con números: SIPAN 7 estaciones × 144 registros × 365 = 368.000 filas/año; WeatherLink 435 × 24 + 18 × 72
+--   · Los crudos (10 min del SIPAN; instantes de WeatherLink) van FUERA de la base, un archivo por estación y día: hoy a
+--     releases diarias del repo privado hn-radar (sipan-AAAA-MM-DD); R2 privado queda como opción futura, apagada. Con números: SIPAN 7 estaciones × 144 registros × 365 = 368.000 filas/año; WeatherLink 435 × 24 + 18 × 72
 --     = 11.700 instantes/día = 4,3 millones/año. A ~200 B por fila con su índice: 75 MB/año el SIPAN y ~850 MB/año
---     WeatherLink, contra 500 MB de TODA la base en el plan gratis de Supabase. En R2 (gz): ~20 MB/año el SIPAN y
---     ~150 MB/año WeatherLink, dentro de los 10 GB gratis.
+--     WeatherLink, contra 500 MB de TODA la base en el plan gratis de Supabase. Comprimidos (gz): ~20 MB/año el SIPAN y
+--     ~150 MB/año WeatherLink.
 --
 -- Columnas nuevas de estaciones_obs (todas NULL = no hay dato; NUNCA 0 por falta):
 --   eto_mm               ET del día (SIPAN: suma de la columna ET de la consola Davis), mm.

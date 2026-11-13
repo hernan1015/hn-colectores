@@ -61,7 +61,30 @@ begin
 end $$;
 -- (Una política «for all» no da DELETE: el rol no tiene el privilegio DELETE, así que igual no puede borrar.)
 
+-- registro_procesos se creó en la 0075 SIN RLS (y la RLS automática de la 0099 vale sólo para tablas posteriores):
+-- sin RLS, la política de arriba no rige y el rol podría anotar cualquier `proceso`. Se prende la RLS.
+-- ¿Le corta a alguien? Quien escribe hoy ahí son las functions de Netlify por `_lib/registro.js`, con el pool de
+-- Postgres (DATABASE_URL, el usuario dueño de la tabla): el DUEÑO saltea la RLS (no hay FORCE) y en Supabase
+-- `postgres` además tiene BYPASSRLS; la clave de servicio (service_role) también la saltea. anon/authenticated no
+-- tienen permisos sobre la tabla. Por las dudas, sólo se prende si el dueño de la tabla saltea la RLS (dueño sin FORCE:
+-- siempre); si la tabla tuviera FORCE ROW LEVEL SECURITY, NO se toca y se avisa (NOTICE) para que local lo mire.
+do $$
+declare forzada boolean;
+begin
+  select relforcerowsecurity into forzada from pg_class where oid = 'public.registro_procesos'::regclass;
+  if forzada then
+    raise notice 'registro_procesos tiene FORCE ROW LEVEL SECURITY: no se toca; revisar a mano antes de usar el rol';
+  else
+    alter table public.registro_procesos enable row level security;
+  end if;
+end $$;
+
 -- Verificación (correr a mano después de aplicar; cada una tiene que dar lo que dice):
+--   select relrowsecurity from pg_class where oid = 'public.registro_procesos'::regclass;   -- true
+--   (y una corrida de cualquier proceso de Netlify sigue anotando: select max(creado_at) from registro_procesos;)
+--   Si «set role colector_estaciones» da «permission denied to set role» (en Supabase `postgres` no es superusuario y,
+--   desde PG16, quien crea un rol no recibe la opción SET): grant colector_estaciones to postgres; … verificar …;
+--   reset role; revoke colector_estaciones from postgres;
 --   set role colector_estaciones;
 --   select count(*) from estaciones where red = 'SNIH';            -- 0 (no ve otras redes)
 --   select count(*) from campana.lotes;                            -- ERROR: permission denied
@@ -76,4 +99,5 @@ end $$;
 -- drop policy if exists colector_estaciones_sus_procesos on registro_procesos;
 -- revoke all on estaciones, estaciones_obs, pronostico_helada_medicion, registro_procesos from colector_estaciones;
 -- revoke usage on sequence registro_procesos_id_seq from colector_estaciones;
+-- alter table registro_procesos disable row level security;   -- sólo si no la tenía antes de esta migración
 -- revoke colector_estaciones from authenticator; drop role colector_estaciones;

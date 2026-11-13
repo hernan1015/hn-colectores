@@ -32,6 +32,11 @@ const MUTANTES = [
   ['R2 prendido sin pedirlo', 'sipan.mjs', "if (env.SIPAN_R2_ON === 'si' && env.SIPAN_R2_DEPOSITO) {", 'if (env.SIPAN_R2_DEPOSITO) {'],
   ['acepta un JWT de otro rol (service_role)', 'lib/base.mjs', 'if (rol !== ROL) throw new Error(', 'if (false) throw new Error('],
   ['el histórico acepta años antes de 2018', 'historico-pdf.mjs', 'Math.max(...anios) < 2018', 'Math.max(...anios) < 1900'],
+  ['FK: los datos antes que la estación', 'sipan.mjs', '      if (!(await guardarEstacion(e, { ...meta, ...x.meta }))) continue;\n', ''],
+  ['FK: guarda los datos aunque la estación falló', 'sipan.mjs', 'if (!(await guardarEstacion(e, { ...meta, ...x.meta }))) continue;', 'await guardarEstacion(e, { ...meta, ...x.meta });'],
+  ['barrido sin la pausa desde el último pedido', 'sipan.mjs', 'ultimoPedido: pedidor.ultimo', 'ultimoPedido: null'],
+  ['una falla de los crudos corta la corrida', 'sipan.mjs', "        catch (err) { errores.push(`${e.id} crudos: ${String(err && err.message).slice(0, 80)}`); }", '        catch (err) { throw err; }'],
+  ['acepta la clave de servicio como apikey', 'lib/base.mjs', "if (/^sb_secret_/i.test(String(apikey).trim()) || rolDelJwt(apikey) === 'service_role') {", 'if (false) {'],
 ];
 
 function correrCon(nombre, archivo, viejo, nuevo) {
@@ -45,7 +50,7 @@ function correrCon(nombre, archivo, viejo, nuevo) {
     if (veces !== 1) throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces (tiene que ser 1)`);
     fs.writeFileSync(p, txt.replace(viejo, nuevo));
   }
-  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs')], { encoding: 'utf8', env: process.env });
+  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs')], { encoding: 'utf8', env: process.env });
   return r.status === 0;
 }
 
