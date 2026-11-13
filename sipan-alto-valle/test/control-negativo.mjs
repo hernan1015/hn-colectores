@@ -25,6 +25,7 @@ const MUTANTES = [
   ['estación quieta nunca avisa', 'sipan.mjs', 'aviso: horasQuieta > QUIETA_H ?', 'aviso: false ?'],
   ['la medición acepta noches incompletas', 'medir.mjs', 'export const MIN_NOCHE = 0.9;', 'export const MIN_NOCHE = 0;'],
   ['el pronóstico con 23 horas cuenta', 'lib/medicion.mjs', "(out[f] ??= {})['d' + d] = ok.length === 24 ? Math.min(...ok) : null;", "(out[f] ??= {})['d' + d] = ok.length ? Math.min(...ok) : null;"],
+  ['la radiación con huecos da un total corto', 'lib/resumen.mjs', 'rad_mj_m2: rs.filter((r) => r.ok.rad != null).length === esperados', 'rad_mj_m2: rs.filter((r) => r.ok.rad != null).length > 0'],
   ['falsa alarma contada como acierto', 'lib/medicion.mjs', 'if (po && ob) t.aciertos++; else if (po) t.falsas_alarmas++;', 'if (po) t.aciertos++; else if (false) t.falsas_alarmas++;'],
 ];
 

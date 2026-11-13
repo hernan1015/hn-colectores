@@ -48,6 +48,21 @@ El lector toma los nombres del encabezado.
 4. Correr a mano en modo **real**, cargar los secretos y poner `SIPAN_ON=si`.
 
 ## Tests
-- `node --test sipan-alto-valle/test/sipan.test.mjs`: 26 tests, cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales.
+- `node --test sipan-alto-valle/test/sipan.test.mjs`: 28 tests, cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales.
 - Los dos tests con los **fixtures reales** corren si `SIPAN_FIXTURES` apunta a la carpeta. Son copias de la Wayback Machine (Guerrico 13-14/02/2026, Villa Regina 23-24/01/2020, Cinco Saltos 8-9/10/2020) y están en hn-cortex (privado): `docs/inta-alto-valle-2026-11/fixtures/`.
-- `node sipan-alto-valle/test/control-negativo.mjs`: 18 mutantes, uno por regla. Tienen que morir todos.
+- `node sipan-alto-valle/test/control-negativo.mjs`: 19 mutantes, uno por regla. Tienen que morir todos.
+
+## El histórico (sólo para medir)
+- **`historico-pdf.mjs <lista.txt> <carpeta>`** baja los resúmenes mensuales en PDF, **sólo de 2018 en adelante** y sólo de sipan.inta.gob.ar.
+  - La lista de direcciones es explícita y se arma a mano.
+  - Pide de a uno, con 30 s de pausa y un tope de 12 por corrida (24 como máximo).
+  - Lo que ya se bajó no se vuelve a pedir, y ante cualquier señal de bloqueo, para.
+- **No es una descarga masiva:** corre sólo en la corrida nocturna que el maker aprueba esa noche. Los PDF no van a este repo.
+- **Leer las tablas** queda para cuando haya un PDF de muestra.
+
+## Pensado ya para la 138b/138c (no implementado acá)
+- **La 0147 sirve también para `WEATHERLINK_PUB`:**
+  - `muestreo_min`, para la tmin y la tmax muestreadas;
+  - `lluvia_origen='acumulado_consola'`;
+  - y `estaciones_ultima_lectura`, una fila por estación, que sirve para el dedup por `lastTimestamp`, para la edad y para la caché de 15 min de las lecturas a demanda del semáforo.
+- **`rad_mj_m2`** guarda la radiación del día del SIPAN, para medir el Q aparte. `motor-q.mjs` no se toca.

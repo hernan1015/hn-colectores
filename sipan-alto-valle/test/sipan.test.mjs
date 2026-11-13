@@ -350,3 +350,28 @@ test('clima.htm: saca los ids de los enlaces', () => {
   assert.deepEqual(idsDePagina('<a href="clima.htm">nada</a>'), []);   // control negativo
   assert.ok(ENC_40[1].includes('Date'));
 });
+
+// ───────────── 11 · la radiación del día (138c: para el Q medido aparte) ─────────────
+test('radiación: 144 registros de 500 W/m² dan 43,2 MJ/m²; con uno faltante, null (no un total corto)', () => {
+  const txt = armar(serie('2026-09-10T00:10', '2026-09-11T00:00', () => 5)).replace(/(1012\.0   0\.00   0\.0)   0 /g, '$1   500 ');
+  const d = resumenDia(controlar(leerDavis(txt).registros), '2026-09-10');
+  assert.equal(d.rad_registros, 144);
+  assert.equal(d.rad_mj_m2, 43.2);
+  /* control negativo: sin un registro de radiación, el día no tiene total */
+  const rs = leerDavis(txt).registros; rs[70].v.rad = null;
+  const d2 = resumenDia(controlar(rs), '2026-09-10');
+  assert.equal(d2.rad_registros, 143);
+  assert.equal(d2.rad_mj_m2, null);
+});
+
+// ───────────── 12 · el histórico en PDF: sólo 2018 en adelante, sólo el SIPAN, sin repetir ─────────────
+test('histórico: la lista acepta sólo PDF del SIPAN de 2018 en adelante y no repite lo bajado', async () => {
+  const { filtrarLista } = await import('../historico-pdf.mjs');
+  const txt = ['https://sipan.inta.gob.ar/agrometeorologia/met/resumen/2024/09_guerrico.pdf', 'https://sipan.inta.gob.ar/x/1975/01.pdf',
+    'https://otro.sitio/2024/01.pdf', 'https://sipan.inta.gob.ar/2025/clima.htm', '# comentario', 'https://sipan.inta.gob.ar/a/2023/ya.pdf'].join('\n');
+  const { lista, rechazos } = filtrarLista(txt, new Set(['ya.pdf']));
+  assert.deepEqual(lista.map((x) => x.nombre), ['09_guerrico.pdf']);
+  assert.equal(rechazos.length, 4);
+  /* control negativo: sin «ya bajado», el de 2023 entra */
+  assert.equal(filtrarLista(txt).lista.length, 2);
+});

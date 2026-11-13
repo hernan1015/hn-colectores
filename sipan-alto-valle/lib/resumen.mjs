@@ -93,6 +93,11 @@ export function resumenDia(controlados, fecha, intervalo = 10) {
     lluvia_parcial_mm: lluvia,
     lluvia_registros: conLluvia,
     eto_mm: rs.some((r) => r.ok.et != null) ? sumar(rs, 'et') : null,
+    /* [138c] radiación global del día: W/m² medio de cada registro × su duración. Sólo con el día COMPLETO de
+       radiación (si falta un registro de día, el total sale corto): si no, null, y rad_registros dice cuántos hubo. */
+    rad_registros: rs.filter((r) => r.ok.rad != null).length,
+    rad_mj_m2: rs.filter((r) => r.ok.rad != null).length === esperados
+      ? Math.round(rs.reduce((s, r) => s + r.ok.rad * intervalo * 60, 0) / 1e4) / 100 : null,
     marcados: rs.filter((r) => r.marcas.length).length,
     completo: conT === esperados && conLluvia === esperados,
   };

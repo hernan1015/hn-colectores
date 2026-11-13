@@ -47,6 +47,10 @@ alter table estaciones_obs add column if not exists registros_validos    smallin
 alter table estaciones_obs add column if not exists registros_esperados  smallint;
 alter table estaciones_obs add column if not exists muestreo_min         smallint;
 alter table estaciones_obs add column if not exists lluvia_origen        text;
+-- [138c] la radiación global del día donde la estación la mide (SIPAN: «Solar Rad.», W/m² medio de cada 10 min ×
+-- 600 s), para el Q fototermal medido aparte (motor-q.mjs NO se toca). WeatherLink público no trae radiación: NULL.
+alter table estaciones_obs add column if not exists rad_mj_m2            numeric;
+alter table estaciones_obs add column if not exists rad_registros        smallint;
 
 do $$
 begin
@@ -69,6 +73,10 @@ begin
   end if;
   if not exists (select 1 from pg_constraint where conname = 'estaciones_obs_muestreo') then
     alter table estaciones_obs add constraint estaciones_obs_muestreo check (muestreo_min is null or muestreo_min between 1 and 1440);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'estaciones_obs_rad_rango') then
+    alter table estaciones_obs add constraint estaciones_obs_rad_rango check ((rad_mj_m2 is null or (rad_mj_m2 >= 0 and rad_mj_m2 < 45))
+      and (rad_registros is distinct from 0 or rad_mj_m2 is null));
   end if;
   if not exists (select 1 from pg_constraint where conname = 'estaciones_obs_lluvia_origen') then
     alter table estaciones_obs add constraint estaciones_obs_lluvia_origen check (lluvia_origen is null or lluvia_origen in ('suma_registros', 'acumulado_consola'));
@@ -106,8 +114,43 @@ create index if not exists pronostico_helada_medicion_noche_idx on pronostico_he
 alter table pronostico_helada_medicion enable row level security;
 revoke all on table pronostico_helada_medicion from anon, authenticated;
 
+-- [138b/138c] LA ÚLTIMA LECTURA de cada estación: una fila por estación (≤ ~500 filas, chica). Sirve para:
+--   · el dedup de WeatherLink por `lastTimestamp` (si `instante` no cambió, la lectura no es nueva) y la edad
+--     (`ageInSeconds` > 2 h = vieja, no cuenta);
+--   · las lecturas A DEMANDA del semáforo de aplicación con caché de 15 min (`leido_en`): si hay una de menos de
+--     15 min, no se le pide de nuevo al servicio.
+-- Las unidades se guardan ya convertidas (°C, %, m/s, hPa, mm); el crudo tal como vino va en `crudo`.
+create table if not exists estaciones_ultima_lectura (
+  red            text         not null,
+  estacion_id    text         not null,
+  instante       timestamptz  not null,      -- cuándo midió la estación (WeatherLink: lastTimestamp; SIPAN: fin del registro)
+  leido_en       timestamptz  not null default now(),   -- cuándo la leímos nosotros (caché de 15 min)
+  edad_s         integer,                    -- WeatherLink: ageInSeconds al leer
+  temp_c         numeric,
+  hum_pct        numeric,
+  viento_ms      numeric,
+  racha_ms       numeric,
+  viento_dir_gr  numeric,
+  presion_hpa    numeric,
+  lluvia_dia_mm  numeric,                    -- acumulado del día de la consola (se reinicia a medianoche local)
+  rad_wm2        numeric,                    -- SIPAN sí; WeatherLink público, NULL
+  marcas         text[]       not null default '{}',
+  crudo          jsonb        not null default '{}'::jsonb,
+  primary key (red, estacion_id),
+  foreign key (red, estacion_id) references estaciones (red, estacion_id),
+  constraint eul_temp check (temp_c is null or (temp_c > -40 and temp_c < 60)),
+  constraint eul_hum  check (hum_pct is null or (hum_pct >= 0 and hum_pct <= 100)),
+  constraint eul_edad check (edad_s is null or edad_s >= 0)
+);
+comment on table estaciones_ultima_lectura is
+  'Última lectura por estación (dedup por instante, caché de 15 min para lecturas a demanda). Dato INTERNO. RLS sin políticas.';
+alter table estaciones_ultima_lectura enable row level security;
+revoke all on table estaciones_ultima_lectura from anon, authenticated;
+
 -- ROLLBACK (comentado a propósito):
+-- drop table if exists estaciones_ultima_lectura;
 -- drop table if exists pronostico_helada_medicion;
 -- alter table estaciones_obs drop column if exists eto_mm, drop column if exists tmin_noche_c, drop column if exists tmin_noche_en,
 --   drop column if exists noche_registros, drop column if exists noche_esperados, drop column if exists registros_validos,
---   drop column if exists registros_esperados, drop column if exists muestreo_min, drop column if exists lluvia_origen;
+--   drop column if exists registros_esperados, drop column if exists muestreo_min, drop column if exists lluvia_origen,
+--   drop column if exists rad_mj_m2, drop column if exists rad_registros;

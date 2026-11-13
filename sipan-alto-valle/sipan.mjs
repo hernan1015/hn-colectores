@@ -85,9 +85,9 @@ export function filaObs({ id, fecha, dia, noche, firma, viejo = null, intervalo 
     red: RED, estacion_id: id, fecha, hora_corte: '00:00', url: urlDe(id),
     muestreo_min: null, lluvia_origen: 'suma_registros',      // 0147: extremos de la consola; lluvia = suma de los 10 min
     ...(usarDia
-      ? { lluvia_mm: dia.lluvia_mm, horas_validas: dia.horas_validas, tmin_c: dia.tmin_c, tmax_c: dia.tmax_c, eto_mm: dia.eto_mm,
+      ? { lluvia_mm: dia.lluvia_mm, horas_validas: dia.horas_validas, tmin_c: dia.tmin_c, tmax_c: dia.tmax_c, eto_mm: dia.eto_mm, rad_mj_m2: dia.rad_mj_m2, rad_registros: dia.rad_registros,
           registros_validos: dia.registros_validos, registros_esperados: dia.registros_esperados }
-      : { lluvia_mm: viejo.lluvia_mm, horas_validas: viejo.horas_validas, tmin_c: viejo.tmin_c, tmax_c: viejo.tmax_c, eto_mm: viejo.eto_mm,
+      : { lluvia_mm: viejo.lluvia_mm, horas_validas: viejo.horas_validas, tmin_c: viejo.tmin_c, tmax_c: viejo.tmax_c, eto_mm: viejo.eto_mm, rad_mj_m2: viejo.rad_mj_m2 ?? null, rad_registros: viejo.rad_registros ?? null,
           registros_validos: viejo.registros_validos, registros_esperados: viejo.registros_esperados }),
     ...(usarNoche
       ? { tmin_noche_c: noche.tmin_noche_c, tmin_noche_en: noche.tmin_noche_en, noche_registros: noche.registros_validos, noche_esperados: noche.registros_esperados }
