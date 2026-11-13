@@ -12,9 +12,9 @@
 # Diseño y costo: hn-cortex docs/opera-mosaicos-2026-11-11/AUTOMATICO.md
 name: opera-mosaico-diario
 on:
-  # APAGADO: el horario va comentado. Para prenderlo, descomentar y sacar el `if: false` del job.
-  # schedule:
-  #   - cron: '10 4 * * *'     # 04:10 UTC = 01:10 ART: termina antes de la tarea de enlaces de local (02:40 ART)
+  # PRENDIDO el 13/11/2026 con OK del maker (corridas a mano: prueba 43448590796 y subida 43453720636, las dos OK).
+  schedule:
+    - cron: '10 4 * * *'     # 04:10 UTC = 01:10 ART: termina antes de la tarea de enlaces de local (02:40 ART)
   workflow_dispatch:
     inputs:
       dias:
