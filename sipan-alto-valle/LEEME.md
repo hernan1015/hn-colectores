@@ -53,9 +53,9 @@ El lector toma los nombres del encabezado.
 Está todo en **`PRENDER.md`**: los secretos nombre por nombre, los comandos `gh` y el orden. También dice cómo verificar que anduvo.
 
 ## Tests
-- `npm ci --prefix sipan-alto-valle && npm test --prefix sipan-alto-valle`: 46 tests (`sipan`, `crudos-rol`, `prender` y `base-pg`), cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales; `base-pg` usa un `sql` falso y, para probar que la URL no sale en los errores, el driver de verdad contra 127.0.0.1:1 (conexión rechazada, sin red).
+- `npm ci --prefix sipan-alto-valle && npm test --prefix sipan-alto-valle`: 53 tests (`sipan`, `crudos-rol`, `prender`, `base-pg` y `pg-real`), cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales; `base-pg` usa un `sql` falso y, para probar que la URL no sale en los errores, el driver de verdad contra 127.0.0.1:1 (conexión rechazada, sin red). `pg-real` (4 tests) aplica la 0147b como NO superusuario contra un PostgreSQL de verdad: corre sólo con `SIPAN_PG_BIN` apuntando al `bin` de un PostgreSQL ≥ 16 (en pc-nanci, el portable de `hn-tools/pg-embebido`); sin eso se saltea.
 - Los dos tests con los **fixtures reales** corren si `SIPAN_FIXTURES` apunta a la carpeta. Son copias de la Wayback Machine (Guerrico 13-14/02/2026, Villa Regina 23-24/01/2020, Cinco Saltos 8-9/10/2020) y están en hn-cortex (privado): `docs/inta-alto-valle-2026-11/fixtures/`.
-- `node sipan-alto-valle/test/control-negativo.mjs`: 35 mutantes, uno por regla. Tienen que morir todos.
+- `node sipan-alto-valle/test/control-negativo.mjs`: 42 mutantes, uno por regla. Tienen que morir todos (los 2 de la 0147b, sólo con `SIPAN_PG_BIN`).
 
 ## El histórico (sólo para medir)
 - **`historico-pdf.mjs <lista.txt> <carpeta>`** baja los resúmenes mensuales en PDF, **sólo de 2018 en adelante** y sólo de sipan.inta.gob.ar.

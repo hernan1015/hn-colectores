@@ -27,16 +27,37 @@
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- El rol: se crea si no existe y SIEMPRE se le fijan los atributos (también si ya existía de la versión NOLOGIN).
-select 'create role colector_estaciones login nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit connection limit 3'
+-- ⚠ PG16+: nombrar SUPERUSER/NOSUPERUSER en CREATE o ALTER ROLE exige ser superusuario, y REPLICATION/BYPASSRLS
+--   (aunque sea para negarlos) exige tenerlos; en Supabase `postgres` NO es superusuario. Por eso esos tres atributos
+--   NO se nombran (en un rol nuevo ya nacen en false) y se VERIFICAN abajo: si alguno da true, la migración aborta.
+select 'create role colector_estaciones login nocreatedb nocreaterole noinherit connection limit 3'
  where not exists (select 1 from pg_roles where rolname = 'colector_estaciones') \gexec
-alter role colector_estaciones with login nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit connection limit 3
+alter role colector_estaciones with login nocreatedb nocreaterole noinherit connection limit 3
   password :'clave';
+do $$
+declare r record;
+begin
+  select rolsuper, rolreplication, rolbypassrls, rolcreaterole, rolcreatedb, rolinherit, rolcanlogin, rolconnlimit
+    into r from pg_roles where rolname = 'colector_estaciones';
+  if r.rolsuper or r.rolreplication or r.rolbypassrls or r.rolcreaterole or r.rolcreatedb or r.rolinherit then
+    raise exception 'colector_estaciones tiene atributos de más (super=%, replication=%, bypassrls=%, createrole=%, createdb=%, inherit=%): no se sigue; sacárselos con un superusuario o borrar el rol y volver a correr',
+      r.rolsuper, r.rolreplication, r.rolbypassrls, r.rolcreaterole, r.rolcreatedb, r.rolinherit;
+  end if;
+  if not r.rolcanlogin or r.rolconnlimit <> 3 then
+    raise exception 'colector_estaciones quedó sin LOGIN o sin CONNECTION LIMIT 3';
+  end if;
+end $$;
 -- Por si se aplicó antes la versión de PostgREST (NOLOGIN + JWT): ya no hace falta que `authenticator` lo use.
 do $$
 begin
   if exists (select 1 from pg_auth_members m join pg_roles r on r.oid = m.roleid join pg_roles a on a.oid = m.member
               where r.rolname = 'colector_estaciones' and a.rolname = 'authenticator') then
     revoke colector_estaciones from authenticator;
+    /* desde PG16 el REVOKE sólo saca lo que otorgó el mismo usuario: si lo otorgó otro, queda y se avisa */
+    if exists (select 1 from pg_auth_members m join pg_roles r on r.oid = m.roleid join pg_roles a on a.oid = m.member
+                where r.rolname = 'colector_estaciones' and a.rolname = 'authenticator') then
+      raise warning 'authenticator sigue siendo miembro de colector_estaciones (lo otorgó otro usuario): sacarlo a mano con ese usuario';
+    end if;
   end if;
 end $$;
 

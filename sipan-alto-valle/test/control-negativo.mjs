@@ -35,7 +35,14 @@ const MUTANTES = [
   ['FK: guarda los datos aunque la estación falló', 'sipan.mjs', 'if (!(await guardarEstacion(e, { ...meta, ...x.meta }))) continue;', 'await guardarEstacion(e, { ...meta, ...x.meta });'],
   ['barrido sin la pausa desde el último pedido', 'sipan.mjs', 'ultimoPedido: pedidor.ultimo', 'ultimoPedido: null'],
   ['una falla de los crudos corta la corrida', 'sipan.mjs', "        catch (err) { errores.push(`${e.id} crudos: ${String(err && err.message).slice(0, 80)}`); }", '        catch (err) { throw err; }'],
-  ['pg: no controla current_user', 'lib/base.mjs', "if (yo !== ROL) { await cerrar(); throw new Error(", "if (false) { await cerrar(); throw new Error("],
+  ['pg: no controla current_user', 'lib/base.mjs', "if (yo !== ROL || sesion !== ROL) {", "if (sesion !== ROL) {"],
+  ['pg: no controla session_user', 'lib/base.mjs', "if (yo !== ROL || sesion !== ROL) {", "if (yo !== ROL) {"],
+  ['pg: conecta a cualquier host', 'lib/base.mjs', "if (!host || !hostPermitido(host)) {", "if (false) {"],
+  ['pg: el host del pooler sin anclar (acepta …pooler.supabase.com.evil.com)', 'lib/base.mjs', String.raw`export const HOST_POOLER = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.pooler\.supabase\.com$/;`, String.raw`export const HOST_POOLER = /pooler\.supabase\.com/;`],
+  ['pg: tmin_noche_en vuelve como Date', 'lib/base.mjs', "for (const k of FECHAHORA) if (o[k] instanceof Date) o[k] = o[k].toISOString();", ""],
+  ['pg: lat/lon como texto', 'lib/base.mjs', "'rad_mj_m2', 'lat', 'lon'];", "'rad_mj_m2'];"],
+  ['0147b: el ALTER nombra NOBYPASSRLS (falla como no superusuario, PG16+)', 'migracion/0147b_rol_colector_estaciones.sql', "alter role colector_estaciones with login nocreatedb nocreaterole noinherit connection limit 3", "alter role colector_estaciones with login nocreatedb nocreaterole noinherit nobypassrls connection limit 3", { pg: true }],
+  ['0147b: no verifica los atributos del rol', 'migracion/0147b_rol_colector_estaciones.sql', "  if r.rolsuper or r.rolreplication or r.rolbypassrls or r.rolcreaterole or r.rolcreatedb or r.rolinherit then", "  if false then", { pg: true }],
   ['pg: acepta cualquier usuario en la URL', 'lib/base.mjs', 'if (!usuario || !(usuario === ROL || usuario.startsWith(ROL + \'.\'))) {', 'if (!usuario) {'],
   ['pg: el error de conexión sale con el mensaje del driver (URL, host)', 'lib/base.mjs', "  const err = new Error(`${que}: ${codigo}${DESC[codigo] ? ' (' + DESC[codigo] + ')' : ''}`);", "  const err = new Error(`${que}: ${codigo} ${e && e.message}`);"],
   ['pg: el error de una fila sale con el mensaje del driver', 'lib/base.mjs', "errores.push(`${f.estacion_id} ${f.fecha}: ${errorLimpio(e, 'estaciones_obs').message}`);", 'errores.push(`${f.estacion_id} ${f.fecha}: ${e.message}`);'],
@@ -51,22 +58,25 @@ function correrCon(nombre, archivo, viejo, nuevo) {
   for (const x of ['lib', 'test', 'migracion', 'sipan.mjs', 'medir.mjs', 'historico-pdf.mjs']) fs.cpSync(path.join(RAIZ, x), path.join(dir, x), { recursive: true });
   if (archivo) {
     const p = path.join(dir, archivo);
-    const txt = fs.readFileSync(p, 'utf8');
+    const txt = fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');   // un clon de Windows con CRLF no rompe la búsqueda
     const veces = txt.split(viejo).length - 1;
     if (veces !== 1) throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces (tiene que ser 1)`);
     fs.writeFileSync(p, txt.replace(viejo, nuevo));
   }
-  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs')], { encoding: 'utf8', env: process.env });
+  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs'), path.join(dir, 'test', 'pg-real.test.mjs')], { encoding: 'utf8', env: process.env });
   return r.status === 0;
 }
 
 let muertos = 0;
+/* los mutantes de la 0147b sólo se pueden matar con un PostgreSQL de verdad (test/pg-real.test.mjs, SIPAN_PG_BIN) */
+const conPg = !!process.env.SIPAN_PG_BIN;
+const lista = MUTANTES.filter((m) => conPg || !(m[4] && m[4].pg));
 if (!correrCon('sin romper', null)) { console.error('la copia SIN romper no pasa: revisar antes de contar mutantes'); process.exit(1); }
-for (const [nombre, archivo, viejo, nuevo] of MUTANTES) {
+for (const [nombre, archivo, viejo, nuevo] of lista) {
   const pasa = correrCon(nombre, archivo, viejo, nuevo);
   console.log(`${pasa ? 'VIVO   ' : 'muerto '} ${nombre}`);
   if (!pasa) muertos++;
 }
 fs.rmSync(path.join(RAIZ, '.mutante'), { recursive: true, force: true });
-console.log(`${muertos} de ${MUTANTES.length} mutantes detectados`);
-process.exit(muertos === MUTANTES.length ? 0 : 1);
+console.log(`${muertos} de ${lista.length} mutantes detectados${conPg ? '' : ` (sin SIPAN_PG_BIN: ${MUTANTES.length - lista.length} de la 0147b sin probar)`}`);
+process.exit(muertos === lista.length ? 0 : 1);

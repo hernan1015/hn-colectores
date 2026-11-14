@@ -8,7 +8,7 @@ Los comandos son de Git Bash y `gh` es `C:/Users/jeshe/AppData/Local/Programs/gh
 
 | Nombre en hn-colectores | Qué lleva | De dónde sale | ¿Existe ya? |
 |---|---|---|---|
-| `SIPAN_PG_URL` | `postgresql://colector_estaciones.uxyewblbwzqaauzkcihf:<clave codificada>@<host-del-pooler>:6543/postgres`. Es el **único** secreto de la base: el rol `colector_estaciones` (0147b), LOGIN, sin BYPASSRLS y con CONNECTION LIMIT 3, por el pooler en modo transacción. **Nunca** el usuario `postgres` ni la clave de servicio: el colector se niega a arrancar con otro usuario en la URL, y además verifica `current_user` al conectar | se arma en el paso 2 | no |
+| `SIPAN_PG_URL` | `postgresql://colector_estaciones.uxyewblbwzqaauzkcihf:<clave hex>@<host-del-pooler>:6543/postgres`. Es el **único** secreto de la base: el rol `colector_estaciones` (0147b), LOGIN, sin BYPASSRLS y con CONNECTION LIMIT 3, por el pooler en modo transacción. **Nunca** el usuario `postgres` ni la clave de servicio: el colector se niega a arrancar con otro usuario en la URL, y además verifica `current_user` al conectar | se arma en el paso 2 | no |
 | `RADAR_TOKEN` | el token del radar, con **Contents: Read and write SÓLO sobre `hn-radar`**. Sirve tal cual para los releases `sipan-AAAA-MM-DD` | ya está cargado (colector-radar) | **sí**: no se toca |
 
 | Variable (no es secreto) | Valor | Para qué |
@@ -26,54 +26,68 @@ Los comandos son de Git Bash y `gh` es `C:/Users/jeshe/AppData/Local/Programs/gh
 - **La 0147** se aplica como siempre (SQL editor o MCP).
 - **La 0147b NO:** lleva la contraseña por una variable de psql y se aplica en el paso 2.
 
-### 2 · La clave, el rol (0147b) y el secreto, en la misma terminal
-Necesita `psql` (cliente de PostgreSQL) y `node`, y se corre desde el clon de hn-colectores en esta rama (o en main ya mergeado).
+### 2 · La clave, el rol (0147b) y la URL, en la misma terminal
+Necesita `psql` (cliente de PostgreSQL ≥ 16) y `node`, y se corre desde el clon de hn-colectores, en esta rama o en main ya mergeado.
 
 - **La URL de administración** es la de siempre: el `DATABASE_URL` de Netlify, que es el usuario `postgres.uxyewblbwzqaauzkcihf` por el pooler. Sirve sólo para aplicar la 0147b y **no va a ningún secreto**.
-- **El host del pooler** sale de esa misma URL (lo que va entre `@` y `:`, del estilo `aws-0-<región>.pooler.supabase.com`), o del MCP de Supabase (`get_project_url` / la cadena de conexión del pooler).
+- **El host del pooler** sale de esa misma URL (lo que va entre `@` y `:`, del estilo `aws-0-<región>.pooler.supabase.com`) o del MCP de Supabase. El colector **sólo** conecta a un host `….pooler.supabase.com`.
+- **La clave es hexadecimal** (`openssl rand -hex 32`, 64 caracteres). No trae `+ / =`, no hay que codificarla y Git Bash no la toca: con base64, una clave que empieza con `/` se convierte en `C:/Program Files/Git/…`.
 - **Nada queda en pantalla, en el historial ni en la base en texto plano:**
   - la clave vive sólo en una variable de esta terminal;
-  - a la base le llega su **verificador SCRAM** (`migracion/scram.mjs`), no la clave;
-  - al secreto le llega por la entrada estándar;
-  - al final, `unset`.
+  - a la base le llega su **verificador SCRAM** (`migracion/scram.mjs`);
+  - al secreto le llega por la entrada estándar, en el paso 3e.
+- **Cada paso CORTA si el anterior falló:** todo va encadenado con `&&`, y el último `echo` dice si se llegó al final.
+  - Mientras corre `psql`, la URL de administración y el verificador se ven en la lista de procesos de esta PC. Es aceptable en la PC propia.
 ```bash
 set -o pipefail
 GH=/c/Users/jeshe/AppData/Local/Programs/gh/bin/gh.exe
 REF=uxyewblbwzqaauzkcihf
 read -rs ADMIN_URL                         # pegar el DATABASE_URL de Netlify (no se ve) + Enter
-POOLER=$(U="$ADMIN_URL" node -e 'process.stdout.write(new URL(process.env.U).hostname)')
-echo "pooler: $POOLER"                      # tiene que terminar en .pooler.supabase.com (si no, no seguir)
-CLAVE=$(openssl rand -base64 32)
-VERIF=$(CLAVE="$CLAVE" node sipan-alto-valle/migracion/scram.mjs) || { echo "no salió el verificador: no seguir"; }
-# la 0147b, con la contraseña por variable (ON_ERROR_STOP: si algo falla, no sigue)
-psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -v clave="$VERIF" -f sipan-alto-valle/migracion/0147b_rol_colector_estaciones.sql
-# la URL del colector: la clave base64 trae + / = y en una URL van codificadas
-CLAVE_URL=$(CLAVE="$CLAVE" node -e 'process.stdout.write(encodeURIComponent(process.env.CLAVE))')
-SIPAN_PG_URL="postgresql://colector_estaciones.$REF:$CLAVE_URL@$POOLER:6543/postgres"
+POOLER=$(U="$ADMIN_URL" node -e 'process.stdout.write(new URL(process.env.U).hostname)') \
+ && case "$POOLER" in *.pooler.supabase.com) true ;; *) echo "el host no es el pooler: NO SEGUIR"; false ;; esac \
+ && CLAVE=$(openssl rand -hex 32) && [ ${#CLAVE} -eq 64 ] \
+ && VERIF=$(CLAVE="$CLAVE" node sipan-alto-valle/migracion/scram.mjs) && [ -n "$VERIF" ] \
+ && psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -v clave="$VERIF" -f sipan-alto-valle/migracion/0147b_rol_colector_estaciones.sql \
+ && SIPAN_PG_URL="postgresql://colector_estaciones.$REF:$CLAVE@$POOLER:6543/postgres" \
+ && echo "PASO 2 OK" || echo "PASO 2 FALLÓ: no seguir (ver el error de arriba)"
 ```
+- **Si la 0147b corta con «colector_estaciones tiene atributos de más»,** el rol ya existía con SUPERUSER, REPLICATION, BYPASSRLS, CREATEROLE, CREATEDB o INHERIT. Hay que borrarlo con el usuario de administración (`drop role colector_estaciones;`, si todavía no tiene objetos) y volver a correr el paso 2.
+- **Si aparece la advertencia «authenticator sigue siendo miembro…»,** quedó de la versión JWT, otorgado por otro usuario. Hay que sacarlo con ese usuario.
 
 ### 3 · Verificar con ESA URL (antes de cargar el secreto), cargarlo y borrar todo
 ```bash
-# 3a · ¿entra como colector_estaciones? (tiene que decir colector_estaciones)
-psql "$SIPAN_PG_URL" -At -c "select current_user"
-# 3b · un insert PERMITIDO (su proceso): tiene que decir INSERT 0 1
-psql "$SIPAN_PG_URL" -c "insert into registro_procesos (proceso, ok, resumen) values ('sipan_alto_valle', true, '{\"prueba\": \"PRENDER paso 3\"}')"
-# 3c · un insert de OTRA RED: tiene que FALLAR con «new row violates row-level security policy»
-psql "$SIPAN_PG_URL" -c "insert into estaciones (red, estacion_id) values ('SNIH', 'prueba-no-va')"
-# 3d · lo que no puede: tiene que FALLAR con «permission denied»
-psql "$SIPAN_PG_URL" -c "select count(*) from campana.lotes"
-psql "$SIPAN_PG_URL" -c "delete from estaciones_obs where red = 'INTA_SIPAN_AV'"
-# si 3a-3d dieron lo que dicen: cargar el secreto
-printf %s "$SIPAN_PG_URL" | $GH secret set SIPAN_PG_URL -R hernan1015/hn-colectores
-unset CLAVE CLAVE_URL VERIF SIPAN_PG_URL ADMIN_URL POOLER
+# 3a-3d: cada chequeo tiene que dar lo esperado; si alguno no, VERIF_OK queda vacío y el 3e no carga nada
+VERIF_OK=
+q() { psql "$SIPAN_PG_URL" -X -At -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
+r1=$(q "select current_user || ' ' || session_user") ; echo "3a: $r1"            # colector_estaciones colector_estaciones
+r2=$(q "insert into registro_procesos (proceso, ok, resumen) values ('sipan_alto_valle', false, '{\"prueba\": \"PRENDER paso 3, no es una corrida\"}')"); echo "3b: $r2"   # INSERT 0 1
+r3=$(q "insert into estaciones (red, estacion_id) values ('SNIH', 'prueba-no-va')"); echo "3c: $r3"   # ERROR … row-level security policy
+r4=$(q "select count(*) from estaciones where red = 'SNIH'"); echo "3d1: $r4"                         # 0
+r5=$(q "select has_schema_privilege('public', 'CREATE')"); echo "3d2: $r5"                             # f
+r6=$(q "create table public.prueba_no_va (i int)"); echo "3d3: $r6"                                     # ERROR … permission denied
+r7=$(q "select count(*) from campana.lotes"); echo "3d4: $r7"                                           # ERROR … permission denied
+r8=$(q "delete from estaciones_obs where red = 'INTA_SIPAN_AV'"); echo "3d5: $r8"                       # ERROR … permission denied
+[ "$r1" = "colector_estaciones colector_estaciones" ] && [[ "$r2" == *"INSERT 0 1"* ]] \
+ && [[ "$r3" == *"row-level security"* ]] && [ "$r4" = "0" ] && [ "$r5" = "f" ] \
+ && [[ "$r6" == *"permission denied"* ]] && [[ "$r7" == *"permission denied"* ]] && [[ "$r8" == *"permission denied"* ]] \
+ && VERIF_OK=si && echo "PASO 3 OK" || echo "PASO 3 FALLÓ: NO cargar el secreto (mirar cuál dio distinto)"
 ```
-- **Si 3a no entra** («password authentication failed», «tenant or user not found»): revisar el usuario `colector_estaciones.<ref>` y el host del pooler. El puerto es **6543** (modo transacción).
-- **Si 3b falla con «violates row-level security policy»,** la política de `registro_procesos` no se creó: volver a correr la 0147b.
-- **Si 3c PASA,** la RLS no rige para el rol: **no seguir**, borrar esa fila con el usuario de administración y avisarme.
+```bash
+# 3e: SÓLO si el bloque de arriba dijo «PASO 3 OK»
+[ "$VERIF_OK" = si ] && printf %s "$SIPAN_PG_URL" | $GH secret set SIPAN_PG_URL -R hernan1015/hn-colectores && echo "secreto cargado"
+unset CLAVE VERIF SIPAN_PG_URL ADMIN_URL POOLER VERIF_OK r1 r2 r3 r4 r5 r6 r7 r8
+```
+- **El renglón de prueba del 3b** queda con `ok=false` y `resumen = {"prueba": …}`: no se confunde con una corrida. Si se quiere, se borra después con el usuario de administración: `delete from registro_procesos where proceso = 'sipan_alto_valle' and resumen ? 'prueba';`.
+- **Si el 3a no entra** («password authentication failed», «tenant or user not found»): revisar el usuario `colector_estaciones.<ref>` y el host del pooler. El puerto es **6543** (modo transacción).
+- **Si el 3a muestra dos usuarios distintos:** la URL no es la que se armó en el paso 2. No seguir.
+- **Si el 3b falla con «violates row-level security policy»:** la política de `registro_procesos` no se creó. Volver a correr la 0147b.
+- **Si el 3c PASA:** la RLS no rige para el rol. **No seguir:** borrar esa fila con el usuario de administración y avisarme.
+- **Si el 3d2 da `t` o el 3d3 crea la tabla:** PUBLIC tiene CREATE en `public`, en esta base. Hay que avisarme antes de seguir y borrar `public.prueba_no_va` con el usuario de administración.
 - **Que lo de siempre siga anotando:** con la URL de administración,
   - `select relrowsecurity from pg_class where oid = 'public.registro_procesos'::regclass;` tiene que dar `true`;
-  - la próxima corrida de cualquier function de Netlify tiene que aparecer en `select proceso, max(creado_at) from registro_procesos group by 1;`. Esas functions entran con el dueño de la tabla, que saltea la RLS.
-- **Si hay que cambiar la clave:** se repite el paso 2 entero. La 0147b es idempotente: vuelve a fijar la contraseña.
+  - la próxima corrida de cualquier function de Netlify tiene que aparecer en `select proceso, max(creado_at) from registro_procesos group by 1;`.
+- **Para cambiar la clave:** se repiten los pasos 2 y 3. La 0147b es idempotente y vuelve a fijar la contraseña.
+
 
 ### 4 · Mergear el PR #2
 ```bash
