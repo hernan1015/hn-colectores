@@ -17,7 +17,7 @@
 -- ⛔ LA CONTRASEÑA NO ESTÁ EN ESTE ARCHIVO. Llega por la variable de psql `clave`, y lo que llega NO es la clave en
 --   texto: es su verificador SCRAM-SHA-256 (migracion/scram.mjs), para que la clave tampoco quede en el log de
 --   sentencias de la base. Por eso este archivo se aplica con psql (no con el editor SQL ni el MCP, que no tienen
---   variables):  psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -v clave="$VERIF" -f 0147b_rol_colector_estaciones.sql
+--   variables):  psql -v ON_ERROR_STOP=1 -v clave="$VERIF" -f 0147b_rol_colector_estaciones.sql "$ADMIN_URL"   (en Windows, las opciones ANTES de la URL)
 --   Sin `-v clave=…`, psql deja «:'clave'» sin reemplazar, la sentencia da error de sintaxis y (con ON_ERROR_STOP)
 --   no se aplica nada más. Ver PRENDER.md, pasos 2 y 3.
 --

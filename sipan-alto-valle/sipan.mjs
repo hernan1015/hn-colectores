@@ -26,6 +26,26 @@ export const PAUSA_MS = 30000;
 export const TOPE_PEDIDOS = 12;          // 5 estaciones + clima.htm + margen; el barrido suma hasta 15 (con su propio tope)
 export const TOPE_BARRIDO = 15;
 export const QUIETA_H = 24;
+/* una estación sin registros nuevos hace MÁS de 30 días pasa a INACTIVA en el catálogo (metadatos.estado, y la
+   columna activa de la 0110): deja de avisar en cada corrida y la corrida no da rojo por ella. Avisa UNA vez, cuando
+   cambia de estado (a inactiva, o de vuelta a activa si revive). Se le sigue pidiendo el archivo (para ver si revive),
+   pero no se guardan sus datos viejos de nuevo. */
+export const INACTIVA_DIAS = 30;
+
+/** El estado de una estación según su último registro (hora local) y el estado guardado. Función pura. */
+export function estadoDe({ ultimoLocal = null, metaPrevia = {}, ahoraMs = Date.now() }) {
+  const previo = metaPrevia.estado === 'inactiva' ? 'inactiva' : 'activa';
+  if (!ultimoLocal) return { estado: previo, cambio: null, horas: null };
+  const horas = (ahoraMs - msLocal(ultimoLocal)) / 3600e3;
+  const estado = horas > INACTIVA_DIAS * 24 ? 'inactiva' : 'activa';
+  const cambio = estado === previo ? null : estado === 'inactiva' ? 'estacion_inactiva' : 'estacion_revivio';
+  return { estado, cambio, horas };
+}
+/** Lo que se guarda en metadatos por el estado (estado_desde cambia sólo cuando cambia el estado). */
+const metaDeEstado = (st, metaPrevia, ahoraMs) => ({
+  estado: st.estado, activa: st.estado === 'activa',
+  estado_desde: st.cambio || !metaPrevia.estado_desde ? new Date(ahoraMs).toISOString() : metaPrevia.estado_desde,
+});
 export const USER_AGENT = 'Mozilla/5.0 (compatible; colector-agrometeorologico/1.0)';
 const PROCESO = 'sipan_alto_valle';
 
@@ -122,11 +142,14 @@ export async function procesarEstacion({ e, texto, meta = {}, aceptar = {}, alma
   const ultimo = p.registros[p.registros.length - 1].local;
   const marcas = {};
   for (const r of ctrl) for (const m of r.marcas) marcas[m] = (marcas[m] || 0) + 1;
-  const horasQuieta = (ahoraMs - msLocal(ultimo)) / 3600e3;
+  const st = estadoDe({ ultimoLocal: ultimo, metaPrevia: meta, ahoraMs });
+  /* quieta (> 24 h) avisa sólo mientras está ACTIVA; inactiva (> 30 días) no avisa en cada corrida */
+  const aviso = st.cambio ? { tipo: st.cambio, id: e.id, dias: Math.round(st.horas / 24), ultimo_registro: ultimo }
+    : st.estado === 'activa' && st.horas > QUIETA_H ? { tipo: 'estacion_quieta', id: e.id, horas: Math.round(st.horas), ultimo_registro: ultimo } : null;
   return {
     id: e.id, estado: 'ok', p, filas, todos, ultimo, marcas, nuevos: p.registros.length, unidos: todos.length - guardados.length,
-    aviso: horasQuieta > QUIETA_H ? { tipo: 'estacion_quieta', id: e.id, horas: Math.round(horasQuieta), ultimo_registro: ultimo } : null,
-    meta: { formato_firma: p.firma, columnas: p.columnas, ultimo_registro: ultimo, intervalo_min: p.intervalo_min, ultima_lectura: new Date(ahoraMs).toISOString() },
+    aviso, estadoEst: st.estado, cambio: st.cambio,
+    meta: { formato_firma: p.firma, columnas: p.columnas, ultimo_registro: ultimo, intervalo_min: p.intervalo_min, ultima_lectura: new Date(ahoraMs).toISOString(), ...metaDeEstado(st, meta, ahoraMs) },
   };
 }
 
@@ -147,7 +170,11 @@ async function correrInterno({ seco = true, ids = null, barrer = false, aceptar 
   const almacen = seco ? null : almacenDado || almacenDeEntorno(env, fetchFn);
   const opPed = { fetchFn, ...(dormir ? { dormir } : {}), ...(reloj ? { ahora: reloj } : {}) };
   const pedidor = crearPedidor(opPed);
-  const lista = ESTACIONES.filter((e) => !ids || ids.includes(e.id));
+  /* las de pedido MENSUAL (inactivas conocidas del barrido) se piden sólo en la primera corrida del mes (día 1, antes de
+     las 6 UTC), o si se las nombra con --ids */
+  const primeraDelMes = new Date(ahoraMs).getUTCDate() === 1 && new Date(ahoraMs).getUTCHours() < 6;
+  const lista = ESTACIONES.filter((e) => (!ids || ids.includes(e.id)) && (e.pedir !== 'mensual' || primeraDelMes || (ids && ids.includes(e.id))));
+  const mensuales = ESTACIONES.filter((e) => e.pedir === 'mensual' && !lista.includes(e) && (!ids || ids.includes(e.id)));
   const estado = base ? new Map((await base.estaciones()).map((f) => [f.estacion_id, f.metadatos || {}])) : new Map();
   const avisos = []; const porEstacion = {};
   let filasObs = 0, crudosDias = 0; const errores = [];
@@ -165,7 +192,9 @@ async function correrInterno({ seco = true, ids = null, barrer = false, aceptar 
       const r = await pedidor.pedir(urlDe(e.id));
       if (r.estado !== 'ok') {
         porEstacion[e.id] = r.estado + (r.status ? ' ' + r.status : '');
-        if (r.estado === 'no') avisos.push({ tipo: 'no_responde', id: e.id, status: r.status });
+        /* una inactiva (guardada así o mensual) que no responde no es novedad */
+        const inactiva = (estado.get(e.id) || {}).estado === 'inactiva' || e.pedir === 'mensual';
+        if (r.estado === 'no' && !inactiva) avisos.push({ tipo: 'no_responde', id: e.id, status: r.status });
         continue;
       }
       texto = r.texto;
@@ -180,7 +209,12 @@ async function correrInterno({ seco = true, ids = null, barrer = false, aceptar 
         if (!seco) await guardarEstacion(e, { ...meta, formato_nuevo_visto: x.aviso.firma_nueva || x.aviso.motivo, formato_nuevo_en: new Date(ahoraMs).toISOString() });
         continue;
       }
-      porEstacion[e.id] = { registros: x.nuevos, nuevos_unidos: x.unidos, fechas: x.filas.length, marcados: Object.values(x.marcas).reduce((s, n) => s + n, 0), horas_desde_ultimo: Math.round((ahoraMs - msLocal(x.ultimo)) / 3600e3) };
+      porEstacion[e.id] = { estado: x.estadoEst, registros: x.nuevos, nuevos_unidos: x.unidos, fechas: x.filas.length, marcados: Object.values(x.marcas).reduce((s, n) => s + n, 0), horas_desde_ultimo: Math.round((ahoraMs - msLocal(x.ultimo)) / 3600e3) };
+      if (x.estadoEst === 'inactiva') {
+        /* inactiva: sólo se actualiza el catálogo (estado, último registro); sus datos viejos no se vuelven a escribir */
+        if (!seco) await guardarEstacion(e, { ...meta, ...x.meta });
+        continue;
+      }
       if (seco) { filasObs += x.filas.length; continue; }
       if (!(await guardarEstacion(e, { ...meta, ...x.meta }))) continue;
       if (almacen) {
@@ -194,13 +228,23 @@ async function correrInterno({ seco = true, ids = null, barrer = false, aceptar 
       errores.push(`${e.id}: ${String(err && err.message).slice(0, 80)}`);
     }
   }
-  /* las que no se pudieron leer en esta corrida: quieta según lo guardado */
+  /* las que no se pudieron leer en esta corrida: el estado según lo guardado (quieta, o el paso a inactiva) */
   for (const e of lista) {
     if (typeof porEstacion[e.id] === 'object') continue;
-    const u = (estado.get(e.id) || {}).ultimo_registro;
-    if (u && (ahoraMs - msLocal(u)) / 3600e3 > QUIETA_H && !avisos.some((a) => a.id === e.id && a.tipo === 'estacion_quieta')) {
-      avisos.push({ tipo: 'estacion_quieta', id: e.id, horas: Math.round((ahoraMs - msLocal(u)) / 3600e3), ultimo_registro: u });
+    const meta = estado.get(e.id) || {};
+    const u = meta.ultimo_registro;
+    const st = estadoDe({ ultimoLocal: u, metaPrevia: meta, ahoraMs });
+    if (st.cambio) {
+      avisos.push({ tipo: st.cambio, id: e.id, dias: Math.round(st.horas / 24), ultimo_registro: u });
+      if (!seco) await guardarEstacion(e, { ...meta, ...metaDeEstado(st, meta, ahoraMs) });
+    } else if (u && st.estado === 'activa' && st.horas > QUIETA_H && !avisos.some((a) => a.id === e.id && a.tipo === 'estacion_quieta')) {
+      avisos.push({ tipo: 'estacion_quieta', id: e.id, horas: Math.round(st.horas), ultimo_registro: u });
     }
+  }
+  /* las mensuales que no tocaba pedir: se registran en el catálogo (una vez) como inactivas, con su último dato conocido */
+  for (const e of mensuales) {
+    porEstacion[e.id] = 'inactiva (se pide el día 1 de cada mes)';
+    if (!seco && !estado.has(e.id)) await guardarEstacion(e, { estado: 'inactiva', activa: false, estado_desde: new Date(ahoraMs).toISOString(), ultimo_conocido: e.ultimo_conocido || null });
   }
   if (pedidor.cortado) avisos.push({ tipo: 'sipan_corto', motivo: pedidor.cortado, pedidos: pedidor.pedidos });
 

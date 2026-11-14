@@ -24,7 +24,12 @@
 - **Los imposibles se marcan** y no entran en los resúmenes. Son los fuera de rango, la mínima mayor que la máxima, un pico aislado de más de 8 °C en 10 min y la temperatura trabada 6 h.
 - **Si el formato cambió, no se carga nada.** Eso pasa con un encabezado que no se entiende, si faltan columnas obligatorias, si las filas no cuadran, si las unidades no son métricas o si la firma difiere de la guardada en `estaciones.metadatos.formato_firma`. Queda en `registro_procesos` con `ok=false`, la corrida sale con código 2 y Actions avisa.
   - Para aceptar un formato nuevo, una vez revisado: Run workflow con `aceptar_formato: id=firma`.
-- **Una estación sin registros nuevos en más de 24 h da aviso.**
+- **Una estación ACTIVA sin registros nuevos en más de 24 h da aviso** (`estacion_quieta`), en cada corrida.
+- **A los 30 días sin registros nuevos pasa a INACTIVA** en el catálogo (`estaciones.activa=false`, `metadatos.estado='inactiva'`, `metadatos.activa=false`, `metadatos.estado_desde`).
+  - **Avisa UNA vez,** al cambiar de estado: `estacion_inactiva`, o `estacion_revivio` si vuelve a tener datos de menos de 30 días. Esa corrida sale con código 2 (Actions avisa); las siguientes, no.
+  - **Mientras está inactiva:** se le sigue pidiendo el archivo cada 6 h, para ver si revive, pero no se vuelven a escribir sus datos viejos, y un 404 suyo no avisa.
+  - **Al instalar esto,** la primera corrida da rojo una vez, con `estacion_inactiva` de la 10 (Guerrico, sin datos desde el 24/06/2026), la 41 (feb-2022) y la 42 (mar-2022). Desde la siguiente, verde.
+- **Las inactivas conocidas del barrido** (20 Valle Inferior, sin `downld02`; 48 Picún Leufú, hasta 2019; 68 Centenario, hasta 2021) están en el catálogo como inactivas, con `metadatos.ultimo_conocido`, y **sólo se les pide el archivo el día 1 de cada mes** (la corrida de las 00:23 UTC), por si reviven.
 
 ## La hora
 El reloj de las estaciones está en **hora de Argentina (UTC−3)**. Se comprobó con la radiación de los fixtures: el sol sale a las 6:30-7:00 y el máximo cae a las 13:40-14:50.
@@ -53,9 +58,9 @@ El lector toma los nombres del encabezado.
 Está todo en **`PRENDER.md`**: los secretos nombre por nombre, los comandos `gh` y el orden. También dice cómo verificar que anduvo.
 
 ## Tests
-- `npm ci --prefix sipan-alto-valle && npm test --prefix sipan-alto-valle`: 53 tests (`sipan`, `crudos-rol`, `prender`, `base-pg` y `pg-real`), cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales; `base-pg` usa un `sql` falso y, para probar que la URL no sale en los errores, el driver de verdad contra 127.0.0.1:1 (conexión rechazada, sin red). `pg-real` (4 tests) aplica la 0147b como NO superusuario contra un PostgreSQL de verdad: corre sólo con `SIPAN_PG_BIN` apuntando al `bin` de un PostgreSQL ≥ 16 (en pc-nanci, el portable de `hn-tools/pg-embebido`); sin eso se saltea.
+- `npm ci --prefix sipan-alto-valle && npm test --prefix sipan-alto-valle`: 60 tests (`sipan`, `crudos-rol`, `prender`, `base-pg`, `pg-real` e `inactivas`), cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales; `base-pg` usa un `sql` falso y, para probar que la URL no sale en los errores, el driver de verdad contra 127.0.0.1:1 (conexión rechazada, sin red). `pg-real` (4 tests) aplica la 0147b como NO superusuario contra un PostgreSQL de verdad: corre sólo con `SIPAN_PG_BIN` apuntando al `bin` de un PostgreSQL ≥ 16 (en pc-nanci, el portable de `hn-tools/pg-embebido`); sin eso se saltea.
 - Los dos tests con los **fixtures reales** corren si `SIPAN_FIXTURES` apunta a la carpeta. Son copias de la Wayback Machine (Guerrico 13-14/02/2026, Villa Regina 23-24/01/2020, Cinco Saltos 8-9/10/2020) y están en hn-cortex (privado): `docs/inta-alto-valle-2026-11/fixtures/`.
-- `node sipan-alto-valle/test/control-negativo.mjs`: 42 mutantes, uno por regla. Tienen que morir todos (los 2 de la 0147b, sólo con `SIPAN_PG_BIN`).
+- `node sipan-alto-valle/test/control-negativo.mjs`: 50 mutantes, uno por regla. Tienen que morir todos (los 2 de la 0147b, sólo con `SIPAN_PG_BIN`).
 
 ## El histórico (sólo para medir)
 - **`historico-pdf.mjs <lista.txt> <carpeta>`** baja los resúmenes mensuales en PDF, **sólo de 2018 en adelante** y sólo de sipan.inta.gob.ar.
