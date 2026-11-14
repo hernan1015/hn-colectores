@@ -27,7 +27,7 @@ Los comandos son de Git Bash y `gh` es `C:/Users/jeshe/AppData/Local/Programs/gh
 - **La 0147b NO:** lleva la contraseña por una variable de psql y se aplica en el paso 2.
 
 ### 2 · La clave, el rol (0147b) y la URL, en la misma terminal
-Necesita `psql` (cliente de PostgreSQL ≥ 16) y `node`, y se corre desde el clon de hn-colectores, en esta rama o en main ya mergeado.
+Necesita `psql` (cliente de PostgreSQL ≥ 16) y `node`, y se corre desde el clon de hn-colectores, en esta rama o en main ya mergeado. **En Windows, `psql` lleva TODAS las opciones (`-v`, `-f`, `-c`, `-X`, `-At`) ANTES de la URL**: en Windows `psql` no reordena los argumentos, así que una opción escrita después de la URL no se toma como opción (lo marcó local al prenderlo, 13/11). Los comandos de abajo ya van así.
 
 - **La URL de administración** es la de siempre: el `DATABASE_URL` de Netlify, que es el usuario `postgres.uxyewblbwzqaauzkcihf` por el pooler. Sirve sólo para aplicar la 0147b y **no va a ningún secreto**.
 - **El host del pooler** sale de esa misma URL (lo que va entre `@` y `:`, del estilo `aws-0-<región>.pooler.supabase.com`) o del MCP de Supabase. El colector **sólo** conecta a un host `….pooler.supabase.com`.
@@ -47,7 +47,7 @@ POOLER=$(U="$ADMIN_URL" node -e 'process.stdout.write(new URL(process.env.U).hos
  && case "$POOLER" in *.pooler.supabase.com) true ;; *) echo "el host no es el pooler: NO SEGUIR"; false ;; esac \
  && CLAVE=$(openssl rand -hex 32) && [ ${#CLAVE} -eq 64 ] \
  && VERIF=$(CLAVE="$CLAVE" node sipan-alto-valle/migracion/scram.mjs) && [ -n "$VERIF" ] \
- && psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -v clave="$VERIF" -f sipan-alto-valle/migracion/0147b_rol_colector_estaciones.sql \
+ && psql -v ON_ERROR_STOP=1 -v clave="$VERIF" -f sipan-alto-valle/migracion/0147b_rol_colector_estaciones.sql "$ADMIN_URL" \
  && SIPAN_PG_URL="postgresql://colector_estaciones.$REF:$CLAVE@$POOLER:6543/postgres" \
  && echo "PASO 2 OK" || echo "PASO 2 FALLÓ: no seguir (ver el error de arriba)"
 ```
@@ -58,7 +58,7 @@ POOLER=$(U="$ADMIN_URL" node -e 'process.stdout.write(new URL(process.env.U).hos
 ```bash
 # 3a-3d: cada chequeo tiene que dar lo esperado; si alguno no, VERIF_OK queda vacío y el 3e no carga nada
 VERIF_OK=
-q() { psql "$SIPAN_PG_URL" -X -At -v ON_ERROR_STOP=1 -c "$1" 2>&1; }
+q() { psql -X -At -v ON_ERROR_STOP=1 -c "$1" "$SIPAN_PG_URL" 2>&1; }
 r1=$(q "select current_user || ' ' || session_user") ; echo "3a: $r1"            # colector_estaciones colector_estaciones
 r2=$(q "insert into registro_procesos (proceso, ok, resumen) values ('sipan_alto_valle', false, '{\"prueba\": \"PRENDER paso 3, no es una corrida\"}')"); echo "3b: $r2"   # INSERT 0 1
 r3=$(q "insert into estaciones (red, estacion_id) values ('SNIH', 'prueba-no-va')"); echo "3c: $r3"   # ERROR … row-level security policy

@@ -54,7 +54,7 @@ async function medirCon({ seco = false, dias = 7, fetchFn = globalThis.fetch, ba
   const obs = await base.obsDesde(desde);
   const pron = {}; let pedidos = 0; const fallas = [];
   for (const e of ESTACIONES) {
-    if (!obs.some((o) => o.estacion_id === e.id)) continue;
+    if (e.lat == null || !obs.some((o) => o.estacion_id === e.id)) continue;   // sin coordenadas (las inactivas del barrido) no hay pronóstico que pedir
     const loc = localidadMasCercana(e);
     pron[e.id] = {};
     for (const [fuente, p] of [['open-meteo best_match · punto', e], [`open-meteo best_match · localidad ${loc.nombre}`, loc]]) {

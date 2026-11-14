@@ -22,7 +22,7 @@ const MUTANTES = [
   ['un día con huecos pisa uno completo', 'sipan.mjs', 'const usarDia = !viejo || (dia.registros_validos >= (viejo.registros_validos ?? -1));', 'const usarDia = true;'],
   ['sin pausa entre pedidos', 'sipan.mjs', 'export const PAUSA_MS = 30000;', 'export const PAUSA_MS = 0;'],
   ['sigue pidiendo después de un 429', 'sipan.mjs', "if (cortado) return { estado: 'cortado' };", ''],
-  ['estación quieta nunca avisa', 'sipan.mjs', 'aviso: horasQuieta > QUIETA_H ?', 'aviso: false ?'],
+  ['estación quieta nunca avisa', 'sipan.mjs', ": st.estado === 'activa' && st.horas > QUIETA_H ? { tipo: 'estacion_quieta'", ": false ? { tipo: 'estacion_quieta'"],
   ['la medición acepta noches incompletas', 'medir.mjs', 'export const MIN_NOCHE = 0.9;', 'export const MIN_NOCHE = 0;'],
   ['el pronóstico con 23 horas cuenta', 'lib/medicion.mjs', "(out[f] ??= {})['d' + d] = ok.length === 24 ? Math.min(...ok) : null;", "(out[f] ??= {})['d' + d] = ok.length ? Math.min(...ok) : null;"],
   ['la radiación con huecos da un total corto', 'lib/resumen.mjs', 'rad_mj_m2: rs.filter((r) => r.ok.rad != null).length === esperados', 'rad_mj_m2: rs.filter((r) => r.ok.rad != null).length > 0'],
@@ -50,6 +50,14 @@ const MUTANTES = [
   ['pg: no cierra la conexión al terminar', 'medir.mjs', '  finally { if (!baseDada && base.cerrar) await base.cerrar(); }', '  finally { }'],
   ['scram: ServerKey mal calculada', 'migracion/scram.mjs', "update('Server Key')", "update('Client Key')"],
   ['pg: los jsonb sin sql.json', 'lib/base.mjs', 'out[k] = JSONB.has(k) && v != null ? sql.json(v) : v;', 'out[k] = v;'],
+  ['inactiva: a los 300 días en vez de 30', 'sipan.mjs', 'export const INACTIVA_DIAS = 30;', 'export const INACTIVA_DIAS = 300;'],
+  ['inactiva: avisa en CADA corrida', 'sipan.mjs', "const cambio = estado === previo ? null :", "const cambio = estado === previo && estado === 'activa' ? null :"],
+  ['inactiva: vuelve a escribir sus datos viejos', 'sipan.mjs', "      if (x.estadoEst === 'inactiva') {", '      if (false) {'],
+  ['inactiva: un 404 de una inactiva avisa', 'sipan.mjs', "if (r.estado === 'no' && !inactiva)", "if (r.estado === 'no')"],
+  ['inactiva: tampoco avisa una activa que no responde', 'sipan.mjs', "if (r.estado === 'no' && !inactiva)", 'if (false)'],
+  ['mensuales: se les pide en cada corrida', 'sipan.mjs', "(e.pedir !== 'mensual' || primeraDelMes ||", '(true ||'],
+  ['la columna activa siempre true', 'lib/estaciones.mjs', "activa: metadatos.estado !== 'inactiva',", 'activa: true,'],
+  ['estado_desde se pisa en cada corrida', 'sipan.mjs', 'estado_desde: st.cambio || !metaPrevia.estado_desde ? new Date(ahoraMs).toISOString() : metaPrevia.estado_desde,', 'estado_desde: new Date(ahoraMs).toISOString(),'],
 ];
 
 function correrCon(nombre, archivo, viejo, nuevo) {
@@ -63,7 +71,7 @@ function correrCon(nombre, archivo, viejo, nuevo) {
     if (veces !== 1) throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces (tiene que ser 1)`);
     fs.writeFileSync(p, txt.replace(viejo, nuevo));
   }
-  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs'), path.join(dir, 'test', 'pg-real.test.mjs')], { encoding: 'utf8', env: process.env });
+  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs'), path.join(dir, 'test', 'pg-real.test.mjs'), path.join(dir, 'test', 'inactivas.test.mjs')], { encoding: 'utf8', env: process.env });
   return r.status === 0;
 }
 

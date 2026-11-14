@@ -21,13 +21,20 @@ export const ESTACIONES = [
   { id: '41', nombre: 'Coronel Belisle', partido: 'Avellaneda', provincia: 'Río Negro', lat: -39.1975, lon: -65.893611, elevacion_m: 128, csv: 'EEA05' },
   { id: '42', nombre: 'Luis Beltrán', partido: 'Avellaneda', provincia: 'Río Negro', lat: -39.3171864, lon: -65.75345755, elevacion_m: 128, csv: 'EEA06' },
   { id: '45', nombre: 'Cinco Saltos', partido: 'General Roca', provincia: 'Río Negro', lat: -38.844722, lon: -68.069167, elevacion_m: 282, csv: 'EEA01' },
+  /* [13/11 22:00] Las que encontró el barrido (local, primera corrida desde Actions) y están INACTIVAS: se registran en
+     el catálogo como inactivas, con su último dato conocido, y se les pide el archivo UNA vez por mes (el día 1), por si
+     reviven. Sin coordenadas: no están en Estacion.csv (falta clima.htm). */
+  { id: '20', nombre: 'Valle Inferior', partido: null, provincia: 'Río Negro', lat: null, lon: null, elevacion_m: null, csv: null, pedir: 'mensual', ultimo_conocido: 'la página existe, sin downld02 (13/11/2026)' },
+  { id: '48', nombre: 'Picún Leufú', partido: null, provincia: 'Neuquén', lat: null, lon: null, elevacion_m: null, csv: null, pedir: 'mensual', ultimo_conocido: 'último registro de 2019 (barrido del 13/11/2026)' },
+  { id: '68', nombre: 'Centenario', partido: null, provincia: 'Neuquén', lat: null, lon: null, elevacion_m: null, csv: null, pedir: 'mensual', ultimo_conocido: 'último registro de 2021 (barrido del 13/11/2026)' },
 ];
 
 /** La fila de `estaciones` (0110). `metadatos` junta lo fijo con lo que deja cada corrida. */
 export function filaEstacion(e, metadatos = {}) {
   return {
     red: 'INTA_SIPAN_AV', estacion_id: e.id, nombre: e.nombre, partido: e.partido, provincia: e.provincia,
-    lat: e.lat, lon: e.lon, precision_ubicacion: 'declarada por un tercero', fuente_ubicacion: FUENTE_UBIC, activa: true,
+    lat: e.lat, lon: e.lon, precision_ubicacion: e.lat == null ? null : 'declarada por un tercero', fuente_ubicacion: e.lat == null ? null : FUENTE_UBIC,
+    activa: metadatos.estado !== 'inactiva',   // la columna de la 0110 sigue al estado (metadatos.estado / metadatos.activa)
     metadatos: {
       red_interna: 'INTA EEA Alto Valle · SIPAN agrometeorología', url: urlDe(e.id), elevacion_m: e.elevacion_m, id_csv: e.csv,
       tipo: 'Davis Vantage (export WeatherLink downld02.txt, 10 min)', hora: 'reloj de la estación = hora de Argentina (UTC−3)',
