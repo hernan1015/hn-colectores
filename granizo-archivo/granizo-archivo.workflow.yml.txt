@@ -1,0 +1,47 @@
+# HN AGRO · ARCHIVO DE BARRIDOS DE GRANIZO (147). Ver granizo-archivo/PRENDER.md.
+# Va en .github/workflows/granizo-archivo.yml (copiarlo tal cual; viene como .txt porque el token de pc-nanci no tiene
+# el permiso `workflow`, igual que rayos-hora y los vigías).
+# Cada 10 min: UN pedido a satchi-publico?que=granizo y la respuesta ENTERA (también la parcial o la falla, marcadas) a la
+# release diaria `granizo-AAAA-MM-DD` de hn-radar (PRIVADO), con el RADAR_TOKEN que ya usa el colector del radar.
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo GRANIZO_ARCHIVO_ON vale «si».
+# A mano: Actions → granizo-archivo → Run workflow (seco = pide y mira, sin subir; real = sube).
+# GitHub atrasa (y a veces saltea) los cron: no pasa nada, el nombre del asset es la hora del SCAN y un repetido no se
+# vuelve a subir; `concurrency` pone en fila las corridas (nunca dos a la vez).
+# El registro de Actions es PÚBLICO: se imprime sólo el estado, el scan y el nombre; los datos van al repo privado.
+name: granizo-archivo
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'   # cada 10 min, lejos de la hora en punto (cuando GitHub se atrasa más)
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = pide y mira el release, sin crear ni subir · real = guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+permissions:
+  contents: read
+concurrency:
+  group: granizo-archivo
+  cancel-in-progress: false
+jobs:
+  archivar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.GRANIZO_ARCHIVO_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            lib
+            granizo-archivo
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Archivar
+        env:
+          GRANIZO_TOKEN: ${{ secrets.RADAR_TOKEN }}     # Contents: Read and write SÓLO sobre hn-radar (privado)
+          GRANIZO_REPO: hernan1015/hn-radar             # los datos van al repo PRIVADO; acá no queda nada
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+        run: |
+          if [ "$MODO" = "real" ]; then node granizo-archivo/archivar.mjs; else node granizo-archivo/archivar.mjs --seco; fi
