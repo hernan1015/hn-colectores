@@ -10,6 +10,8 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | colector-smap | diario | NASA SMAP L4, con token de Earthdata |
 | colector-lagunas | lunes | NASA SWOT (Hydrocron) |
 | colector-imerg | diario | NASA IMERG-Late (lluvia satelital), con token de Earthdata |
+| colector-sipan-alto-valle | cada 6 h (apagado hasta SIPAN_ON=si; ver sipan-alto-valle/LEEME.md) | red agrometeorológica del INTA EEA Alto Valle (uso interno; los datos van a la base y a R2 privado) |
+| medicion-heladas-sipan | diario 09:41 AR (apagado hasta SIPAN_ON=si) | pronóstico de mínima de SATCHI (Open-Meteo) contra la noche observada en el SIPAN |
 | vigia-satchi | cada 15 min (apagado hasta que la variable SATCHI_VIGIA_ON sea «si»; ver vigia/LEEME.md) | SATCHI público (crecidas y focos de calor): manda un mail si hay algo nuevo |
 
 Los registros de cada corrida muestran sólo cantidades.
