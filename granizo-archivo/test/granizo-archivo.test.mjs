@@ -8,6 +8,7 @@ import path from 'node:path';
 import { githubFalso, respuestaGranizo, satchiFalso } from './falsos.mjs';
 import { clienteReleases } from '../../lib/releases.mjs';
 import { pedirGranizo, clasificar, nombreBarrido, tagDe, horaAR, desempaquetar, URL_GRANIZO, UA, TOPE_BYTES } from '../lib/barrido.mjs';
+import { yaExiste } from '../../lib/releases.mjs';
 import { archivar } from '../lib/flujo.mjs';
 import { RE_INDICE, unirIndices } from '../lib/indice.mjs';
 import { evaluarFrescura, leerEstado, tagsAMirar, VENTANA_MIN } from '../lib/frescura.mjs';
@@ -68,11 +69,20 @@ test('pedirGranizo: UN pedido, User-Agent genérico, cabeceras de la lista, nunc
   const s = satchiFalso();
   const p = await pedirGranizo({ fetchFn: s.fetchFn, ahora: () => T0 });
   assert.equal(s.vistos.length, 1);
-  assert.equal(s.vistos[0].url, URL_GRANIZO);
+  assert.equal(s.vistos[0].url, URL_GRANIZO + '&_t=20261113T2220Z', 'con el turno de 10 min: saltea la copia vencida de la red');
+  assert.equal(p.url, s.vistos[0].url, 'el sobre guarda la URL pedida');
   assert.equal(s.vistos[0].init.headers['User-Agent'], UA);
   assert.doesNotMatch(UA, /@|info|hninge|gmail/i, 'sin mail ni nombre en el User-Agent');
   assert.equal(p.http, 200);
   assert.deepEqual(p.cabeceras, { 'cache-control': 'public, max-age=60' }, 'sólo las cabeceras de la lista');
+  // el turno: dos pedidos del mismo turno, la misma URL; el turno siguiente, otra (control)
+  const s2 = satchiFalso({ headers: { age: '958', 'cache-status': '"Netlify Durable"; hit', 'x-secreto': 'no' } });
+  const p1 = await pedirGranizo({ fetchFn: s2.fetchFn, ahora: () => T0 + 6 * 60000 });
+  const p2 = await pedirGranizo({ fetchFn: s2.fetchFn, ahora: () => T0 + 7 * 60000 });
+  assert.equal(p1.url, URL_GRANIZO + '&_t=20261113T2220Z');
+  assert.equal(p2.url, URL_GRANIZO + '&_t=20261113T2230Z');
+  assert.deepEqual(p1.cabeceras, { age: '958', 'cache-status': '"Netlify Durable"; hit' }, 'age y cache-status, para medir la caché');
+  assert.equal((await pedirGranizo({ fetchFn: s2.fetchFn, ahora: () => T0, saltearCache: false })).url, URL_GRANIZO);
   const e = await pedirGranizo({ fetchFn: satchiFalso({ error: Object.assign(new Error('x'), { name: 'TimeoutError' }) }).fetchFn });
   assert.match(e.error, /tiempo agotado/);
   const g = await pedirGranizo({ fetchFn: satchiFalso({ cuerpo: 'x'.repeat(TOPE_BYTES + 1) }).fetchFn });
@@ -199,6 +209,20 @@ test('un asset a medio subir (starter) con el mismo nombre se borra y se vuelve 
   assert.equal(desempaquetar(as[0].data).estado, 'buena');
 });
 
+test('O1 · un 422 que NO es already_exists: la corrida falla (rojo) y el barrido se reintenta en la próxima', async () => {
+  const fallar = { subir422: (n) => n.endsWith('.buena.json.gz') };
+  const { gh, cliente, sello } = armar({ fallar });
+  await assert.rejects(archivar({ cliente: cliente(), pedido: pedido(respuestaGranizo()), sello }), /422/);
+  assert.ok(!gh.nombres(TAG).includes('20261113T2210Z.buena.json.gz'));
+  assert.equal(indiceDe(gh).length, 0, 'no se anotó como repetido');
+  delete fallar.subir422;
+  const r = await archivar({ cliente: cliente(), pedido: pedido(respuestaGranizo(), { ms: T0 + 60000 }), sello });
+  assert.equal(r.nuevo, true, 'la próxima corrida lo sube');
+  assert.equal(yaExiste(JSON.stringify({ errors: [{ code: 'already_exists' }] })), true);
+  assert.equal(yaExiste(JSON.stringify({ errors: [{ code: 'custom' }] })), false);
+  assert.equal(yaExiste('no json'), false);
+});
+
 test('422 al subir (otra corrida lo subió recién): repetido, no error', async () => {
   const { gh, cliente } = armar();
   const c = cliente();
@@ -270,8 +294,10 @@ test('vigía: REPITE si corre pero todo es el mismo scan; FALLANDO si lo nuevo e
   assert.deepEqual([r.tipo, r.clave], ['repite', 'granizo-archivo-repite-2026-11-13T213020.000Z']);
   const f = evaluarFrescura({ ahoraMs: T0, barridos: [viejo, { name: 'pedido-20261113T2220Z.falla.json.gz', created_at: iso(T0 - 2 * 60000) }], pedidos: ped });
   assert.deepEqual([f.tipo, f.clave], ['fallando', 'granizo-archivo-fallando-tras-20261113T2130Z.buena.json.gz']);
-  // control: una parcial nueva NO es «fallando»
-  assert.equal(evaluarFrescura({ ahoraMs: T0, barridos: [viejo, { name: '20261113T2210Z.parcial.json.gz', created_at: iso(T0 - 2 * 60000) }], pedidos: ped }).tipo, 'ok');
+  // O5: todo parcial (o parcial + falla) → «parciales»; con una buena → ok (control)
+  const pa = evaluarFrescura({ ahoraMs: T0, barridos: [viejo, { name: '20261113T2210Z.parcial.json.gz', created_at: iso(T0 - 2 * 60000) }, { name: 'pedido-20261113T2220Z.falla.json.gz', created_at: iso(T0 - 1 * 60000) }], pedidos: ped });
+  assert.deepEqual([pa.tipo, pa.avisar, pa.clave], ['parciales', true, 'granizo-archivo-parciales-tras-20261113T2130Z.buena.json.gz']);
+  assert.equal(evaluarFrescura({ ahoraMs: T0, barridos: [viejo, { name: '20261113T2210Z.parcial.json.gz', created_at: iso(T0 - 2 * 60000) }, { name: '20261113T2220Z.buena.json.gz', created_at: iso(T0 - 1 * 60000) }], pedidos: ped }).tipo, 'ok');
 });
 
 test('vigía: a las 00:10 ART mira también el release de AYER; con el archivo real lee bien', async () => {
@@ -291,6 +317,12 @@ test('vigía: SIN-LECTURA si hn-radar no contesta (un aviso por día)', async ()
   const v = await evaluarAhora({ cliente: c, ahoraMs: T0 });
   assert.deepEqual([v.tipo, v.clave], ['sin-lectura', 'granizo-archivo-sin-lectura-2026-11-13']);
   assert.equal((await evaluarAhora({ cliente: null, ahoraMs: T0 })).tipo, 'sin-lectura');
+  // O2: el REPO da 404 (token sin permiso sobre un privado) → sin-lectura, no «parado»; con el repo visible y sin releases → parado (control)
+  const g404 = githubFalso({ fallar: { repo404: true } });
+  const v404 = await evaluarAhora({ cliente: clienteReleases({ token: TOK, repo: REPO, fetchFn: g404.fetchFn }), ahoraMs: T0 });
+  assert.equal(v404.tipo, 'sin-lectura');
+  const gok = githubFalso();
+  assert.equal((await evaluarAhora({ cliente: clienteReleases({ token: TOK, repo: REPO, fetchFn: gok.fetchFn }), ahoraMs: T0 })).tipo, 'parado');
 });
 
 test('vigía: la marca para la caché queda SÓLO si el mail salió', async () => {

@@ -1,7 +1,7 @@
 // Falsos para los tests (SIN red): un GitHub de releases en memoria y respuestas de SATCHI sintéticas.
 // Nada de datos reales en este repo público: las celdas son inventadas.
 
-/** GitHub falso. `fallar` = { subir: (nombre) => bool, borrar: (nombre) => bool, crear422: bool }. */
+/** GitHub falso. `fallar` = { subir: (nombre) => bool, subir422: (nombre) => bool, borrar: (nombre) => bool, crear422: bool, repo404: bool }. */
 export function githubFalso({ ahora = () => Date.now(), fallar = {} } = {}) {
   const rels = new Map();   // tag → { id, tag_name, assets: [{ id, name, state, created_at, data }] }
   const llamadas = [];
@@ -16,6 +16,7 @@ export function githubFalso({ ahora = () => Date.now(), fallar = {} } = {}) {
     const p = u.pathname;
     llamadas.push({ metodo: method, ruta: p + u.search, nombre: u.searchParams.get('name'), auth: headers.Authorization });
     let m;
+    if (method === 'GET' && /^\/repos\/[^/]+\/[^/]+$/.test(p)) return fallar.repo404 ? resp(404, { message: 'Not Found' }) : resp(200, { private: true });
     if (method === 'GET' && (m = /^\/repos\/[^/]+\/[^/]+\/releases\/tags\/(.+)$/.exec(p))) {
       const r = rels.get(decodeURIComponent(m[1]));
       return r ? resp(200, { id: r.id, tag_name: r.tag_name }) : resp(404, { message: 'Not Found' });
@@ -48,6 +49,7 @@ export function githubFalso({ ahora = () => Date.now(), fallar = {} } = {}) {
       const r = [...rels.values()].find((x) => x.id === +m[1]);
       const nombre = u.searchParams.get('name');
       if (fallar.subir && fallar.subir(nombre)) return resp(500, { message: 'boom' });
+      if (fallar.subir422 && fallar.subir422(nombre)) return resp(422, { message: 'Validation Failed', errors: [{ resource: 'ReleaseAsset', code: 'custom', field: 'name' }] });
       if (r.assets.some((a) => a.name === nombre)) return resp(422, { errors: [{ code: 'already_exists' }] });
       const a = { id: sig++, name: nombre, state: 'uploaded', created_at: new Date(ahora()).toISOString(), data: Buffer.from(body) };
       r.assets.push(a);

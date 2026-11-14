@@ -7,7 +7,10 @@
 //                 dispara el cron. Clave: `…-parado-tras-<lo último guardado>` (no cambia mientras dura: no se repite);
 //   · repite    → hay pedidos pero todos dieron un scan ya guardado: SATCHI sirve un scan viejo. Clave: el scan;
 //   · fallando  → hay barridos nuevos pero todos son falla. Clave: `…-fallando-tras-<el último que no fue falla>`;
-//   · sin-lectura → no se pudo leer hn-radar (el token, la API). Clave: por día UTC (un aviso por día, como mucho).
+//   · parciales → hay barridos nuevos, ninguno bueno y alguno parcial (faltó NOAA, GLM u Open-Meteo, o sin scan_t).
+//                 Clave: `…-parciales-tras-<la última buena>`;
+//   · sin-lectura → no se pudo leer hn-radar (el token, la API, o un 404 del REPO: GitHub contesta 404 a un repo
+//                 privado sin permiso, y eso no es «no hay barridos»). Clave: por día UTC (un aviso por día, como mucho).
 // El aviso es un MAIL con lib/correo.mjs del vigía (los mismos secretos SATCHI_SMTP_* y SATCHI_VIGIA_DESTINO que
 // opera-frescura) y no se repite por episodio (la clave va a la caché de Actions sólo si el mail salió).
 import { leerNombre, diaAR } from './barrido.mjs';
@@ -44,12 +47,19 @@ export function evaluarFrescura({ ahoraMs, barridos = [], pedidos = [], ventanaM
       asunto: `SATCHI granizo: ${ventanaMin} min sólo con fallas`,
       detalle: `Se guardaron ${nuevos.length} barridos en ${ventanaMin} min y todos son falla (sin respuesta, HTTP ≠ 200 u ok:false). El último sano: ${sano ? sano.name : 'ninguno'}.` };
   }
+  if (!nuevos.some((a) => a.n.estado === 'buena')) {
+    const buena = [...conHora].reverse().find((a) => a.n.estado === 'buena');
+    return { ...base, avisar: true, tipo: 'parciales', clave: 'granizo-archivo-parciales-tras-' + limpiar(buena ? buena.name : 'sin-registro'),
+      asunto: `SATCHI granizo: ${ventanaMin} min sin un barrido completo`,
+      detalle: `Se guardaron ${nuevos.length} barridos en ${ventanaMin} min y ninguno es bueno: todos parciales (o falla). La última buena: ${buena ? buena.name : 'ninguna'}. Mirar los faltantes en el sobre (NOAA, GLM, Open-Meteo).` };
+  }
   return { ...base, avisar: false, tipo: 'ok', clave: null };
 }
 
 /** Lee lo que hace falta de hn-radar con el cliente de lib/releases.mjs. Cualquier error → null (sin-lectura). */
 export async function leerEstado(cliente, ahoraMs) {
   try {
+    if (!(await cliente.repoVisible())) return null;   // 404 del repo = sin permiso: sin-lectura, no «parado»
     const barridos = [], textos = [];
     for (const tag of tagsAMirar(ahoraMs)) {
       const rel = await cliente.release(tag);

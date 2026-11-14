@@ -14,6 +14,12 @@
 //   El mismo scan con el mismo estado tiene el mismo nombre: un cron atrasado o doble no lo duplica. Sin scan_t
 //   (la falla de red, casi siempre) se nombra por el turno de 10 min del PEDIDO: `pedido-AAAAMMDDTHHMMZ.<estado>.json.gz`.
 // EL DÍA (= el release `granizo-AAAA-MM-DD`): el día ARGENTINO del scan (o del pedido, si no hay scan), como el radar.
+// SALTEAR LA CACHÉ VENCIDA (147a, decisión de local): la red de Netlify guarda la buena «durable» con
+//   stale-while-revalidate y el 13/11 21:54 sirvió un scan de 34 min (age 958, ttl=-358). El pedido lleva `&_t=<turno de
+//   10 min UTC>`: granizo no declara Netlify-Vary, así que la clave de la red es la URL entera y cada turno es una copia
+//   nueva (un cálculo por turno, ~144 por día; un reintento en el mismo turno reusa la copia). satchi-publico arma `q` sólo
+//   con los parámetros que conoce (granizo no lee ninguno) y `_t` no está en PARAMS_LOTE ni en QS_CREDENCIAL: no cambia
+//   la respuesta ni la saca de la red compartida. Se guardan `age` y `cache-status` para medir.
 import zlib from 'node:zlib';
 
 export const URL_GRANIZO = 'https://app.hnagroapp.com/.netlify/functions/satchi-publico?que=granizo';
@@ -38,10 +44,18 @@ export function horaAR(ms) {
 export const diaAR = (ms) => horaAR(ms).slice(0, 10);
 export const minutoUTC = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').slice(0, 13);   // AAAAMMDDTHHMM
 export const turno10 = (ms) => Math.floor(ms / DIEZ) * DIEZ;
+export const PARAM_TURNO = '_t';
+/** La URL con el turno de 10 min del pedido (saltea la copia vencida de la red; ver arriba). */
+export function conTurno(url, ms) {
+  const u = new URL(url);
+  u.searchParams.set(PARAM_TURNO, minutoUTC(turno10(ms)) + 'Z');
+  return u.toString();
+}
 
 /** Un pedido, una vez. Nunca lanza: lo que pase queda en el resultado. */
-export async function pedirGranizo({ url = URL_GRANIZO, fetchFn = globalThis.fetch, ahora = () => Date.now(), tiempoMs = 45000 } = {}) {
+export async function pedirGranizo({ url = URL_GRANIZO, fetchFn = globalThis.fetch, ahora = () => Date.now(), tiempoMs = 45000, saltearCache = true } = {}) {
   const pedido_ms = ahora();
+  if (saltearCache) url = conTurno(url, pedido_ms);
   const out = { url, pedido_ms, duracion_ms: null, http: null, cabeceras: {}, cuerpo: null, error: null };
   try {
     const r = await fetchFn(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(tiempoMs) });
