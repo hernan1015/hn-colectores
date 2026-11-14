@@ -1,0 +1,5 @@
+# Fin de línea LF en el repo y en el checkout (también en Windows con core.autocrlf=true): el control negativo busca
+# textos exactos y los scripts de bash no aceptan CRLF.
+* text=auto eol=lf
+*.png binary
+*.gz binary

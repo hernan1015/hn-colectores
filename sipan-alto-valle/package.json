@@ -1,0 +1,14 @@
+{
+  "name": "hn-colector-sipan-alto-valle",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · colector de la red agrometeorológica del INTA EEA Alto Valle (SIPAN), uso interno",
+  "scripts": {
+    "colectar": "node sipan.mjs",
+    "test": "node --test test/sipan.test.mjs test/crudos-rol.test.mjs test/prender.test.mjs test/base-pg.test.mjs test/pg-real.test.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "postgres": "3.4.4"
+  }
+}
