@@ -1,0 +1,54 @@
+# HN AGRO · colector del SMN, DATOS ABIERTOS («datos horarios»). Ver smn-abierto/PRENDER.md.
+# Red SMN_ABIERTO, marcada MOSTRAR: CC BY 2.5 AR, citando al SMN (política de datos del SMN, §4.A).
+# PARA INSTALARLO: copiar este archivo a .github/workflows/smn-abierto.yml (el token con el que se armó la rama no tiene
+# permiso «workflow», igual que el SIPAN). Lo instala local.
+# APAGADO: no tiene `schedule`. Sólo corre por workflow_dispatch: a mano, o desde pg_cron con la llave «smn-abierto» de
+# colector_llaves (0149b), que nace apagada. Por defecto, en SECO.
+# UN pedido por corrida a ssl.smn.gob.ar/dpd, User-Agent genérico. Si el archivo de ayer ya se cargó, no pide nada.
+# El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de valores, claves ni direcciones.
+name: colector-smn-abierto
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = baja y calcula, sin base ni copia del zip · real = guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+      ultimo:
+        description: 'último intento del día: si el archivo sigue vacío, avisa'
+        type: choice
+        options: ['no', 'si']
+        default: 'no'
+      aceptar_formato:
+        description: 'aceptar un formato nuevo ya revisado: la firma exacta (sale en registro_procesos)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: colector-smn-abierto
+  cancel-in-progress: false
+jobs:
+  colectar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (postgres.js, versión fijada en package-lock) y tests (sin red ni base)
+        run: npm ci --prefix smn-abierto --no-audit --no-fund && npm test --prefix smn-abierto
+      - name: Colectar
+        env:
+          SMN_PG_URL: ${{ secrets.SIPAN_PG_URL }}          # el MISMO rol colector_estaciones (0147b + 0149); nunca se imprime
+          SMN_CRUDOS_TOKEN: ${{ secrets.RADAR_TOKEN }}     # copia del zip: un release por día, smn-AAAA-MM-DD, en hn-radar (privado)
+          SMN_CRUDOS_REPO: hernan1015/hn-radar
+          SMN_ACEPTAR_FORMATO: ${{ inputs.aceptar_formato }}
+          SMN_ULTIMO: ${{ inputs.ultimo }}
+          MODO: ${{ inputs.modo }}
+        run: |
+          args=()
+          [ "$MODO" != "real" ] && args+=(--seco)
+          node smn-abierto/smn.mjs "${args[@]}"
