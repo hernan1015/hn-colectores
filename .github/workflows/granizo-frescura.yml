@@ -1,0 +1,72 @@
+# HN AGRO · VIGÍA DE FRESCURA DEL ARCHIVO DE GRANIZO (147). Ver granizo-archivo/PRENDER.md y lib/frescura.mjs.
+# Va en .github/workflows/granizo-frescura.yml (copiarlo tal cual; .txt por el permiso `workflow`, como los otros).
+# Cada 20 min mira los releases granizo-<hoy> y granizo-<ayer> de hn-radar y manda UN mail si en los últimos 40 min:
+#   no se guardó ningún barrido ni hubo pedidos (parado) · sólo hubo scans repetidos (repite) · sólo fallas (fallando),
+#   o si no puede leer hn-radar (sin-lectura).
+# El mail: los MISMOS secretos que vigia-satchi y opera-frescura (SATCHI_SMTP_HOST/PORT/USER/PASS, FROM opcional,
+# SATCHI_VIGIA_DESTINO). No repite por episodio: la clave va a la caché de Actions sólo DESPUÉS de mandar el mail.
+# Prende con la MISMA variable que el archivo: GRANIZO_ARCHIVO_ON = si. A mano: seco (sin mail) o real.
+# Registro PÚBLICO: se imprime sólo el veredicto, la clave y cantidades.
+name: granizo-frescura
+on:
+  schedule:
+    - cron: '9,29,49 * * * *'    # cada 20 min, desfasado del archivo (7,17,…)
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = evalúa y muestra, sin mail · real = manda el mail si corresponde'
+        type: choice
+        options: [seco, real]
+        default: seco
+permissions:
+  contents: read
+concurrency:
+  group: granizo-frescura
+  cancel-in-progress: false
+jobs:
+  frescura:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.GRANIZO_ARCHIVO_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            lib
+            granizo-archivo
+            vigia
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests del archivo y del vigía (sin red)
+        run: node --test granizo-archivo/test/granizo-archivo.test.mjs
+      - name: Evaluar (la ÚNICA lectura de hn-radar)
+        id: ev
+        env:
+          GRANIZO_TOKEN: ${{ secrets.RADAR_TOKEN }}
+          GRANIZO_REPO: hernan1015/hn-radar
+        run: node granizo-archivo/vigia-frescura.mjs evaluar --salida granizo-frescura-eval.json
+      - name: ¿Ya se avisó esta clave?
+        if: steps.ev.outputs.avisar == 'si'
+        id: ya
+        uses: actions/cache/restore@v4
+        with:
+          path: .granizo-frescura-aviso
+          key: granizo-frescura-${{ steps.ev.outputs.clave }}
+          lookup-only: true
+      - name: Mandar el mail (la evaluación de arriba, sin leer de nuevo)
+        if: steps.ev.outputs.avisar == 'si' && steps.ya.outputs.cache-hit != 'true' && (github.event_name == 'schedule' || inputs.modo == 'real')
+        env:
+          SATCHI_SMTP_HOST: ${{ secrets.SATCHI_SMTP_HOST }}
+          SATCHI_SMTP_PORT: ${{ secrets.SATCHI_SMTP_PORT }}
+          SATCHI_SMTP_USER: ${{ secrets.SATCHI_SMTP_USER }}
+          SATCHI_SMTP_PASS: ${{ secrets.SATCHI_SMTP_PASS }}
+          SATCHI_SMTP_FROM: ${{ secrets.SATCHI_SMTP_FROM }}
+          SATCHI_VIGIA_DESTINO: ${{ secrets.SATCHI_VIGIA_DESTINO }}
+        run: node granizo-archivo/vigia-frescura.mjs mandar --evaluacion granizo-frescura-eval.json
+      - name: Recordar la clave (sólo si el mail salió)
+        if: steps.ev.outputs.avisar == 'si' && steps.ya.outputs.cache-hit != 'true' && hashFiles('.granizo-frescura-aviso/clave') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .granizo-frescura-aviso
+          key: granizo-frescura-${{ steps.ev.outputs.clave }}
