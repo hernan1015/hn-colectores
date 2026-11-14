@@ -36,11 +36,13 @@ Un registro de las «0:10» cubre de 0:00 a 0:10. Las columnas cambian según la
 El lector toma los nombres del encabezado.
 
 ## Secretos (los carga local; nunca van en el código)
-- **La base, con un rol propio** (`colector_estaciones`, migración `0147b`) y **no con la clave de servicio**. Usa tres secretos:
-  - `SIPAN_SUPABASE_URL`;
-  - `SIPAN_SUPABASE_ANON_KEY`;
-  - `SIPAN_SUPABASE_JWT`, con `role: colector_estaciones`.
-- **Lo que puede hacer ese rol:** leer y escribir sólo las filas de sus redes en `estaciones`, `estaciones_obs` y `pronostico_helada_medicion`, y agregar renglones a `registro_procesos` con sus procesos. No puede borrar. Con un JWT de otro rol, el colector no arranca.
+- **La base, con un rol propio** (`colector_estaciones`, migración `0147b`), **ni la clave de servicio ni el usuario `postgres`**. Es Postgres directo (postgres.js) contra el pooler de Supabase en modo transacción (puerto 6543, `prepare: false`), con un solo secreto:
+  - `SIPAN_PG_URL` = `postgresql://colector_estaciones.<ref>:<clave>@<host-del-pooler>:6543/postgres`.
+  - El rol es LOGIN, sin BYPASSRLS y con CONNECTION LIMIT 3. La contraseña llega a la base como verificador SCRAM (`migracion/scram.mjs`), nunca en texto plano.
+  - Al arrancar, el colector exige que el usuario de la URL sea `colector_estaciones` y que `select current_user` lo confirme; si no, aborta.
+  - Ningún error del driver sale con su mensaje original (que podría traer el host o la URL): se reemplaza por su código.
+  - (Plan B del 13/11: el proyecto firma los JWT con ECC y la HS256 legada puede revocarse sin aviso, así que no se usa PostgREST.)
+- **Lo que puede hacer ese rol:** leer y escribir sólo las filas de sus redes en `estaciones`, `estaciones_obs` y `pronostico_helada_medicion`, y agregar renglones a `registro_procesos` con sus procesos. No puede borrar.
 - **Los crudos de 10 min** van a **releases diarias de `hn-radar`** (privado), con el tag `sipan-AAAA-MM-DD`: un asset por estación, `<id>__<sello>.json.gz`, con el día entero ya unido.
   - Usan el mismo `RADAR_TOKEN` del radar.
   - Primero se sube el nuevo y recién después se borra el viejo: si la subida falla, no se pierde nada.
@@ -51,9 +53,9 @@ El lector toma los nombres del encabezado.
 Está todo en **`PRENDER.md`**: los secretos nombre por nombre, los comandos `gh` y el orden. También dice cómo verificar que anduvo.
 
 ## Tests
-- `node --test sipan-alto-valle/test/sipan.test.mjs sipan-alto-valle/test/crudos-rol.test.mjs sipan-alto-valle/test/prender.test.mjs`: 29 + 7 + 5 tests, cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales.
+- `npm ci --prefix sipan-alto-valle && npm test --prefix sipan-alto-valle`: 46 tests (`sipan`, `crudos-rol`, `prender` y `base-pg`), cada uno con su control negativo. Usan archivos sintéticos con los encabezados reales; `base-pg` usa un `sql` falso y, para probar que la URL no sale en los errores, el driver de verdad contra 127.0.0.1:1 (conexión rechazada, sin red).
 - Los dos tests con los **fixtures reales** corren si `SIPAN_FIXTURES` apunta a la carpeta. Son copias de la Wayback Machine (Guerrico 13-14/02/2026, Villa Regina 23-24/01/2020, Cinco Saltos 8-9/10/2020) y están en hn-cortex (privado): `docs/inta-alto-valle-2026-11/fixtures/`.
-- `node sipan-alto-valle/test/control-negativo.mjs`: 29 mutantes, uno por regla. Tienen que morir todos.
+- `node sipan-alto-valle/test/control-negativo.mjs`: 35 mutantes, uno por regla. Tienen que morir todos.
 
 ## El histórico (sólo para medir)
 - **`historico-pdf.mjs <lista.txt> <carpeta>`** baja los resúmenes mensuales en PDF, **sólo de 2018 en adelante** y sólo de sipan.inta.gob.ar.

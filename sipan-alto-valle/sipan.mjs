@@ -141,9 +141,9 @@ export function almacenDeEntorno(env, fetchFn = globalThis.fetch) {
   return null;
 }
 
-export async function correr({ seco = true, ids = null, barrer = false, aceptar = {}, archivos = {}, env = process.env, fetchFn = globalThis.fetch,
+async function correrInterno({ seco = true, ids = null, barrer = false, aceptar = {}, archivos = {}, env = process.env, fetchFn = globalThis.fetch,
   dormir, reloj, ahoraMs = Date.now(), log = console.log, base: baseDada = null, almacen: almacenDado = null } = {}) {
-  const base = seco ? null : baseDada || crearBase({ url: env.SIPAN_SUPABASE_URL, apikey: env.SIPAN_SUPABASE_ANON_KEY, jwt: env.SIPAN_SUPABASE_JWT, fetchFn });
+  const base = seco ? null : baseDada;   // la abre y la cierra correr() (abajo)
   const almacen = seco ? null : almacenDado || almacenDeEntorno(env, fetchFn);
   const opPed = { fetchFn, ...(dormir ? { dormir } : {}), ...(reloj ? { ahora: reloj } : {}) };
   const pedidor = crearPedidor(opPed);
@@ -230,6 +230,15 @@ export async function correr({ seco = true, ids = null, barrer = false, aceptar 
   /* al registro público: sólo cantidades y tipos (nada de valores medidos) */
   log(JSON.stringify({ ...resumen, avisos: avisos.map((a) => `${a.tipo}${a.id ? ' ' + a.id : ''}`) }));
   return { resumen, avisos, errores };
+}
+
+/** La corrida: abre la base (Postgres directo, SIPAN_PG_URL, rol colector_estaciones) sólo en modo real, y la cierra
+ *  siempre al final, aunque algo falle. `conectar` se inyecta en los tests (una base falsa con la misma forma). */
+export async function correr(op = {}) {
+  const { seco = true, env = process.env, base: baseDada = null, conectar } = op;
+  const base = seco ? null : baseDada || await crearBase({ url: env.SIPAN_PG_URL, ...(conectar ? { conectar } : {}) });
+  try { return await correrInterno({ ...op, base }); }
+  finally { if (base && !baseDada && base.cerrar) await base.cerrar(); }
 }
 
 const esPrincipal = import.meta.url === 'file://' + process.argv[1] || import.meta.url.endsWith(String(process.argv[1] || '').replace(/\\/g, '/'));

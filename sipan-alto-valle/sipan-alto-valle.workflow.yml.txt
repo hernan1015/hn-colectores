@@ -38,13 +38,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Tests (sin red ni base; los fixtures reales no están en este repo público)
-        run: node --test sipan-alto-valle/test/sipan.test.mjs sipan-alto-valle/test/crudos-rol.test.mjs sipan-alto-valle/test/prender.test.mjs
+      - name: Dependencias (postgres.js, versión fijada en package-lock) y tests (sin red ni base; los fixtures reales no están en este repo público)
+        run: npm ci --prefix sipan-alto-valle --no-audit --no-fund && npm test --prefix sipan-alto-valle
       - name: Colectar
         env:
-          SIPAN_SUPABASE_URL: ${{ secrets.SIPAN_SUPABASE_URL }}
-          SIPAN_SUPABASE_ANON_KEY: ${{ secrets.SIPAN_SUPABASE_ANON_KEY }}   # la anon/publishable: sola no da nada
-          SIPAN_SUPABASE_JWT: ${{ secrets.SIPAN_SUPABASE_JWT }}             # JWT del rol colector_estaciones (0147b), NO service_role
+          SIPAN_PG_URL: ${{ secrets.SIPAN_PG_URL }}   # postgresql://colector_estaciones.<ref>:<clave>@<pooler>:6543/postgres (rol 0147b; nunca se imprime)
           SIPAN_CRUDOS_TOKEN: ${{ secrets.RADAR_TOKEN }}                    # el del radar: Contents read/write SÓLO sobre hn-radar (privado)
           SIPAN_CRUDOS_REPO: hernan1015/hn-radar                             # crudos de 10 min: un release por día, sipan-AAAA-MM-DD
           # R2 (opción futura, APAGADA): SIPAN_R2_ON=si + SIPAN_R2_CUENTA / _ACCESS_KEY_ID / _SECRET_ACCESS_KEY / _DEPOSITO.

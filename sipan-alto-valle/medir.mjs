@@ -40,8 +40,15 @@ export function resumir(filas) {
   return Object.fromEntries(Object.entries(grupos).map(([k, v]) => [k, metricas(v)]));
 }
 
-export async function correr({ seco = false, dias = 7, env = process.env, fetchFn = globalThis.fetch, base: baseDada = null, ahoraMs = Date.now(), log = console.log, dormir = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
-  const base = baseDada || crearBase({ url: env.SIPAN_SUPABASE_URL, apikey: env.SIPAN_SUPABASE_ANON_KEY, jwt: env.SIPAN_SUPABASE_JWT, fetchFn });
+/** Abre la base (Postgres directo, SIPAN_PG_URL, rol colector_estaciones; también en seco, porque lee) y la cierra siempre. */
+export async function correr(op = {}) {
+  const { env = process.env, base: baseDada = null, conectar } = op;
+  const base = baseDada || await crearBase({ url: env.SIPAN_PG_URL, ...(conectar ? { conectar } : {}) });
+  try { return await medirCon({ ...op, base }); }
+  finally { if (!baseDada && base.cerrar) await base.cerrar(); }
+}
+
+async function medirCon({ seco = false, dias = 7, fetchFn = globalThis.fetch, base, ahoraMs = Date.now(), log = console.log, dormir = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
   const hoy = new Date(ahoraMs - 3 * 3600e3).toISOString().slice(0, 10);
   const desde = sumarDias(hoy, -dias);
   const obs = await base.obsDesde(desde);

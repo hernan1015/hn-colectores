@@ -31,7 +31,7 @@ export function filtrarLista(texto, yaBajados = new Set()) {
   return { lista: [...new Map(out.map((x) => [x.nombre, x])).values()], rechazos };
 }
 
-const esPrincipal = import.meta.url.endsWith(String(process.argv[1] || '').replace(/\\/g, '/'));
+const esPrincipal = !!process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'));
 if (esPrincipal) {
   const [listaArch, salida] = process.argv.slice(2);
   const i = process.argv.indexOf('--tope');

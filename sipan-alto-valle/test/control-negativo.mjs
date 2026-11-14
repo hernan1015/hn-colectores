@@ -30,13 +30,19 @@ const MUTANTES = [
   ['crudos: borra el viejo ANTES de subir el nuevo', 'lib/releases.mjs', "      const subido = await pedir('POST',", "      for (const v of viejos) await pedir('DELETE', `${API}/repos/${repo}/releases/assets/${v.id}`);\n      const subido = await pedir('POST',"],
   ['crudos: mezcla las estaciones del mismo día', 'lib/releases.mjs', "a.name.startsWith(id + '__') && a.name.endsWith('.json.gz')", "a.name.endsWith('.json.gz')"],
   ['R2 prendido sin pedirlo', 'sipan.mjs', "if (env.SIPAN_R2_ON === 'si' && env.SIPAN_R2_DEPOSITO) {", 'if (env.SIPAN_R2_DEPOSITO) {'],
-  ['acepta un JWT de otro rol (service_role)', 'lib/base.mjs', 'if (rol !== ROL) throw new Error(', 'if (false) throw new Error('],
   ['el histórico acepta años antes de 2018', 'historico-pdf.mjs', 'Math.max(...anios) < 2018', 'Math.max(...anios) < 1900'],
   ['FK: los datos antes que la estación', 'sipan.mjs', '      if (!(await guardarEstacion(e, { ...meta, ...x.meta }))) continue;\n', ''],
   ['FK: guarda los datos aunque la estación falló', 'sipan.mjs', 'if (!(await guardarEstacion(e, { ...meta, ...x.meta }))) continue;', 'await guardarEstacion(e, { ...meta, ...x.meta });'],
   ['barrido sin la pausa desde el último pedido', 'sipan.mjs', 'ultimoPedido: pedidor.ultimo', 'ultimoPedido: null'],
   ['una falla de los crudos corta la corrida', 'sipan.mjs', "        catch (err) { errores.push(`${e.id} crudos: ${String(err && err.message).slice(0, 80)}`); }", '        catch (err) { throw err; }'],
-  ['acepta la clave de servicio como apikey', 'lib/base.mjs', "if (/^sb_secret_/i.test(String(apikey).trim()) || rolDelJwt(apikey) === 'service_role') {", 'if (false) {'],
+  ['pg: no controla current_user', 'lib/base.mjs', "if (yo !== ROL) { await cerrar(); throw new Error(", "if (false) { await cerrar(); throw new Error("],
+  ['pg: acepta cualquier usuario en la URL', 'lib/base.mjs', 'if (!usuario || !(usuario === ROL || usuario.startsWith(ROL + \'.\'))) {', 'if (!usuario) {'],
+  ['pg: el error de conexión sale con el mensaje del driver (URL, host)', 'lib/base.mjs', "  const err = new Error(`${que}: ${codigo}${DESC[codigo] ? ' (' + DESC[codigo] + ')' : ''}`);", "  const err = new Error(`${que}: ${codigo} ${e && e.message}`);"],
+  ['pg: el error de una fila sale con el mensaje del driver', 'lib/base.mjs', "errores.push(`${f.estacion_id} ${f.fecha}: ${errorLimpio(e, 'estaciones_obs').message}`);", 'errores.push(`${f.estacion_id} ${f.fecha}: ${e.message}`);'],
+  ['pg: con sentencias preparadas (rompe el pooler en modo transacción)', 'lib/base.mjs', 'max: 1, prepare: false,', 'max: 1, prepare: true,'],
+  ['pg: no cierra la conexión al terminar', 'medir.mjs', '  finally { if (!baseDada && base.cerrar) await base.cerrar(); }', '  finally { }'],
+  ['scram: ServerKey mal calculada', 'migracion/scram.mjs', "update('Server Key')", "update('Client Key')"],
+  ['pg: los jsonb sin sql.json', 'lib/base.mjs', 'out[k] = JSONB.has(k) && v != null ? sql.json(v) : v;', 'out[k] = v;'],
 ];
 
 function correrCon(nombre, archivo, viejo, nuevo) {
@@ -50,7 +56,7 @@ function correrCon(nombre, archivo, viejo, nuevo) {
     if (veces !== 1) throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces (tiene que ser 1)`);
     fs.writeFileSync(p, txt.replace(viejo, nuevo));
   }
-  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs')], { encoding: 'utf8', env: process.env });
+  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs')], { encoding: 'utf8', env: process.env });
   return r.status === 0;
 }
 

@@ -8,9 +8,7 @@ Los comandos son de Git Bash y `gh` es `C:/Users/jeshe/AppData/Local/Programs/gh
 
 | Nombre en hn-colectores | Qué lleva | De dónde sale | ¿Existe ya? |
 |---|---|---|---|
-| `SIPAN_SUPABASE_URL` | la dirección del proyecto, `https://<ref>.supabase.co` | Dashboard → Project Settings → API | no |
-| `SIPAN_SUPABASE_ANON_KEY` | la clave **anon** (o la *publishable*) del proyecto. Sola no da nada: con RLS sin políticas, anon no ve estas tablas | Dashboard → Project Settings → API Keys | no |
-| `SIPAN_SUPABASE_JWT` | un JWT firmado con `{"role":"colector_estaciones"}` (0147b). El colector se niega a arrancar con cualquier otro rol, y **NUNCA lleva la clave de servicio** | `migracion/firmar-jwt.mjs` (paso 3) | no |
+| `SIPAN_PG_URL` | `postgresql://colector_estaciones.uxyewblbwzqaauzkcihf:<clave codificada>@<host-del-pooler>:6543/postgres`. Es el **único** secreto de la base: el rol `colector_estaciones` (0147b), LOGIN, sin BYPASSRLS y con CONNECTION LIMIT 3, por el pooler en modo transacción. **Nunca** el usuario `postgres` ni la clave de servicio: el colector se niega a arrancar con otro usuario en la URL, y además verifica `current_user` al conectar | se arma en el paso 2 | no |
 | `RADAR_TOKEN` | el token del radar, con **Contents: Read and write SÓLO sobre `hn-radar`**. Sirve tal cual para los releases `sipan-AAAA-MM-DD` | ya está cargado (colector-radar) | **sí**: no se toca |
 
 | Variable (no es secreto) | Valor | Para qué |
@@ -19,47 +17,63 @@ Los comandos son de Git Bash y `gh` es `C:/Users/jeshe/AppData/Local/Programs/gh
 
 - **No hace falta crear ningún repo:** los crudos van a `hn-radar`, que ya es privado, con el tag `sipan-AAAA-MM-DD`. El radar usa `dia-AAAA-MM-DD`, así que no se pisan.
 - **R2 queda apagado** (`SIPAN_R2_*` y `SIPAN_R2_ON`): no se cargan.
+- **Ya no se usan** `SIPAN_SUPABASE_URL`, `SIPAN_SUPABASE_ANON_KEY` ni `SIPAN_SUPABASE_JWT` (Plan B, 13/11): no se cargan.
 
 ## El orden
 
-### 1 · Aplicar la 0147 y la 0147b (en este orden)
-- Copiarlas a `hn-agro/migrations/`:
-  - `0147_estaciones_noche_y_muestreo.sql`;
-  - `0147b_rol_colector_estaciones.sql`.
-- Aplicarlas en Supabase (SQL editor o MCP), primero la 0147.
-- **Verificar** con el bloque «Verificación» del final de la 0147b: `set role colector_estaciones; …`. Tienen que dar 0 filas del SNIH, *permission denied* en `campana.lotes` y en el DELETE, y la política violada con el proceso «otro».
-  - **Si el `insert … 'otro'` PASA,** la RLS de `registro_procesos` no quedó prendida: mirar el NOTICE de la 0147b (`FORCE ROW LEVEL SECURITY`) y no seguir hasta resolverlo.
-  - **Si `set role colector_estaciones` da «permission denied to set role»:** en Supabase, `postgres` no es superusuario y, desde PG16, quien crea un rol no recibe la opción SET. Hay que hacer `grant colector_estaciones to postgres;`, verificar, `reset role;` y al final `revoke colector_estaciones from postgres;`.
-  - **Que lo de siempre siga anotando:** `select relrowsecurity from pg_class where oid = 'public.registro_procesos'::regclass;` tiene que dar `true`, y la próxima corrida de cualquier function de Netlify tiene que seguir apareciendo en `select proceso, max(creado_at) from registro_procesos group by 1;`. Esas functions entran con el dueño de la tabla, que saltea la RLS.
+### 1 · Aplicar la 0147
+- Copiar `0147_estaciones_noche_y_muestreo.sql` y `0147b_rol_colector_estaciones.sql` a `hn-agro/migrations/`.
+- **La 0147** se aplica como siempre (SQL editor o MCP).
+- **La 0147b NO:** lleva la contraseña por una variable de psql y se aplica en el paso 2.
 
-### 2 · La clave anon y la URL
-```bash
-GH=/c/Users/jeshe/AppData/Local/Programs/gh/bin/gh.exe
-$GH secret set SIPAN_SUPABASE_URL      -R hernan1015/hn-colectores     # pega la URL cuando la pide
-$GH secret set SIPAN_SUPABASE_ANON_KEY -R hernan1015/hn-colectores     # pega la anon/publishable
-```
+### 2 · La clave, el rol (0147b) y el secreto, en la misma terminal
+Necesita `psql` (cliente de PostgreSQL) y `node`, y se corre desde el clon de hn-colectores en esta rama (o en main ya mergeado).
 
-### 3 · El JWT del rol (una vez; vence en 365 días; anotar la fecha)
-- **El secreto para firmarlo:** Dashboard → Project Settings → **JWT Keys** → «Legacy JWT secret» (HS256), con el botón de revelar.
-- **Nada queda en pantalla ni en el historial:** el secreto y el JWT viven sólo en variables de esta terminal y se borran al final. El JWT se prueba ANTES de cargarlo.
+- **La URL de administración** es la de siempre: el `DATABASE_URL` de Netlify, que es el usuario `postgres.uxyewblbwzqaauzkcihf` por el pooler. Sirve sólo para aplicar la 0147b y **no va a ningún secreto**.
+- **El host del pooler** sale de esa misma URL (lo que va entre `@` y `:`, del estilo `aws-0-<región>.pooler.supabase.com`), o del MCP de Supabase (`get_project_url` / la cadena de conexión del pooler).
+- **Nada queda en pantalla, en el historial ni en la base en texto plano:**
+  - la clave vive sólo en una variable de esta terminal;
+  - a la base le llega su **verificador SCRAM** (`migracion/scram.mjs`), no la clave;
+  - al secreto le llega por la entrada estándar;
+  - al final, `unset`.
 ```bash
 set -o pipefail
-read -rs SUPABASE_JWT_SECRET && export SUPABASE_JWT_SECRET         # pegar el Legacy JWT secret (no se ve) + Enter
-read -rs ANON                                                       # pegar la anon/publishable (la misma del paso 2) + Enter
-JWT=$(node sipan-alto-valle/migracion/firmar-jwt.mjs --dias 365) || { echo "no se firmó: no seguir"; unset SUPABASE_JWT_SECRET ANON JWT; }
-unset SUPABASE_JWT_SECRET
-# probarlo: tiene que dar 200 y [] (la lista vacía), NO 401 ni 403
-curl -s -o /dev/null -w '%{http_code}\n' "https://<ref>.supabase.co/rest/v1/estaciones?red=eq.INTA_SIPAN_AV&select=estacion_id" \
-  -H "apikey: $ANON" -H "Authorization: Bearer $JWT"
-# si dio 200: cargarlo
-[ -n "$JWT" ] && printf %s "$JWT" | $GH secret set SIPAN_SUPABASE_JWT -R hernan1015/hn-colectores
-unset JWT ANON
+GH=/c/Users/jeshe/AppData/Local/Programs/gh/bin/gh.exe
+REF=uxyewblbwzqaauzkcihf
+read -rs ADMIN_URL                         # pegar el DATABASE_URL de Netlify (no se ve) + Enter
+POOLER=$(U="$ADMIN_URL" node -e 'process.stdout.write(new URL(process.env.U).hostname)')
+echo "pooler: $POOLER"                      # tiene que terminar en .pooler.supabase.com (si no, no seguir)
+CLAVE=$(openssl rand -base64 32)
+VERIF=$(CLAVE="$CLAVE" node sipan-alto-valle/migracion/scram.mjs) || { echo "no salió el verificador: no seguir"; }
+# la 0147b, con la contraseña por variable (ON_ERROR_STOP: si algo falla, no sigue)
+psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -v clave="$VERIF" -f sipan-alto-valle/migracion/0147b_rol_colector_estaciones.sql
+# la URL del colector: la clave base64 trae + / = y en una URL van codificadas
+CLAVE_URL=$(CLAVE="$CLAVE" node -e 'process.stdout.write(encodeURIComponent(process.env.CLAVE))')
+SIPAN_PG_URL="postgresql://colector_estaciones.$REF:$CLAVE_URL@$POOLER:6543/postgres"
 ```
-- **Plan B**, si el proyecto ya no acepta el JWT secret legado (sólo claves asimétricas), o si da 401 con un JWT bien armado: **no seguir**. Avisarme y paso el colector a Postgres directo:
-  - el mismo rol, con `LOGIN` y contraseña;
-  - por el *pooler*;
-  - con el paquete `postgres`.
-  - **Eso no está hecho en esta rama.**
+
+### 3 · Verificar con ESA URL (antes de cargar el secreto), cargarlo y borrar todo
+```bash
+# 3a · ¿entra como colector_estaciones? (tiene que decir colector_estaciones)
+psql "$SIPAN_PG_URL" -At -c "select current_user"
+# 3b · un insert PERMITIDO (su proceso): tiene que decir INSERT 0 1
+psql "$SIPAN_PG_URL" -c "insert into registro_procesos (proceso, ok, resumen) values ('sipan_alto_valle', true, '{\"prueba\": \"PRENDER paso 3\"}')"
+# 3c · un insert de OTRA RED: tiene que FALLAR con «new row violates row-level security policy»
+psql "$SIPAN_PG_URL" -c "insert into estaciones (red, estacion_id) values ('SNIH', 'prueba-no-va')"
+# 3d · lo que no puede: tiene que FALLAR con «permission denied»
+psql "$SIPAN_PG_URL" -c "select count(*) from campana.lotes"
+psql "$SIPAN_PG_URL" -c "delete from estaciones_obs where red = 'INTA_SIPAN_AV'"
+# si 3a-3d dieron lo que dicen: cargar el secreto
+printf %s "$SIPAN_PG_URL" | $GH secret set SIPAN_PG_URL -R hernan1015/hn-colectores
+unset CLAVE CLAVE_URL VERIF SIPAN_PG_URL ADMIN_URL POOLER
+```
+- **Si 3a no entra** («password authentication failed», «tenant or user not found»): revisar el usuario `colector_estaciones.<ref>` y el host del pooler. El puerto es **6543** (modo transacción).
+- **Si 3b falla con «violates row-level security policy»,** la política de `registro_procesos` no se creó: volver a correr la 0147b.
+- **Si 3c PASA,** la RLS no rige para el rol: **no seguir**, borrar esa fila con el usuario de administración y avisarme.
+- **Que lo de siempre siga anotando:** con la URL de administración,
+  - `select relrowsecurity from pg_class where oid = 'public.registro_procesos'::regclass;` tiene que dar `true`;
+  - la próxima corrida de cualquier function de Netlify tiene que aparecer en `select proceso, max(creado_at) from registro_procesos group by 1;`. Esas functions entran con el dueño de la tabla, que saltea la RLS.
+- **Si hay que cambiar la clave:** se repite el paso 2 entero. La 0147b es idempotente: vuelve a fijar la contraseña.
 
 ### 4 · Mergear el PR #2
 ```bash

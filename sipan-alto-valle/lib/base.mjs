@@ -1,76 +1,135 @@
-// HN AGRO · SIPAN Alto Valle · la base (Supabase) por la API REST (PostgREST), sin dependencias. Igual que el vigía
-// (vigia/lib/estado.mjs). Las credenciales llegan por variables de entorno que el workflow lee de secrets.* (nunca en
-// el código) y nunca se imprimen:
-//   SIPAN_SUPABASE_URL       https://<proyecto>.supabase.co
-//   SIPAN_SUPABASE_ANON_KEY  la clave anon/publishable del proyecto (la pide la puerta de Supabase; sola no da nada)
-//   SIPAN_SUPABASE_JWT       un JWT con {"role":"colector_estaciones"} (migracion/0147b): PostgREST entra con ESE rol,
-//                            que sólo escribe las filas de sus redes. ⛔ NO la clave de servicio: si llega un JWT con otro
-//                            rol (service_role, anon, authenticated…), el colector se niega a arrancar.
+// HN AGRO · SIPAN Alto Valle · la base (Supabase) por POSTGRES DIRECTO, con el rol propio `colector_estaciones`
+// (migracion/0147b: LOGIN, sin BYPASSRLS, CONNECTION LIMIT 3). Plan B del 13/11: el proyecto firma los JWT con ECC
+// (P-256) y el HS256 legado puede revocarse sin aviso, así que no se usa PostgREST ni ningún JWT.
+//
+// Un solo secreto, SIPAN_PG_URL (secrets.* del workflow; nunca en el código y NUNCA se imprime):
+//   postgresql://colector_estaciones.<ref>:<clave>@<host-del-pooler>:6543/postgres
+// Pooler de Supabase en modo TRANSACCIÓN (6543): por eso `prepare: false` (no hay sentencias preparadas entre
+// transacciones) y max 1 conexión (el rol tiene CONNECTION LIMIT 3).
+//
+// Defensas:
+//   · antes de conectar, el usuario de la URL tiene que ser colector_estaciones (o colector_estaciones.<ref>);
+//   · al arrancar, `select current_user` tiene que dar colector_estaciones; si no, se cierra y aborta;
+//   · ningún mensaje de error del driver sale tal cual (pueden traer host, usuario o la URL): se reemplazan por el
+//     código (SQLSTATE o el errno de red) y una descripción nuestra. Ver `errorLimpio`.
 //
 // Tablas: estaciones y estaciones_obs (hn-agro migrations/0110 + las columnas de la 0147), registro_procesos (0075) y
 // pronostico_helada_medicion (0147).
+import postgres from 'postgres';
+
 export const RED = 'INTA_SIPAN_AV';
 export const ROL = 'colector_estaciones';
 
-/** El claim `role` de un JWT (sin verificar la firma: eso lo hace Supabase). null si no es un JWT. */
-export function rolDelJwt(jwt) {
+/** El usuario de una URL postgres (sin conectar). null si la URL no se entiende. */
+export function usuarioDeUrl(url) {
   try {
-    const p = String(jwt).split('.');
-    if (p.length !== 3) return null;
-    return JSON.parse(Buffer.from(p[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')).role ?? null;
+    const u = new URL(String(url));
+    if (!/^postgres(ql)?:$/.test(u.protocol)) return null;
+    return decodeURIComponent(u.username) || null;
   } catch { return null; }
 }
 
-export function crearBase({ url, apikey, jwt, fetchFn = globalThis.fetch }) {
-  if (!url || !apikey || !jwt) throw new Error('faltan SIPAN_SUPABASE_URL, SIPAN_SUPABASE_ANON_KEY o SIPAN_SUPABASE_JWT');
-  const rol = rolDelJwt(jwt);
-  if (rol !== ROL) throw new Error(`SIPAN_SUPABASE_JWT tiene que ser del rol ${ROL} (llegó ${rol ? 'otro rol' : 'algo que no es un JWT'}): no se usa la clave de servicio`);
-  /* la apikey tiene que ser la anon/publishable: si es la de servicio (JWT legado con role service_role, o una clave
-     nueva sb_secret_…), no se arranca, para que esa clave no quede en los secretos de un repo público. */
-  if (/^sb_secret_/i.test(String(apikey).trim()) || rolDelJwt(apikey) === 'service_role') {
-    throw new Error('SIPAN_SUPABASE_ANON_KEY es la clave de servicio: tiene que ser la anon/publishable');
+const DESC = { 23503: 'FK', 23505: 'clave repetida', 23514: 'CHECK', 42501: 'sin permiso (RLS o grant)', '28P01': 'usuario o clave',
+  28000: 'usuario o clave', 53300: 'demasiadas conexiones', ECONNREFUSED: 'conexión rechazada', ENOTFOUND: 'host desconocido',
+  ETIMEDOUT: 'tiempo agotado', CONNECT_TIMEOUT: 'tiempo agotado' };
+
+/** Un error del driver → un Error nuestro, SIN el mensaje original (puede traer host, usuario o la URL). */
+export function errorLimpio(e, que = 'base') {
+  const crudo = e && (e.code || e.errno);
+  const codigo = crudo ? String(crudo).replace(/[^A-Za-z0-9_]/g, '').slice(0, 16) : 'sin_codigo';
+  const err = new Error(`${que}: ${codigo}${DESC[codigo] ? ' (' + DESC[codigo] + ')' : ''}`);
+  err.codigo = codigo;
+  return err;
+}
+
+/** Las columnas jsonb van con sql.json(); el resto tal cual. */
+const JSONB = new Set(['metadatos', 'crudo', 'resumen']);
+function preparar(sql, fila) {
+  const out = {};
+  for (const [k, v] of Object.entries(fila)) out[k] = JSONB.has(k) && v != null ? sql.json(v) : v;
+  return out;
+}
+
+const NUM = ['tmin_c', 'tmax_c', 'lluvia_mm', 'eto_mm', 'tmin_noche_c', 'rad_mj_m2'];
+function numeros(f) {
+  const o = { ...f };
+  for (const k of NUM) if (o[k] != null) o[k] = Number(o[k]);
+  return o;
+}
+
+const COLS_EST = ['red', 'estacion_id', 'nombre', 'partido', 'provincia', 'lat', 'lon', 'precision_ubicacion', 'fuente_ubicacion', 'activa', 'metadatos', 'actualizado_en'];
+
+export async function crearBase({ url, conectar = (u, o) => postgres(u, o) }) {
+  if (!url) throw new Error('falta SIPAN_PG_URL');
+  const usuario = usuarioDeUrl(url);
+  if (!usuario || !(usuario === ROL || usuario.startsWith(ROL + '.'))) {
+    throw new Error(`SIPAN_PG_URL tiene que ser del usuario ${ROL} (o ${ROL}.<ref>): no se usa otro usuario`);
   }
-  const base = url.replace(/\/+$/, '') + '/rest/v1/';
-  const H = { apikey, Authorization: 'Bearer ' + jwt, 'Content-Type': 'application/json' };
-  async function pedir(metodo, ruta, cuerpo, extra = {}) {
-    const r = await fetchFn(base + ruta, { method: metodo, headers: { ...H, ...extra }, body: cuerpo ? JSON.stringify(cuerpo) : undefined, signal: AbortSignal.timeout(30000) });
-    if (!r.ok) throw new Error(`Supabase ${metodo} ${ruta.split('?')[0]}: HTTP ${r.status}`);
-    const t = await r.text();
-    return t ? JSON.parse(t) : null;
-  }
-  const lista = (xs) => '(' + xs.map((x) => '"' + String(x).replace(/"/g, '') + '"').join(',') + ')';
+  let sql;
+  try {
+    sql = conectar(url, { max: 1, prepare: false, idle_timeout: 20, connect_timeout: 20, onnotice: () => {}, connection: { application_name: 'colector-sipan' } });
+  } catch (e) { throw errorLimpio(e, 'conectar'); }
+  const cerrar = async () => { try { await sql.end({ timeout: 5 }); } catch { /* nada */ } };
+  const q = async (que, f) => { try { return await f(); } catch (e) { throw errorLimpio(e, que); } };
+  /* al arrancar: ¿somos de verdad colector_estaciones? */
+  let yo;
+  try { yo = (await sql`select current_user as u`)[0]?.u; } catch (e) { await cerrar(); throw errorLimpio(e, 'conectar'); }
+  if (yo !== ROL) { await cerrar(); throw new Error(`la conexión entró como otro usuario (no ${ROL}): se aborta`); }
+
   return {
+    usuario: yo,
+    cerrar,
     async estaciones() {
-      return (await pedir('GET', `estaciones?red=eq.${RED}&select=estacion_id,nombre,lat,lon,activa,metadatos`)) || [];
+      return q('leer estaciones', () => sql`select estacion_id, nombre, lat, lon, activa, metadatos from estaciones where red = ${RED}`);
     },
     async guardarEstaciones(filas) {
-      if (!filas.length) return;
-      await pedir('POST', 'estaciones?on_conflict=red,estacion_id', filas, { Prefer: 'resolution=merge-duplicates,return=minimal' });
+      for (const f of filas) {
+        const p = preparar(sql, f);
+        const cols = COLS_EST.filter((c) => c in p);
+        const resto = cols.filter((c) => c !== 'red' && c !== 'estacion_id');
+        await q('guardar estaciones', () => sql`insert into estaciones ${sql(p, cols)} on conflict (red, estacion_id) do update set ${sql(p, resto)}`);
+      }
     },
     async obs(estacionId, fechas) {
       if (!fechas.length) return [];
-      return (await pedir('GET', `estaciones_obs?red=eq.${RED}&estacion_id=eq.${encodeURIComponent(estacionId)}&fecha=in.${encodeURIComponent(lista(fechas))}&select=*`)) || [];
+      /* fecha como texto (postgres.js la devuelve como Date) y los numeric como número (los devuelve como texto) */
+      const filas = await q('leer estaciones_obs', () => sql`select *, fecha::text as fecha from estaciones_obs
+        where red = ${RED} and estacion_id = ${estacionId} and fecha = any(${fechas}::date[])`);
+      return filas.map(numeros);
     },
     async obsDesde(desde) {
-      return (await pedir('GET', `estaciones_obs?red=eq.${RED}&fecha=gte.${desde}&select=estacion_id,fecha,tmin_c,tmin_noche_c,tmin_noche_en,noche_registros,noche_esperados,registros_validos,registros_esperados`)) || [];
+      const filas = await q('leer estaciones_obs', () => sql`select estacion_id, fecha::text as fecha, tmin_c, tmin_noche_c, tmin_noche_en,
+          noche_registros, noche_esperados, registros_validos, registros_esperados
+        from estaciones_obs where red = ${RED} and fecha >= ${desde}::date`);
+      return filas.map(numeros);
     },
     async guardarObs(filas) {
       /* una por una: así una fila mala (un CHECK) no tira las demás, y cada una lleva todas sus columnas */
       let ok = 0; const errores = [];
       for (const f of filas) {
-        try { await pedir('POST', 'estaciones_obs?on_conflict=red,estacion_id,fecha', [f], { Prefer: 'resolution=merge-duplicates,return=minimal' }); ok++; }
-        catch (e) { errores.push(`${f.estacion_id} ${f.fecha}: ${String(e.message).slice(0, 80)}`); }
+        const p = preparar(sql, f);
+        const cols = Object.keys(p);
+        const resto = cols.filter((c) => !['red', 'estacion_id', 'fecha'].includes(c));
+        try {
+          await sql`insert into estaciones_obs ${sql(p, cols)} on conflict (red, estacion_id, fecha) do update set ${sql(p, resto)}`;
+          ok++;
+        } catch (e) { errores.push(`${f.estacion_id} ${f.fecha}: ${errorLimpio(e, 'estaciones_obs').message}`); }
       }
       return { ok, errores };
     },
     async guardarMedicion(filas) {
-      if (!filas.length) return;
-      await pedir('POST', 'pronostico_helada_medicion?on_conflict=red,estacion_id,noche,fuente,anticipacion_dias', filas, { Prefer: 'resolution=merge-duplicates,return=minimal' });
+      for (const f of filas) {
+        const p = preparar(sql, f);
+        const cols = Object.keys(p);
+        const resto = cols.filter((c) => !['red', 'estacion_id', 'noche', 'fuente', 'anticipacion_dias'].includes(c));
+        await q('guardar medición', () => sql`insert into pronostico_helada_medicion ${sql(p, cols)}
+          on conflict (red, estacion_id, noche, fuente, anticipacion_dias) do update set ${sql(p, resto)}`);
+      }
     },
     async registrar(proceso, ok, resumen) {
       let txt = JSON.stringify(resumen);
       if (txt.length > 60000) { resumen = { recortado: true, largo: txt.length, avisos: resumen.avisos }; txt = JSON.stringify(resumen); }
-      await pedir('POST', 'registro_procesos', [{ proceso, ok, resumen }], { Prefer: 'return=minimal' });
+      await q('registro_procesos', () => sql`insert into registro_procesos (proceso, ok, resumen) values (${proceso}, ${ok}, ${sql.json(resumen)})`);
     },
   };
 }

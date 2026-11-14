@@ -1,12 +1,10 @@
 // node --test sipan-alto-valle/test/prender.test.mjs   (sin red ni base)
 // Los arreglos de la revisión sustituta antes de prender: la FK estaciones → estaciones_obs desde la PRIMERA corrida,
-// la pausa de 30 s también entre el último downld02 y el barrido, la apikey que no sea la de servicio y que una falla
+// la pausa de 30 s también entre el último downld02 y el barrido y que una falla
 // en una estación no corte la corrida. Cada uno con su control negativo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { correr } from '../sipan.mjs';
-import { crearBase } from '../lib/base.mjs';
-import { firmar } from '../migracion/firmar-jwt.mjs';
 import { armar, serie } from './sintetico.mjs';
 
 const AHORA = Date.parse('2026-09-10T09:10:00Z');   // 06:10 de Argentina
@@ -92,16 +90,4 @@ test('barrido: clima.htm sale ≥ 30 s DESPUÉS del último downld02 (mismo relo
   pedidos.length = 0; t = 0;
   await correr({ seco: true, fetchFn, dormir, reloj, ahoraMs: AHORA, log: () => {} });
   assert.equal(pedidos.length, 5);
-});
-
-test('apikey: si SIPAN_SUPABASE_ANON_KEY es la clave de servicio, no arranca', () => {
-  const jwt = firmar({ secreto: 'z'.repeat(40) });
-  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const servicioLegado = b64({ alg: 'HS256' }) + '.' + b64({ role: 'service_role' }) + '.f';
-  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: servicioLegado, jwt }), /clave de servicio/);
-  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: ['sb', 'secret', 'falsa'].join('_'), jwt }), /clave de servicio/);
-  /* control negativo: la anon legada (role anon) y la publishable nueva sí */
-  const anonLegada = b64({ alg: 'HS256' }) + '.' + b64({ role: 'anon' }) + '.f';
-  assert.ok(crearBase({ url: 'https://p.supabase.co', apikey: anonLegada, jwt }));
-  assert.ok(crearBase({ url: 'https://p.supabase.co', apikey: ['sb', 'publishable', 'falsa'].join('_'), jwt }));
 });

@@ -1,34 +1,44 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- HN AGRO · 0147b · el rol propio del colector de estaciones (SIPAN y, después, WeatherLink público)   [13/11/2026]
+--                   PLAN B: Postgres directo por el pooler (sin PostgREST ni JWT)
 -- ════════════════════════════════════════════════════════════════════════════
 -- ⚠ PENDIENTE DE APLICAR: la aplica local, DESPUÉS de la 0147 (necesita pronostico_helada_medicion).
--- Por qué: el colector corre en Actions de un repo PÚBLICO. Con la clave de servicio, quien la robe tiene TODA la base.
--- Con este rol, sólo puede: leer y escribir las filas de SUS redes en estaciones / estaciones_obs /
--- pronostico_helada_medicion, y agregar renglones a registro_procesos con SUS procesos. Nada más: no borra, no lee
--- otras tablas, no ve las filas del SNIH ni ningún dato de usuarios.
+-- Por qué un rol propio: el colector corre en Actions de un repo PÚBLICO. Con la clave de servicio o el usuario
+-- postgres, quien los robe tiene TODA la base. Con este rol sólo puede: leer y escribir las filas de SUS redes en
+-- estaciones / estaciones_obs / pronostico_helada_medicion, y agregar renglones a registro_procesos con SUS procesos.
+-- Nada más: no borra, no lee otras tablas, no ve las filas del SNIH ni ningún dato de usuarios.
 --
--- Cómo lo usa PostgREST (la API REST de Supabase): PostgREST entra como `authenticator` y cambia al rol que dice el
--- claim `role` del JWT del encabezado Authorization. Por eso:
---   1. el rol es NOLOGIN y se le da a `authenticator` (grant … to authenticator);
---   2. el colector manda   apikey: <la clave anon/publishable del proyecto>   y
---                          Authorization: Bearer <un JWT con {"role":"colector_estaciones"}>;
---   3. ese JWT se firma UNA vez con el JWT secret del proyecto (Dashboard → Project Settings → API / JWT Keys →
---      «Legacy JWT secret», HS256). Ver PRENDER.md, paso 2: `node sipan-alto-valle/migracion/firmar-jwt.mjs` lo arma
---      en la PC de local con el secreto en una variable de entorno; el secreto no se guarda en ningún lado.
---   Si el proyecto ya no acepta el JWT secret legado (sólo claves asimétricas), la alternativa es darle LOGIN y una
---   contraseña a este rol y conectarse por el pooler con Postgres directo: ver PRENDER.md, «Plan B».
+-- Por qué Postgres directo (13/11, con el maker): el proyecto firma los JWT con ECC (P-256) y la HS256 legada quedó
+-- sólo como «usada anteriormente»: un JWT propio firmado con ella se cae sin aviso el día que se revoque.
+-- Entonces el rol es LOGIN (con contraseña), SIN BYPASSRLS y con CONNECTION LIMIT 3, y el colector entra por el pooler
+-- de Supabase en modo transacción (6543) con un solo secreto, SIPAN_PG_URL:
+--   postgresql://colector_estaciones.<ref>:<clave>@<host-del-pooler>:6543/postgres
 --
--- Idempotente. RLS: las tablas de la 0110/0147 tienen RLS SIN políticas (nadie ve nada salvo el server, que la
--- saltea). Este rol NO la saltea: por eso van políticas, sólo para él, recortadas a sus redes y procesos.
+-- ⛔ LA CONTRASEÑA NO ESTÁ EN ESTE ARCHIVO. Llega por la variable de psql `clave`, y lo que llega NO es la clave en
+--   texto: es su verificador SCRAM-SHA-256 (migracion/scram.mjs), para que la clave tampoco quede en el log de
+--   sentencias de la base. Por eso este archivo se aplica con psql (no con el editor SQL ni el MCP, que no tienen
+--   variables):  psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -v clave="$VERIF" -f 0147b_rol_colector_estaciones.sql
+--   Sin `-v clave=…`, psql deja «:'clave'» sin reemplazar, la sentencia da error de sintaxis y (con ON_ERROR_STOP)
+--   no se aplica nada más. Ver PRENDER.md, pasos 2 y 3.
+--
+-- Idempotente (se puede volver a correr para cambiar la contraseña). RLS: las tablas de la 0110/0147 tienen RLS SIN
+-- políticas (nadie ve nada salvo el server, que la saltea). Este rol NO la saltea: por eso van políticas, sólo para
+-- él, recortadas a sus redes y procesos.
 -- ════════════════════════════════════════════════════════════════════════════
 
+-- El rol: se crea si no existe y SIEMPRE se le fijan los atributos (también si ya existía de la versión NOLOGIN).
+select 'create role colector_estaciones login nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit connection limit 3'
+ where not exists (select 1 from pg_roles where rolname = 'colector_estaciones') \gexec
+alter role colector_estaciones with login nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit connection limit 3
+  password :'clave';
+-- Por si se aplicó antes la versión de PostgREST (NOLOGIN + JWT): ya no hace falta que `authenticator` lo use.
 do $$
 begin
-  if not exists (select 1 from pg_roles where rolname = 'colector_estaciones') then
-    create role colector_estaciones nologin noinherit;
+  if exists (select 1 from pg_auth_members m join pg_roles r on r.oid = m.roleid join pg_roles a on a.oid = m.member
+              where r.rolname = 'colector_estaciones' and a.rolname = 'authenticator') then
+    revoke colector_estaciones from authenticator;
   end if;
 end $$;
-grant colector_estaciones to authenticator;
 
 grant usage on schema public to colector_estaciones;
 
@@ -100,4 +110,4 @@ end $$;
 -- revoke all on estaciones, estaciones_obs, pronostico_helada_medicion, registro_procesos from colector_estaciones;
 -- revoke usage on sequence registro_procesos_id_seq from colector_estaciones;
 -- alter table registro_procesos disable row level security;   -- sólo si no la tenía antes de esta migración
--- revoke colector_estaciones from authenticator; drop role colector_estaciones;
+-- drop role colector_estaciones;

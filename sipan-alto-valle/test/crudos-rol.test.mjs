@@ -1,14 +1,11 @@
 // node --test sipan-alto-valle/test/crudos-rol.test.mjs   (sin red ni base)
-// Los crudos en releases diarias del repo privado (hn-radar) y la base con el rol propio (nunca la clave de servicio).
+// Los crudos en releases diarias del repo privado (hn-radar). (La base con el rol propio está en base-pg.test.mjs.)
 // Cada bloque trae su control negativo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'node:zlib';
-import crypto from 'node:crypto';
 import { almacenReleases, partesDeClave } from '../lib/releases.mjs';
 import { almacenDeEntorno, procesarEstacion } from '../sipan.mjs';
-import { crearBase, rolDelJwt } from '../lib/base.mjs';
-import { firmar } from '../migracion/firmar-jwt.mjs';
 import { ESTACIONES } from '../lib/estaciones.mjs';
 import { armar, serie } from './sintetico.mjs';
 
@@ -119,32 +116,4 @@ test('destino de los crudos: releases con SIPAN_CRUDOS_REPO; R2 sólo con SIPAN_
   assert.equal(almacenDeEntorno({ ...r2 }), null);                           // R2 apagado aunque estén sus variables
   assert.equal(almacenDeEntorno({ ...r2, SIPAN_R2_ON: 'si' }).tipo, 'r2');   // control negativo: prendido a propósito
   assert.equal(almacenDeEntorno({}), null);
-});
-
-test('base: sólo arranca con un JWT del rol colector_estaciones (nunca service_role)', async () => {
-  const bueno = firmar({ secreto: 'x'.repeat(40), dias: 30 });
-  assert.equal(rolDelJwt(bueno), 'colector_estaciones');
-  let headers = null;
-  const b = crearBase({ url: 'https://p.supabase.co', apikey: 'anon', jwt: bueno, fetchFn: async (u, o) => { headers = o.headers; return { ok: true, status: 200, text: async () => '[]' }; } });
-  await b.estaciones();
-  assert.equal(headers.apikey, 'anon');
-  assert.equal(headers.Authorization, 'Bearer ' + bueno);
-  /* control negativo: service_role, otro rol o algo que no es un JWT se rechazan antes de pedir nada */
-  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: 'anon', jwt: b64({ alg: 'HS256' }) + '.' + b64({ role: 'service_role' }) + '.f' }), /colector_estaciones/);
-  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: 'anon', jwt: b64({ alg: 'HS256' }) + '.' + b64({ role: 'authenticated' }) + '.f' }), /colector_estaciones/);
-  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: 'anon', jwt: 'sb_secret_algo' }), /colector_estaciones/);
-  assert.throws(() => crearBase({ url: 'https://p.supabase.co', apikey: 'anon' }), /faltan/);
-});
-
-test('firmar-jwt: HS256 verificable, rol fijo y vencimiento acotado', () => {
-  const secreto = 'y'.repeat(40);
-  const t = firmar({ secreto, dias: 10, ahora: 1_700_000_000_000 });
-  const [h, c, f] = t.split('.');
-  assert.equal(crypto.createHmac('sha256', secreto).update(h + '.' + c).digest('base64url'), f);
-  const carga = JSON.parse(Buffer.from(c, 'base64url').toString());
-  assert.equal(carga.role, 'colector_estaciones');
-  assert.equal(carga.exp - carga.iat, 10 * 86400);
-  assert.throws(() => firmar({ secreto: 'corto' }));                          // control negativo
-  assert.throws(() => firmar({ secreto, dias: 5000 }));
 });

@@ -31,11 +31,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: npm ci --prefix sipan-alto-valle --no-audit --no-fund
       - name: Medir
         env:
-          SIPAN_SUPABASE_URL: ${{ secrets.SIPAN_SUPABASE_URL }}
-          SIPAN_SUPABASE_ANON_KEY: ${{ secrets.SIPAN_SUPABASE_ANON_KEY }}
-          SIPAN_SUPABASE_JWT: ${{ secrets.SIPAN_SUPABASE_JWT }}
+          SIPAN_PG_URL: ${{ secrets.SIPAN_PG_URL }}   # el mismo rol colector_estaciones (0147b)
           DIAS: ${{ inputs.dias || '7' }}
           SECO: ${{ github.event_name == 'workflow_dispatch' && inputs.seco || false }}
         run: |
