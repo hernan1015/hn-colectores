@@ -12,6 +12,7 @@ const REPO = path.dirname(RAIZ);
 const COPIA = path.join(REPO, '.mutante', 'imerg-pendientes');
 const PG = !!(process.env.IMERG_PG_BIN || process.env.SIPAN_PG_BIN);
 const SQL = 'migracion/imerg_colector.sql';
+const PR = 'lib/prender.mjs';
 
 const MUTANTES = [
   // ── «el código de antes»: todas las celdas en un job, sin presupuesto ni toma por celda ──
@@ -73,12 +74,28 @@ const MUTANTES = [
   ['3.ª P1: el tope por hora con now()', SQL, "where t.tomada > v_ahora - interval '1 hour') >= 2 then", "where t.tomada > now() - interval '1 hour') >= 2 then", true],
   ['3.ª P1: _candidatas con now()', SQL, 't.no_antes_de > clock_timestamp())', 't.no_antes_de > now())', true],
   // ── 3.ª vuelta · P1: prender sólo con la lectura comprobada ──
-  ['3.ª P1 ANTES: el comando de la 2.ª vuelta (grep -c sobre una lectura que puede fallar)', 'prender.sh', "B64=$(gh api", 'N=$(gh api "repos/$APP/contents/$RUTA" --jq .content | base64 -d | grep -cE "^[[:space:]]*repository_dispatch:")\n[ "$N" = 0 ] && gh variable set IMERG_PENDIENTES_ON -b si -R "$ESTE" && echo PRENDIDO && exit 0\nB64=$(gh api'],
+  ['3.ª P1 ANTES: el comando de la 2.ª vuelta (grep -c sobre una lectura que puede fallar)', 'prender.sh', "RESP=$(gh api", 'N=$(gh api "repos/$APP/contents/$RUTA" --jq .content | base64 -d | grep -cE "^[[:space:]]*repository_dispatch:")\n[ "$N" = 0 ] && gh variable set IMERG_PENDIENTES_ON -b si -R "$ESTE" && echo PRENDIDO && exit 0\nRESP=$(gh api'],
   ['3.ª P1: sin ref=main (lee la rama por defecto, la que sea)', 'prender.sh', '$RUTA?ref=main', '$RUTA'],
-  ['3.ª P1: repository_dispatch sólo como clave al comienzo de línea (la lista pasa)', 'prender.sh', '  *repository_dispatch*) no', '  *"\n  repository_dispatch:"*) no'],
-  ['3.ª P1: los comentarios cuentan (no prende nunca con el comentario de cabecera)', 'prender.sh', "LIMPIO=$(sed -e 's/#.*$//' <<<\"$YML\")", 'LIMPIO=$YML'],
-  ['3.ª P1: cualquier archivo sirve (sin exigir workflow_dispatch)', 'prender.sh', '  *) no "no parece el imerg-backfill.yml (no tiene workflow_dispatch)" ;;', '  *) ;;'],
+  // (4.ª vuelta: los tres que siguen, adaptados a lib/prender.mjs con la misma intención)
+  ['3.ª P1: repository_dispatch sólo como clave de mapa (la lista pasa)', PR, '    return on;\n  }', "    return on.filter((e) => e !== 'repository_dispatch');\n  }"],
+  ['3.ª P1: los comentarios cuentan (no prende nunca con el comentario de cabecera)', PR, '  const ev = eventos(contenido(respuesta))', "  if (contenido(respuesta).includes('repository_dispatch')) no('hn-agro sigue con repository_dispatch');\n  const ev = eventos(contenido(respuesta))"],
+  ['3.ª P1: cualquier archivo sirve (sin exigir workflow_dispatch)', PR, "  if (!ev.includes('workflow_dispatch')) no('no parece el imerg-backfill.yml (no tiene workflow_dispatch)');\n", ''],
   ['3.ª P1: dice PRENDIDO aunque gh variable set falle', 'prender.sh', ' || no "gh variable set falló"', ''],
+  // ── 4.ª vuelta (n3-232-v3-1511) · P1: el YAML parseado de verdad y el archivo leído entero ──
+  ['4.ª P1 ANTES: la 3.ª (sed de comentarios y buscar texto): el "#" en una cadena esconde el flujo', PR, '  const ev = eventos(contenido(respuesta)).map((e) => e.trim().toLowerCase());', "  const t = contenido(respuesta).replace(/#.*$/gm, '');\n  const ev = ['repository_dispatch', 'workflow_dispatch'].filter((e) => t.includes(e));"],
+  ['4.ª P1: sin comparar el sha (un archivo alterado del mismo tamaño pasa)', PR, "  if (shaBlob(buf) !== j.sha) no('el contenido no coincide con el sha del archivo (incompleto o alterado)');\n", ''],
+  ['4.ª P1: sin comparar el tamaño', PR, '  if (buf.length !== j.size) no(`el contenido está incompleto (${buf.length} de ${j.size} bytes)`);\n', ''],
+  ['4.ª P1: sin mirar el path (otro archivo pasa)', PR, '  if (j.path !== RUTA) no(`la respuesta es de otro archivo (path=${JSON.stringify(j.path)})`);\n', ''],
+  ['4.ª P1: sin mirar type=file', PR, "  if (j.type !== 'file') no(`la respuesta no es un archivo (type=${JSON.stringify(j.type)})`);\n", ''],
+  ['4.ª P1: sin mirar encoding=base64', PR, "  if (j.encoding !== 'base64') no(`la respuesta no viene en base64 (encoding=${JSON.stringify(j.encoding)})`);\n", ''],
+  ['4.ª P1: base64 laxo (sin alfabeto ni forma canónica)', PR, "  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64) || b64.length % 4) no('el contenido no es base64');\n  const buf = Buffer.from(b64, 'base64');\n  if (buf.toString('base64') !== b64) no('el contenido no es base64 canónico');", "  const buf = Buffer.from(b64, 'base64');"],
+  ['4.ª P1: los errores del parser no frenan', PR, "  if (doc.errors.length) no(`el YAML no parsea: ${doc.errors[0].message.split('\\n')[0]}`);\n", ''],
+  ['4.ª P1: las advertencias del parser no frenan', PR, "  if (doc.warnings.length) no(`el YAML tiene advertencias: ${doc.warnings[0].message.split('\\n')[0]}`);\n", ''],
+  ['4.ª P1: varios documentos YAML (se mira sólo el primero)', PR, 'docs.length !== 1) no(', 'docs.length < 1) no('],
+  ['4.ª P1: sin resolver el merge << (el repository_dispatch que entra por merge pasa)', PR, 'merge: true,', 'merge: false,'],
+  ['4.ª P1: sin exigir name = imerg-backfill', PR, "  if (js.name !== 'imerg-backfill') no(`no es el imerg-backfill.yml (name=${JSON.stringify(js.name)})`);\n", ''],
+  ['4.ª P1: sin exigir jobs (el archivo truncado de Codex pasa)', PR, "  if (!esObjeto(js.jobs) || !Object.keys(js.jobs).length) no('no es el imerg-backfill.yml (sin jobs)');\n", ''],
+  ['4.ª P1: prender.sh no mira el resultado del chequeo', 'prender.sh', ' 2>&1) || no "${R:-el chequeo (node lib/prender.mjs) falló; ¿npm ci --prefix imerg-pendientes?}"\n[ "$R" = \'SIN_REPOSITORY_DISPATCH\' ] || no "el chequeo no confirmó el workflow sin repository_dispatch ($R)"', ' 2>&1)'],
   ['SQL: el rol con BYPASSRLS no aborta', SQL, 'if r.rolsuper or r.rolreplication or r.rolbypassrls or', 'if r.rolsuper or r.rolreplication or', true],
 ];
 

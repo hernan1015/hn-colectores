@@ -7,8 +7,11 @@
     "rellenar": "node imerg-pendientes.mjs",
     "test": "node --test test/imerg-pendientes.test.mjs test/pg-real.test.mjs test/prender.test.mjs"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
-    "postgres": "3.4.4"
+    "postgres": "3.4.4",
+    "yaml": "2.8.1"
   }
 }
