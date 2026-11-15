@@ -121,7 +121,7 @@ $GH run watch -R hernan1015/hn-colectores <el id de la de recién>
 $GH workflow run colector-sipan-alto-valle -R hernan1015/hn-colectores -f modo=real
 ```
 **Cómo verificar que anduvo:**
-- **El paso termina en verde, y desde esta primera corrida** ya hay filas en `estaciones_obs`: la fila de cada estación se guarda antes que sus datos, por la FK. En rojo (código 2) quiere decir avisos o errores: mirar `registro_procesos` (`resumen->'errores_detalle'`). Una falla de GitHub con los crudos queda como error de esa estación, pero su diario se guarda igual.
+- **El paso termina en verde, y desde esta primera corrida** ya hay filas en `estaciones_obs`: la fila de cada estación se guarda antes que sus datos, por la FK. En rojo (código 2) quiere decir una FALLA (formato, no responde, SIPAN cortado, ninguna al día o filas sin guardar); una estación quieta sólo deja un `::warning::` y la corrida sigue en verde: mirar `registro_procesos` (`resumen->'errores_detalle'`). Una falla de GitHub con los crudos queda como error de esa estación, pero su diario se guarda igual.
 - **En Supabase:**
 ```sql
 select estacion_id, fecha, tmin_c, tmax_c, lluvia_mm, eto_mm, tmin_noche_c, tmin_noche_en, noche_registros, registros_validos
