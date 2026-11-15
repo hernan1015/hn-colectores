@@ -107,6 +107,24 @@ const REDES = [
   { id: 'mendoza', pedidos: async () => [['instantaneas', 'https://agrometeo.mendoza.gov.ar/api/todas_instantaneas.json']] },
   { id: 'sanluis', pedidos: async () => [['mapa', 'https://clima.sanluis.gob.ar/InfoEstaciones.aspx']] },
   { id: 'bcp', pedidos: async () => [['mapa', 'https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp']] },
+  // Entre Ríos, Dirección de Hidráulica: el archivo de la consola de cada estación automática (20, pocas activas).
+  { id: 'entrerios', pedidos: async () => ['basavilbaso', 'bovril', 'ceibas', 'curuguay', 'concordia', 'feliciano', 'racedo',
+      'gualeguay', 'gualeguaychu', 'lapaz', 'larroque', 'loscharruas', 'macia', 'parana', 'sanjose', 'sansalvador',
+      'sauceluna', 'urdinarrain', 'villaparanacito', 'villaguay'].map((e) => [e, `https://www.hidraulica.gob.ar/ema/ema-${e}/downld08.txt`]) },
+  // INA, sistema de alerta (a5): el listado de series meteorológicas (temp 53, viento 55, dirección 57, HR 58,
+  // presión 60, lluvia diaria 1) y las observaciones de las últimas 6 h, de a 150 series por pedido.
+  { id: 'ina', pedidos: async () => {
+      const B = 'https://alerta.ina.gob.ar/a5/obs/puntual/';
+      const r = await fetch(B + 'series?format=json&var_id=53,55,57,58,60,1', { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(120000) });
+      if (!r.ok) throw new Error('series ' + r.status);
+      const j = await r.json();
+      const ids = (Array.isArray(j) ? j : (j.rows || j.series || [])).map((s) => s.id).filter((x) => x != null);
+      const hasta = new Date(), desde = new Date(hasta.getTime() - 6 * 3600e3);
+      const iso = (d) => d.toISOString().slice(0, 19) + 'Z';
+      const pedidos = [['series', B + 'series?format=json&var_id=53,55,57,58,60,1']];
+      for (let i = 0; i < ids.length; i += 150) pedidos.push(['obs_' + (i / 150), `${B}observaciones?tipo=puntual&series_id=${ids.slice(i, i + 150).join(',')}&timestart=${iso(desde)}&timeend=${iso(hasta)}`]);
+      return pedidos;
+    } },
 ];
 async function redes() {
   for (const red of REDES) {
