@@ -51,6 +51,9 @@ test('la lluvia: la de la última lectura del día con dato (sin dato no es 0)',
     L('1', '2026-11-16T02:50:00Z', 5, { lluvia_dia_mm: 15.24 }), L('1', '2026-11-16T02:55:00Z', 5)], ['2026-11-15']);
   assert.equal(f[0].lluvia_mm, 15.24); assert.equal(f[0].lluvia_origen, 'acumulado_consola');
   assert.equal(armar([L('2', '2026-11-15T14:00:00Z', 5)], ['2026-11-15'])[0].lluvia_mm, null);
+  // la más nueva llega PRIMERO (otro archivo, una importación): igual gana la del instante mayor
+  const g = armar([L('3', '2026-11-16T02:50:00Z', 5, { lluvia_dia_mm: 15.24 }), L('3', '2026-11-15T22:00:00Z', 5, { lluvia_dia_mm: 12.7 })], ['2026-11-15']);
+  assert.equal(g[0].lluvia_mm, 15.24);
 });
 
 test('idempotente: armar con lecturas repetidas o en otro orden da lo mismo', () => {
