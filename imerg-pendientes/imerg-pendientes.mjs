@@ -10,9 +10,12 @@ import { crearBase } from './lib/base.mjs';
 import { pedirSerie } from './lib/giovanni.mjs';
 import { barrer, tope } from './lib/barrido.mjs';
 
+/** La espera sobre la reserva de la app. Nunca menos de 180: es el mínimo FIJO de la base (2.ª vuelta, P1.3); la
+ *  variable sólo puede alargarla. Se recorta acá también para que el registro diga la espera de verdad. */
+export const ESPERA_MIN = 180;
 export function esperaLazy(v) {
   const n = Math.floor(Number(v));
-  return v === undefined || v === '' || !Number.isFinite(n) || n < 0 ? 180 : Math.min(n, 7 * 24 * 60);
+  return v === undefined || v === '' || !Number.isFinite(n) ? ESPERA_MIN : Math.min(Math.max(n, ESPERA_MIN), 7 * 24 * 60);
 }
 
 export async function main(env = process.env, { crear = crearBase, pedir = pedirSerie, log = console.log } = {}) {

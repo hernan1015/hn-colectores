@@ -3,8 +3,12 @@
 # tiene permiso «workflow», igual que sipan, rayos-hora y opera-mosaico). Lo prende local.
 # APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo IMERG_PENDIENTES_ON vale «si». A mano: seco.
 # Reemplaza al relleno por repository_dispatch de hn-agro (privado: ~27 min de Actions por celda y se cortaba a las 2 h).
+# ⚠ ANTES de IMERG_PENDIENTES_ON=si: el imerg-backfill.yml de hn-agro SIN repository_dispatch (LISTO-232, paso 4). Si
+#   hn-agro sigue despachando, su lazy recupera a las 3 h la fila de un fallo del colector y la NASA recibe el pedido
+#   antes de las 6 h (P1.1 de Codex, n3-232-1411). Si alguna vez se vuelve a poner, apagar esto primero.
 # Cada corrida toma UNA celda por vez (la base no deja dos tomas vivas), como mucho 2, y la NASA de a poco. Si GitHub
-# la corta, la toma vence a los 90 min y la corrida siguiente la retoma: no hay que disparar nada.
+# la corta, la base retiene la celda (8 h, grabado al tomarla) y una corrida posterior la retoma: no hay que disparar nada.
+# Los límites (2 tomas por hora, espera de 180 min sobre la reserva de la app, 8 h ante un fallo) están en la base.
 # El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de celdas, claves ni direcciones.
 name: colector-imerg-pendientes
 on:
@@ -43,7 +47,7 @@ jobs:
         env:
           IMERG_PG_URL: ${{ secrets.IMERG_PG_URL }}          # postgresql://colector_imerg.<ref>:<clave>@<pooler>:6543/postgres (nunca se imprime)
           EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}    # el mismo de colector-imerg (vence ~8/12)
-          IMERG_LAZY_ESPERA_MIN: ${{ vars.IMERG_LAZY_ESPERA_MIN || '180' }}   # 180 mientras hn-agro siga despachando; 0 cuando no
+          IMERG_LAZY_ESPERA_MIN: ${{ vars.IMERG_LAZY_ESPERA_MIN || '180' }}   # mínimo 180, fijo en la base: la variable sólo alarga
           MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
           TOPE: ${{ github.event_name == 'schedule' && '2' || inputs.tope }}
         run: node imerg-pendientes/imerg-pendientes.mjs

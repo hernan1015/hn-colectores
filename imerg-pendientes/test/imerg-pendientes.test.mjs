@@ -161,7 +161,7 @@ test('base: si current_user no es colector_imerg, cierra y no sigue', async () =
   assert.ok(cerrada);
 });
 
-test('arranque: seco sólo cuenta; real sin token no arranca; un fallo da 2; espera por defecto 180', async () => {
+test('arranque: seco sólo cuenta; real sin token no arranca; un fallo da 2; espera por defecto y mínima 180', async () => {
   const lineas = []; const log = (l) => lineas.push(l);
   const b = baseFalsa(celdas(3)); b.tomar = async () => assert.fail('seco no toma');
   assert.equal(await main({ MODO: 'seco', IMERG_PG_URL: 'x' }, { crear: async () => b, pedir: async () => assert.fail('seco no pide'), log }), 0);
@@ -172,5 +172,33 @@ test('arranque: seco sólo cuenta; real sin token no arranca; un fallo da 2; esp
   const b3 = baseFalsa(celdas(1));
   assert.equal(await main({ MODO: 'real', IMERG_PG_URL: 'x', EARTHDATA_TOKEN: 't', TOPE: '1' }, { crear: async () => b3, pedir: serieOk, log }), 0);
   assert.equal(b3.guardadas.length, 1);
-  assert.equal(esperaLazy(undefined), 180); assert.equal(esperaLazy(''), 180); assert.equal(esperaLazy('0'), 0); assert.equal(esperaLazy('-5'), 180); assert.equal(esperaLazy('abc'), 180);
+  assert.equal(esperaLazy(undefined), 180); assert.equal(esperaLazy(''), 180); assert.equal(esperaLazy('0'), 180, 'nunca menos que el mínimo de la base'); assert.equal(esperaLazy('-5'), 180); assert.equal(esperaLazy('600'), 600); assert.equal(esperaLazy('abc'), 180);
+});
+
+// ── 2.ª vuelta (n3-232-1411) ─────────────────────────────────────────────────────────────────────────────────
+test('P1.2 · si soltar falla, el registro NO dice que se soltó: dice la hora que la base grabó al tomarla', async () => {
+  const noAntes = new Date('2026-11-15T06:17:00Z');
+  for (const [soltar, espera, noEspera, soltada] of [
+    [async () => { throw new Error('soltar: 08006'); }, /NO se pudo soltar; igual la base no la vuelve a dar antes de 2026-11-15 06:17 UTC/, /soltada;/, false],
+    [async () => false, /NO se pudo soltar/, /soltada;/, false],
+    [async () => true, /soltada; la base no la vuelve a dar antes de 2026-11-15 06:17 UTC/, /NO se pudo/, true],
+  ]) {
+    const b = baseFalsa([{ lat: -34.05, lon: -60.75, latTxt: '-34.05', lonTxt: '-60.75', noAntesDe: noAntes }, ...celdas(2)]);
+    b.soltar = soltar;
+    const lineas = []; let pedidos = 0;
+    const r = await barrer({ base: b, serie: async () => { pedidos++; throw new ErrorNasa(503); }, dormir: async () => {}, log: (l) => lineas.push(l) });
+    const txt = lineas.join('\n');
+    assert.match(txt, espera); assert.doesNotMatch(txt, noEspera);
+    assert.equal(r.soltada, soltada);
+    assert.equal(pedidos, 1, 'y la corrida termina igual');
+    assert.doesNotMatch(txt, /34[.,]05|60[.,]75/);
+  }
+});
+
+test('P1.3 · si la base dice que la serie no vino completa (guardar = 0), es un fallo y la corrida termina', async () => {
+  const b = baseFalsa(celdas(3)); b.guardar = async () => { b.viva = null; return 0; };
+  let pedidos = 0;
+  const r = await barrer({ base: b, serie: async () => { pedidos++; return serieOk(); }, dormir: async () => {}, log: () => {} });
+  assert.equal(r.motivo, 'parcial'); assert.equal(r.error, 'serie_parcial'); assert.equal(r.fallos, 1);
+  assert.equal(r.guardadas, 0); assert.equal(pedidos, 1);
 });

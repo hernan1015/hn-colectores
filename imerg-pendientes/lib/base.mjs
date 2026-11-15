@@ -34,14 +34,16 @@ export function errorLimpio(e, que = 'base') {
 }
 
 /** postgres.js devuelve numeric como texto: se conserva el texto (vuelve tal cual a la base) y el número aparte. */
-const celda = (f) => (f ? { lat: Number(f.celda_lat), lon: Number(f.celda_lon), latTxt: String(f.celda_lat), lonTxt: String(f.celda_lon) } : null);
+/*  `noAntesDe`: el «no antes de» que tomar grabó en la base (la espera si esta toma no termina completa). */
+const celda = (f) => (f ? { lat: Number(f.celda_lat), lon: Number(f.celda_lon), latTxt: String(f.celda_lat), lonTxt: String(f.celda_lon),
+  noAntesDe: f.no_antes_de ? new Date(f.no_antes_de) : null } : null);
 
 /** Las 4 operaciones sobre una conexión `sql` (postgres.js o algo con la misma forma de tagged template). */
 export function operaciones(sql) {
   const envolver = (que, fn) => async (...a) => { try { return await fn(...a); } catch (e) { throw errorLimpio(e, que); } };
   return {
     contar: envolver('contar', async (espera) => Number((await sql`select imerg_colector.contar(${espera}::int) as n`)[0].n)),
-    tomar: envolver('tomar', async (espera) => celda((await sql`select celda_lat, celda_lon from imerg_colector.tomar(${espera}::int)`)[0])),
+    tomar: envolver('tomar', async (espera) => celda((await sql`select celda_lat, celda_lon, no_antes_de from imerg_colector.tomar(${espera}::int)`)[0])),
     guardar: envolver('guardar', async (c, filas) => {
       const fechas = '{' + filas.map((f) => f[0]).join(',') + '}';
       const mm = '{' + filas.map((f) => String(f[1])).join(',') + '}';
