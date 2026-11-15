@@ -1,0 +1,100 @@
+// HN AGRO · estaciones privadas (WeatherLink y Weathercloud), una ronda por hora. USO INTERNO.
+// Autorizado por el maker el 15/11/2026, sabiendo que los términos de Davis y de Weathercloud prohíben los robots
+// (ver hn-cortex docs/mejora-continua/PASO0-139-fuentes.md). El mail pidiendo permiso a Davis lo manda el maker.
+// Reglas del maker: de a poco y sin disfrazarse. 1 pedido cada 4 s, tandas de 2 min con 30 s de pausa. UA honesto.
+// Ante 403/429/5xx/HTML: corta la fuente en esa ronda; a la 3.ª ronda seguida con corte (marca en R2) no se pide más
+// esa fuente hasta que alguien borre la marca. Nada de rotar IPs, proxys ni UAs de navegador.
+// Los datos van a R2 (depósito privado, el mismo de los crudos del SIPAN). El registro de Actions es PÚBLICO: sólo
+// se imprimen cantidades, nunca nombres, ids ni coordenadas.
+import fs from 'node:fs';
+import path from 'node:path';
+import { almacenR2 } from '../sipan-alto-valle/lib/almacen.mjs';
+
+const DIR = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+const UA = 'hn-colector/1.0';
+const PASO_MS = 4000, TANDA_MS = 120000, PAUSA_MS = 30000, TOPE_MS = 50 * 60000;
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+const t0 = Date.now();
+const ahora = new Date();
+const dia = new Date(ahora.getTime() - 3 * 3600e3).toISOString().slice(0, 10);   // fecha ARG
+const hora = ahora.toISOString().slice(11, 16).replace(':', '');                    // HHMM UTC
+const PREF = 'estaciones-internas/';
+
+const geo = JSON.parse(fs.readFileSync(path.join(DIR, 'argentina.geo.json'), 'utf8')).features[0].geometry;
+const anillos = (geo.type === 'Polygon' ? [geo.coordinates] : geo.coordinates).map((p) => p[0]);
+function enArgentina(lat, lon) {
+  if (typeof lat !== 'number' || typeof lon !== 'number') return false;
+  for (const a of anillos) { let c = false; for (let i = 0, j = a.length - 1; i < a.length; j = i++) { const [xi, yi] = a[i], [xj, yj] = a[j]; if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) c = !c; } if (c) return true; }
+  return false;
+}
+
+const r2 = almacenR2({ cuenta: process.env.R2_ACCOUNT_ID, clave: process.env.R2_ACCESS_KEY_ID, secreto: process.env.R2_SECRET_ACCESS_KEY, deposito: process.env.R2_BUCKET });
+const esCorte = (r) => r.status === 403 || r.status === 429 || r.status >= 500 || !(r.headers.get('content-type') || '').includes('json');
+
+async function marcaCorte(fuente, hubo) {
+  const k = PREF + fuente + '/_cortes.json';
+  const prev = JSON.parse((await r2.leer(k))?.toString() || '{"seguidos":0}');
+  const nuevo = { seguidos: hubo ? prev.seguidos + 1 : 0, actualizado: ahora.toISOString() };
+  if (hubo || prev.seguidos) await r2.escribir(k, JSON.stringify(nuevo));
+  return nuevo.seguidos;
+}
+async function frenada(fuente) {
+  const m = await r2.leer(PREF + fuente + '/_cortes.json');
+  return m && JSON.parse(m.toString()).seguidos >= 3;
+}
+
+const resumen = {};
+
+// ── Weathercloud: un solo pedido trae el mundo; se guarda Argentina.
+async function weathercloud() {
+  if (await frenada('weathercloud')) { resumen.weathercloud = 'FRENADA (3 rondas con corte)'; return; }
+  try {
+    const r = await fetch('https://app.weathercloud.net/map/bgdevices', { method: 'POST', body: 'user=', signal: AbortSignal.timeout(180000),
+      headers: { 'User-Agent': UA, 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' } });
+    if (r.status === 403 || r.status === 429 || r.status >= 500) { resumen.weathercloud = 'corte ' + r.status; await marcaCorte('weathercloud', true); return; }
+    const j = await r.json();
+    const ar = (j.devices || []).filter((d) => enArgentina(d[2], d[3]));
+    await r2.escribir(`${PREF}weathercloud/${dia}/${hora}.json`, JSON.stringify({ leido: ahora.toISOString(), devices: ar }));
+    resumen.weathercloud = { en_argentina: ar.length, en_linea: ar.filter((d) => d[4] === 2).length };
+    await marcaCorte('weathercloud', false);
+  } catch (e) { resumen.weathercloud = 'error'; }
+}
+
+// ── WeatherLink: índice 1 vez por día; después una lectura por estación, de a una.
+async function weatherlink() {
+  if (await frenada('weatherlink')) { resumen.weatherlink = 'FRENADA (3 rondas con corte)'; return; }
+  const H = { 'User-Agent': UA, 'Referer': 'https://www.weatherlink.com/map', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
+  const kIdx = `${PREF}weatherlink/indices/${dia}.json`;
+  let idx = await r2.leer(kIdx);
+  let lista;
+  if (idx) lista = JSON.parse(idx.toString());
+  else {
+    const r = await fetch('https://www.weatherlink.com/map/data', { headers: H, signal: AbortSignal.timeout(120000) });
+    if (esCorte(r)) { resumen.weatherlink = 'corte en el índice ' + r.status; await marcaCorte('weatherlink', true); return; }
+    const j = await r.json();
+    const arr = Array.isArray(j) ? j : (j.stations || j.data || []);
+    lista = arr.filter((s) => s && enArgentina(s.lat, s.lng));
+    await r2.escribir(kIdx, JSON.stringify(lista));
+  }
+  const activas = lista.filter((s) => s.tb !== -1);
+  const filas = []; let tanda0 = Date.now(), ok = 0, err = 0, corte = false;
+  for (const s of activas) {
+    if (Date.now() - t0 > TOPE_MS) break;
+    if (Date.now() - tanda0 > TANDA_MS) { await dormir(PAUSA_MS); tanda0 = Date.now(); }
+    try {
+      const r = await fetch(`https://www.weatherlink.com/map/data/station/${encodeURIComponent(s.id)}?aqiSchemeId=10&woodsmokeEnabled=false`, { headers: H, signal: AbortSignal.timeout(30000) });
+      if (esCorte(r)) { corte = true; break; }
+      filas.push(JSON.stringify({ id: s.id, leido: new Date().toISOString(), d: await r.json() }));
+      ok++;
+    } catch (e) { err++; }
+    await dormir(PASO_MS);
+  }
+  if (filas.length) await r2.escribir(`${PREF}weatherlink/${dia}/${hora}.jsonl`, filas.join('\n') + '\n', { tipo: 'application/x-ndjson' });
+  const seguidos = await marcaCorte('weatherlink', corte);
+  resumen.weatherlink = { activas: activas.length, leidas: ok, con_error: err, corte, cortes_seguidos: seguidos };
+}
+
+await weathercloud();
+await weatherlink();
+resumen.minutos = Math.round((Date.now() - t0) / 60000);
+console.log(JSON.stringify(resumen));

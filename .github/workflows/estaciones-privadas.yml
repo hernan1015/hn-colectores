@@ -1,0 +1,35 @@
+# HN AGRO · estaciones privadas (WeatherLink + Weathercloud), una ronda por hora, a R2. USO INTERNO.
+# Autorizado por el maker el 15/11/2026. Ver estaciones-privadas/ronda.mjs (reglas: de a poco, sin disfrazarse).
+# Apagado de emergencia: variable del repo ESTACIONES_PRIVADAS_ON distinta de 'si'.
+name: colector-estaciones-privadas
+on:
+  schedule:
+    - cron: '11 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: colector-estaciones-privadas
+  cancel-in-progress: false
+jobs:
+  ronda:
+    if: ${{ vars.ESTACIONES_PRIVADAS_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 58
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            estaciones-privadas
+            sipan-alto-valle/lib
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Ronda
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node estaciones-privadas/ronda.mjs
