@@ -1,0 +1,15 @@
+{
+  "name": "hn-colector-granizo-beta-fase-b",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · 226 · granizo β, Fase B (P2: ALTURA + salto de rayos): un caso por corrida, sólo medición",
+  "scripts": {
+    "medir": "node medir-caso.mjs",
+    "evaluar": "node evaluar.mjs",
+    "test": "node --test test/plan.test.mjs test/red.test.mjs test/caso.test.mjs test/evaluar.test.mjs test/workflow.test.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "h5wasm": "0.10.3"
+  }
+}
