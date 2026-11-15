@@ -401,3 +401,74 @@ test('search_path fijo (pg_catalog, pg_temp) y todo calificado: una tabla tempor
   const [{ n }] = await adm`select count(*)::int as n from imerg_celda_estado`;
   assert.equal(n, 0);
 });
+
+// ── 3.ª vuelta: las reproducciones del NO ENTRA de Codex (n3-232-v2-1411) ────────────────────────────────────────────
+const conexionRol = () => postgres(`postgresql://colector_imerg:${CLAVE}@127.0.0.1:${PUERTO}/postgres`, { onnotice: () => {}, max: 1, prepare: false });
+const tomasAbiertas = async () => (await adm`select count(*)::int as n from imerg_colector.tomas where cerrada is null`)[0].n;
+
+for (const nivel of ['repeatable read', 'serializable']) {
+  test(`P1 · ${nivel.toUpperCase()}: la reproducción de Codex con dos conexiones del rol (A fija la foto con contar, B toma, A toma otra) ya no da dos tomas vivas`, { skip: SALTEAR }, async () => {
+    await limpiar();
+    await lote('reservada', -34.0, -60.7); await lote('sin fila', -33.1, -61.2);
+    const r = imergCell(-34.0, -60.7);
+    await adm.unsafe(SQL_RESERVAR, [r.clat, r.clon]); await envejecer(r.clat, r.clon, 200);   // la reserva de 200 min
+    const a = conexionRol();
+    try {
+      let tomoA = 'sin llegar';
+      await assert.rejects(a.begin(`isolation level ${nivel}`, async (tx) => {
+        assert.equal(Number((await tx`select imerg_colector.contar(180) as n`)[0].n), 2, 'A: la foto ve las 2');
+        const b = await base.tomar(180);                                                  // B, otra conexión del rol
+        assert.deepEqual([b.lat, b.lon], [r.clat, r.clon], 'B se lleva la reserva de 200 min');
+        tomoA = await tx`select * from imerg_colector.tomar(10000)`;                       // sin el arreglo: la celda sin fila
+      }), (e) => e.code === 'P0001' && /sólo en READ COMMITTED/.test(e.message));
+      assert.equal(tomoA, 'sin llegar', 'tomar rechazó la transacción antes de devolver nada');
+      assert.equal(await tomasAbiertas(), 1, 'una sola toma viva: la de B');
+      const [{ n }] = await adm`select count(*)::int as n from imerg_celda_estado where fuente = 'en curso (colectores)'`;
+      assert.equal(n, 1);
+      // y en READ COMMITTED (lo que usa el colector), la misma secuencia: A no toma (ve la toma viva de B)
+      await a.begin(async (tx) => {
+        await tx`select imerg_colector.contar(180)`;
+        assert.equal((await tx`select * from imerg_colector.tomar(10000)`).length, 0);
+      });
+      assert.equal(await tomasAbiertas(), 1);
+    } finally { await a.end(); }
+  });
+
+  test(`P1 · ${nivel.toUpperCase()}: guardar y soltar también rechazan la transacción (no leen una foto vieja de la toma)`, { skip: SALTEAR }, async () => {
+    await limpiar();
+    await lote('a', -34.0, -60.7);
+    const c = await base.tomar(0);
+    const a = conexionRol();
+    try {
+      for (const q of [
+        (tx) => tx`select imerg_colector.guardar(${c.latTxt}::numeric, ${c.lonTxt}::numeric, ${'{2000-06-01}'}::date[], ${'{0}'}::real[])`,
+        (tx) => tx`select imerg_colector.soltar(${c.latTxt}::numeric, ${c.lonTxt}::numeric)`,
+      ]) {
+        await assert.rejects(a.begin(`isolation level ${nivel}`, q), (e) => e.code === 'P0001' && /sólo en READ COMMITTED/.test(e.message));
+      }
+      assert.equal(await tomasAbiertas(), 1, 'la toma sigue abierta, sin tocar');
+      assert.equal((await estado(c.latTxt, c.lonTxt)).fuente, 'en curso (colectores)');
+    } finally { await a.end(); }
+  });
+}
+
+test('P1 · la hora es la del reloj, no la del comienzo de la transacción: una transacción vieja no graba una toma ya «vencida»', { skip: SALTEAR }, async () => {
+  await limpiar();
+  await lote('a', -34.0, -60.7);
+  const a = conexionRol();
+  try {
+    let t0;
+    await a.begin(async (tx) => {
+      t0 = new Date((await tx`select now() as t`)[0].t);
+      await tx`select pg_sleep(1.5)`;
+      assert.equal((await tx`select * from imerg_colector.tomar(0)`).length, 1);
+    });
+    const [t] = await adm`select tomada, no_antes_de from imerg_colector.tomas`;
+    assert.ok(new Date(t.tomada) - t0 >= 1400, `tomada ${new Date(t.tomada).toISOString()} vs comienzo ${t0.toISOString()}`);
+    const [e] = await adm`select actualizado from imerg_celda_estado`;
+    assert.ok(new Date(e.actualizado) - t0 >= 1400, 'la fila también lleva la hora del reloj');
+  } finally { await a.end(); }
+  // y ninguna de las funciones usa now() (la hora de la transacción de quien llama)
+  const fuentes = await su`select proname, prosrc from pg_proc where pronamespace = 'imerg_colector'::regnamespace`;
+  for (const f of fuentes) assert.doesNotMatch(f.prosrc, /\bnow\(\)|current_timestamp|transaction_timestamp/i, f.proname);
+});

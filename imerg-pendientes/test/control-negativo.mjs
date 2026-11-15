@@ -37,18 +37,18 @@ const MUTANTES = [
   ['no verifica current_user', 'lib/base.mjs', "if (u !== ROL) throw Object.assign(new Error('rol'), { code: 'ROL_DISTINTO' });", ''],
   ['seco también toma', 'imerg-pendientes.mjs', "if (!real) { log('modo seco: no se toma nada'); return 0; }", ''],
   // ── la migración (necesitan PostgreSQL) ──
-  ['SQL: dos tomas vivas a la vez', SQL, "  if exists (select 1 from imerg_colector.tomas t\n              where t.cerrada is null and t.tomada > now() - interval '90 minutes') then\n    return;                                                     -- una toma viva: no se da otra\n  end if;\n", '', true],
+  ['SQL: dos tomas vivas a la vez', SQL, "  if exists (select 1 from imerg_colector.tomas t\n              where t.cerrada is null and t.tomada > v_ahora - interval '90 minutes') then\n    return;                                                     -- una toma viva: no se da otra\n  end if;\n", '', true],
   ['SQL: sin el candado global del barrido', SQL, "  perform pg_advisory_xact_lock(hashtext('imerg:barrido'));\n", '', true],
-  ['SQL: la toma cortada no vence nunca (no retoma)', SQL, "v_hasta := now() + least(interval '8 hours' * (2 ^ least(previas, 5)), interval '7 days');", "v_hasta := 'infinity'::timestamptz;", true],
-  ['SQL: el fallo se reintenta enseguida', SQL, "no_antes_de = greatest(t.no_antes_de, now() + interval '6 hours')", 'no_antes_de = now()', true],
+  ['SQL: la toma cortada no vence nunca (no retoma)', SQL, "v_hasta := v_ahora + least(interval '8 hours' * (2 ^ least(previas, 5)), interval '7 days');", "v_hasta := 'infinity'::timestamptz;", true],
+  ['SQL: el fallo se reintenta enseguida', SQL, "no_antes_de = greatest(t.no_antes_de, v_ahora + interval '6 hours')", 'no_antes_de = v_ahora', true],
   ['SQL: le pisa a hn-agro la reserva fresca', SQL, 'make_interval(mins => greatest(coalesce(p_espera_lazy_min, 180), 180))', "interval '0 minutes'", true],
   // ── 2.ª vuelta · la base (n3-232-1411) ──
   ['P1.1/P1.3: la espera sobre la app vuelve a depender del parámetro (tomar(0))', SQL, 'greatest(coalesce(p_espera_lazy_min, 180), 180)', 'greatest(coalesce(p_espera_lazy_min, 180), 0)', true],
-  ['P1.2: la toma vencida se retoma a los 90 min (antes de las 6 h del error)', SQL, "v_hasta := now() + least(interval '8 hours' * (2 ^ least(previas, 5)), interval '7 days');", "v_hasta := now() + interval '90 minutes';", true],
-  ['P1.2: las candidatas no miran el «no antes de» (manda la fila de la app)', SQL, "   where not exists (select 1 from imerg_colector.tomas t\n                      where t.celda_lat = a.clat and t.celda_lon = a.clon and t.no_antes_de > now())\n     and (", '   where (', true],
-  ['P1.2: soltar acorta la espera (6 h desde el fallo, aunque la toma pedía más)', SQL, "no_antes_de = greatest(t.no_antes_de, now() + interval '6 hours')", "no_antes_de = now() + interval '6 hours'", true],
+  ['P1.2: la toma vencida se retoma a los 90 min (antes de las 6 h del error)', SQL, "v_hasta := v_ahora + least(interval '8 hours' * (2 ^ least(previas, 5)), interval '7 days');", "v_hasta := v_ahora + interval '90 minutes';", true],
+  ['P1.2: las candidatas no miran el «no antes de» (manda la fila de la app)', SQL, "   where not exists (select 1 from imerg_colector.tomas t\n                      where t.celda_lat = a.clat and t.celda_lon = a.clon and t.no_antes_de > clock_timestamp())\n     and (", '   where (', true],
+  ['P1.2: soltar acorta la espera (6 h desde el fallo, aunque la toma pedía más)', SQL, "no_antes_de = greatest(t.no_antes_de, v_ahora + interval '6 hours')", "no_antes_de = v_ahora + interval '6 hours'", true],
   ['P1.2: guardar con una toma vencida (sólo mira la fila)', SQL, '  if v_toma is null or not found then', '  if not found then', true],
-  ['P1.3: sin tope de 2 tomas por hora', SQL, "  if (select count(*) from imerg_colector.tomas t where t.tomada > now() - interval '1 hour') >= 2 then\n    return;                                                     -- tope fijo: 2 tomas por hora\n  end if;\n", '', true],
+  ['P1.3: sin tope de 2 tomas por hora', SQL, "  if (select count(*) from imerg_colector.tomas t where t.tomada > v_ahora - interval '1 hour') >= 2 then\n    return;                                                     -- tope fijo: 2 tomas por hora\n  end if;\n", '', true],
   ['P1.3: guardar da por completa cualquier serie (una fecha con 0 mm)', SQL, "  if not (v_desde = date '2000-06-01' and v_hasta >= date '2025-09-30' and n >= (v_hasta - v_desde + 1) - 30) then", '  if false then', true],
   ['P1.3: sin tolerancia declarada (acepta cualquier hueco)', SQL, ' and n >= (v_hasta - v_desde + 1) - 30) then', ') then', true],
   ['P1.3: sin la última fecha esperada (acepta una serie que termina antes)', SQL, " and v_hasta >= date '2025-09-30'", '', true],
@@ -64,6 +64,21 @@ const MUTANTES = [
   ['SQL: guardar acepta fechas repetidas', SQL, "  if (select count(distinct f) from unnest(p_fechas) f) <> n then\n    raise exception 'imerg_colector: fechas repetidas';\n  end if;\n", '', true],
   ['SQL: guardar acepta valores imposibles', SQL, 'or mm < 0 or mm > 2000', 'or false', true],
   ['SQL: las funciones quedan para PUBLIC (anon por RPC)', SQL, 'revoke all on function imerg_colector.tomar(integer) from public;\n', '', true],
+  // ── 3.ª vuelta (n3-232-v2-1411) · P1: los límites no dependen de la transacción de quien llama ──
+  ['3.ª P1: tomar acepta REPEATABLE READ / SERIALIZABLE (la foto vieja)', SQL, "begin\n  if current_setting('transaction_isolation') <> 'read committed' then\n    raise exception 'imerg_colector: sólo en READ COMMITTED (esta transacción es %)', current_setting('transaction_isolation');\n  end if;\n  perform pg_advisory_xact_lock(hashtext('imerg:barrido'));", "begin\n  perform pg_advisory_xact_lock(hashtext('imerg:barrido'));", true],
+  ['3.ª P1: guardar acepta REPEATABLE READ / SERIALIZABLE', SQL, "  if current_setting('transaction_isolation') <> 'read committed' then\n    raise exception 'imerg_colector: sólo en READ COMMITTED (esta transacción es %)', current_setting('transaction_isolation');\n  end if;\n  n := coalesce", '  n := coalesce', true],
+  ['3.ª P1: soltar acepta REPEATABLE READ / SERIALIZABLE', SQL, "  if current_setting('transaction_isolation') <> 'read committed' then\n    raise exception 'imerg_colector: sólo en READ COMMITTED (esta transacción es %)', current_setting('transaction_isolation');\n  end if;\n  v_lat := p_lat;", '  v_lat := p_lat;', true],
+  ['3.ª P1: el control de aislamiento sólo mira SERIALIZABLE (deja pasar REPEATABLE READ)', SQL, "begin\n  if current_setting('transaction_isolation') <> 'read committed' then", "begin\n  if current_setting('transaction_isolation') = 'serializable' then", true],
+  ['3.ª P1: tomar con la hora del comienzo de la transacción (now())', SQL, 'v_ahora := clock_timestamp();                                 -- después del candado', 'v_ahora := now();                                 -- después del candado', true],
+  ['3.ª P1: el tope por hora con now()', SQL, "where t.tomada > v_ahora - interval '1 hour') >= 2 then", "where t.tomada > now() - interval '1 hour') >= 2 then", true],
+  ['3.ª P1: _candidatas con now()', SQL, 't.no_antes_de > clock_timestamp())', 't.no_antes_de > now())', true],
+  // ── 3.ª vuelta · P1: prender sólo con la lectura comprobada ──
+  ['3.ª P1 ANTES: el comando de la 2.ª vuelta (grep -c sobre una lectura que puede fallar)', 'prender.sh', "B64=$(gh api", 'N=$(gh api "repos/$APP/contents/$RUTA" --jq .content | base64 -d | grep -cE "^[[:space:]]*repository_dispatch:")\n[ "$N" = 0 ] && gh variable set IMERG_PENDIENTES_ON -b si -R "$ESTE" && echo PRENDIDO && exit 0\nB64=$(gh api'],
+  ['3.ª P1: sin ref=main (lee la rama por defecto, la que sea)', 'prender.sh', '$RUTA?ref=main', '$RUTA'],
+  ['3.ª P1: repository_dispatch sólo como clave al comienzo de línea (la lista pasa)', 'prender.sh', '  *repository_dispatch*) no', '  *"\n  repository_dispatch:"*) no'],
+  ['3.ª P1: los comentarios cuentan (no prende nunca con el comentario de cabecera)', 'prender.sh', "LIMPIO=$(sed -e 's/#.*$//' <<<\"$YML\")", 'LIMPIO=$YML'],
+  ['3.ª P1: cualquier archivo sirve (sin exigir workflow_dispatch)', 'prender.sh', '  *) no "no parece el imerg-backfill.yml (no tiene workflow_dispatch)" ;;', '  *) ;;'],
+  ['3.ª P1: dice PRENDIDO aunque gh variable set falle', 'prender.sh', ' || no "gh variable set falló"', ''],
   ['SQL: el rol con BYPASSRLS no aborta', SQL, 'if r.rolsuper or r.rolreplication or r.rolbypassrls or', 'if r.rolsuper or r.rolreplication or', true],
 ];
 
@@ -74,7 +89,7 @@ function copiar() {
   fs.copyFileSync(path.join(REPO, 'sipan-alto-valle', 'migracion', 'scram.mjs'), path.join(REPO, '.mutante', 'sipan-alto-valle', 'migracion', 'scram.mjs'));
 }
 function correr() {
-  const r = spawnSync(process.execPath, ['--test', 'test/imerg-pendientes.test.mjs', 'test/pg-real.test.mjs'], { cwd: COPIA, encoding: 'utf8', env: process.env });
+  const r = spawnSync(process.execPath, ['--test', 'test/imerg-pendientes.test.mjs', 'test/pg-real.test.mjs', 'test/prender.test.mjs'], { cwd: COPIA, encoding: 'utf8', env: process.env });
   const m = /ℹ fail (\d+)/.exec(r.stdout || '');
   return { fallan: m ? Number(m[1]) : -1, codigo: r.status };
 }

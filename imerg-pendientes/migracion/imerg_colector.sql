@@ -29,6 +29,16 @@
 --   search_path de todas las funciones = pg_catalog, pg_temp, con TODO calificado (public.…, imerg_colector.…): una
 --   tabla temporal del rol no puede hacerse pasar por lotes ni por imerg_celda_estado.
 --
+-- 3.ª VUELTA (NO ENTRA de Codex, n3-232-v2-1411): LOS LÍMITES NO DEPENDEN DE LA TRANSACCIÓN DE QUIEN LLAMA.
+--   · tomar, guardar y soltar RECHAZAN cualquier aislamiento que no sea READ COMMITTED. En REPEATABLE READ o
+--     SERIALIZABLE toda la transacción lee la foto del primer pedido (p. ej. un contar() previo): el candado global
+--     serializa, pero los controles («una toma viva», «2 por hora») leían una foto donde la toma de la otra conexión
+--     no existía. En READ COMMITTED cada sentencia de la función toma una foto nueva, y la que sigue al candado ve todo
+--     lo confirmado antes de soltarse. El aislamiento no se puede cambiar una vez que la transacción hizo su primer
+--     pedido (PostgreSQL lo rechaza), así que lo que lee current_setting es lo que rige.
+--   · La hora es clock_timestamp() (la del reloj), nunca now() (la del COMIENZO de la transacción de quien llama): una
+--     transacción abierta hace horas no puede grabar una toma con hora vieja que nazca ya «vencida» para los controles.
+
 -- El rol `colector_imerg` NO tiene permiso sobre ninguna tabla: sólo EXECUTE sobre 4 funciones de un esquema que
 -- PostgREST no expone. No ve lotes, nombres ni puntos: sólo el centro de la celda (0,1°, ~11 km) que le toca.
 --
@@ -46,7 +56,7 @@ create table if not exists imerg_colector.tomas (
   id          bigint generated always as identity primary key,
   celda_lat   numeric(5,2) not null,
   celda_lon   numeric(6,2) not null,
-  tomada      timestamptz  not null default now(),
+  tomada      timestamptz  not null default clock_timestamp(),
   no_antes_de timestamptz  not null,                 -- la celda no se vuelve a dar antes de esto (si no quedó completa)
   cerrada     timestamptz,
   resultado   text check (resultado in ('completa', 'parcial', 'fallo')));
@@ -80,11 +90,11 @@ language sql stable security definer set search_path = pg_catalog, pg_temp as $$
     from act a
     left join public.imerg_celda_estado e on e.celda_lat = a.clat and e.celda_lon = a.clon
    where not exists (select 1 from imerg_colector.tomas t
-                      where t.celda_lat = a.clat and t.celda_lon = a.clon and t.no_antes_de > now())
+                      where t.celda_lat = a.clat and t.celda_lon = a.clon and t.no_antes_de > clock_timestamp())
      and (e.celda_lat is null
       or (e.filas is null and (
             e.fuente in ('en curso (colectores)', 'fallo (colectores)', 'parcial (colectores)')
-         or e.actualizado < now() - make_interval(mins => greatest(coalesce(p_espera_lazy_min, 180), 180)))))
+         or e.actualizado < clock_timestamp() - make_interval(mins => greatest(coalesce(p_espera_lazy_min, 180), 180)))))
    order by (e.celda_lat is null), e.actualizado nulls last, a.clat, a.clon
 $$;
 
@@ -102,17 +112,21 @@ create or replace function imerg_colector.tomar(p_espera_lazy_min integer defaul
 returns table (celda_lat numeric(5,2), celda_lon numeric(6,2), no_antes_de timestamptz)
 language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 #variable_conflict use_column
-declare c record; tomadas integer; previas integer; v_hasta timestamptz;
+declare c record; tomadas integer; previas integer; v_hasta timestamptz; v_ahora timestamptz;
 begin
+  if current_setting('transaction_isolation') <> 'read committed' then
+    raise exception 'imerg_colector: sólo en READ COMMITTED (esta transacción es %)', current_setting('transaction_isolation');
+  end if;
   perform pg_advisory_xact_lock(hashtext('imerg:barrido'));
+  v_ahora := clock_timestamp();                                 -- después del candado: la hora del reloj, no la de la transacción
   if exists (select 1 from imerg_colector.tomas t
-              where t.cerrada is null and t.tomada > now() - interval '90 minutes') then
+              where t.cerrada is null and t.tomada > v_ahora - interval '90 minutes') then
     return;                                                     -- una toma viva: no se da otra
   end if;
-  if (select count(*) from imerg_colector.tomas t where t.tomada > now() - interval '1 hour') >= 2 then
+  if (select count(*) from imerg_colector.tomas t where t.tomada > v_ahora - interval '1 hour') >= 2 then
     return;                                                     -- tope fijo: 2 tomas por hora
   end if;
-  delete from imerg_colector.tomas t where t.tomada < now() - interval '30 days' and t.no_antes_de < now();
+  delete from imerg_colector.tomas t where t.tomada < v_ahora - interval '30 days' and t.no_antes_de < v_ahora;
   for c in select * from imerg_colector._candidatas(p_espera_lazy_min) loop
     perform pg_advisory_xact_lock(hashtext('imerg:' || c.celda_lat::text || ',' || c.celda_lon::text));
     -- bajo el candado de la celda: ¿sigue habiendo un lote activo ahí? (una baja que confirmó recién no entra)
@@ -123,10 +137,10 @@ begin
     --  nunca lo acortan)
     if c.sin_fila then
       insert into public.imerg_celda_estado as e (celda_lat, celda_lon, fuente, actualizado)
-      values (c.celda_lat, c.celda_lon, 'en curso (colectores)', now())
+      values (c.celda_lat, c.celda_lon, 'en curso (colectores)', v_ahora)
       on conflict (celda_lat, celda_lon) do nothing;
     else
-      update public.imerg_celda_estado e set fuente = 'en curso (colectores)', actualizado = now()
+      update public.imerg_celda_estado e set fuente = 'en curso (colectores)', actualizado = v_ahora
        where e.celda_lat = c.celda_lat and e.celda_lon = c.celda_lon
          and e.filas is null and e.actualizado is not distinct from c.actualizado;
     end if;
@@ -134,10 +148,10 @@ begin
     if tomadas > 0 then
       select count(*) into previas from imerg_colector.tomas t
        where t.celda_lat = c.celda_lat and t.celda_lon = c.celda_lon
-         and t.tomada > now() - interval '7 days' and t.resultado is distinct from 'completa';
-      v_hasta := now() + least(interval '8 hours' * (2 ^ least(previas, 5)), interval '7 days');
+         and t.tomada > v_ahora - interval '7 days' and t.resultado is distinct from 'completa';
+      v_hasta := v_ahora + least(interval '8 hours' * (2 ^ least(previas, 5)), interval '7 days');
       insert into imerg_colector.tomas (celda_lat, celda_lon, tomada, no_antes_de)
-      values (c.celda_lat, c.celda_lon, now(), v_hasta);
+      values (c.celda_lat, c.celda_lon, v_ahora, v_hasta);
       celda_lat := c.celda_lat; celda_lon := c.celda_lon; no_antes_de := v_hasta;
       return next;
       return;
@@ -151,8 +165,11 @@ end $$;
 create or replace function imerg_colector.guardar(p_lat numeric, p_lon numeric, p_fechas date[], p_mm real[])
 returns integer
 language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
-declare n integer; v_lat numeric(5,2); v_lon numeric(6,2); v_toma bigint; v_desde date; v_hasta date;
+declare n integer; v_lat numeric(5,2); v_lon numeric(6,2); v_toma bigint; v_desde date; v_hasta date; v_ahora timestamptz;
 begin
+  if current_setting('transaction_isolation') <> 'read committed' then
+    raise exception 'imerg_colector: sólo en READ COMMITTED (esta transacción es %)', current_setting('transaction_isolation');
+  end if;
   n := coalesce(array_length(p_fechas, 1), 0);
   if n = 0 or n <> coalesce(array_length(p_mm, 1), -1) or n > 20000 then
     raise exception 'imerg_colector: serie inválida (largos %/%)', n, coalesce(array_length(p_mm, 1), 0);
@@ -170,8 +187,9 @@ begin
     raise exception 'imerg_colector: celda inválida';
   end if;
   perform pg_advisory_xact_lock(hashtext('imerg:' || v_lat::text || ',' || v_lon::text));
+  v_ahora := clock_timestamp();
   select t.id into v_toma from imerg_colector.tomas t
-   where t.celda_lat = v_lat and t.celda_lon = v_lon and t.cerrada is null and t.tomada > now() - interval '90 minutes'
+   where t.celda_lat = v_lat and t.celda_lon = v_lon and t.cerrada is null and t.tomada > v_ahora - interval '90 minutes'
    order by t.tomada desc limit 1 for update;
   perform 1 from public.imerg_celda_estado e
    where e.celda_lat = v_lat and e.celda_lon = v_lon and e.filas is null and e.fuente = 'en curso (colectores)'
@@ -182,18 +200,18 @@ begin
   select min(f), max(f) into v_desde, v_hasta from unnest(p_fechas) f;
   -- COMPLETA: desde el inicio fijo, hasta lo último que da Giovanni (2025-09-30 al 13/11), con 30 días de tolerancia.
   if not (v_desde = date '2000-06-01' and v_hasta >= date '2025-09-30' and n >= (v_hasta - v_desde + 1) - 30) then
-    update public.imerg_celda_estado e set fuente = 'parcial (colectores)', actualizado = now()
+    update public.imerg_celda_estado e set fuente = 'parcial (colectores)', actualizado = v_ahora
      where e.celda_lat = v_lat and e.celda_lon = v_lon;
-    update imerg_colector.tomas t set cerrada = now(), resultado = 'parcial' where t.id = v_toma;
+    update imerg_colector.tomas t set cerrada = v_ahora, resultado = 'parcial' where t.id = v_toma;
     return 0;
   end if;
   insert into public.imerg_pp_diario (celda_lat, celda_lon, fecha, pp_mm)
   select v_lat, v_lon, f, mm from unnest(p_fechas, p_mm) t(f, mm)
   on conflict (celda_lat, celda_lon, fecha) do update set pp_mm = excluded.pp_mm;
   update public.imerg_celda_estado e
-     set desde = v_desde, hasta = v_hasta, filas = n, fuente = 'GPM_3IMERGDF_07 (Giovanni · colectores)', actualizado = now()
+     set desde = v_desde, hasta = v_hasta, filas = n, fuente = 'GPM_3IMERGDF_07 (Giovanni · colectores)', actualizado = v_ahora
    where e.celda_lat = v_lat and e.celda_lon = v_lon;
-  update imerg_colector.tomas t set cerrada = now(), resultado = 'completa' where t.id = v_toma;
+  update imerg_colector.tomas t set cerrada = v_ahora, resultado = 'completa' where t.id = v_toma;
   return n;
 end $$;
 
@@ -203,18 +221,22 @@ end $$;
 create or replace function imerg_colector.soltar(p_lat numeric, p_lon numeric)
 returns boolean
 language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
-declare v_lat numeric(5,2); v_lon numeric(6,2); k integer;
+declare v_lat numeric(5,2); v_lon numeric(6,2); k integer; v_ahora timestamptz;
 begin
+  if current_setting('transaction_isolation') <> 'read committed' then
+    raise exception 'imerg_colector: sólo en READ COMMITTED (esta transacción es %)', current_setting('transaction_isolation');
+  end if;
   v_lat := p_lat; v_lon := p_lon;
   if v_lat is distinct from p_lat or v_lon is distinct from p_lon then
     raise exception 'imerg_colector: celda inválida';
   end if;
   perform pg_advisory_xact_lock(hashtext('imerg:' || v_lat::text || ',' || v_lon::text));
+  v_ahora := clock_timestamp();
   update imerg_colector.tomas t
-     set cerrada = now(), resultado = 'fallo', no_antes_de = greatest(t.no_antes_de, now() + interval '6 hours')
+     set cerrada = v_ahora, resultado = 'fallo', no_antes_de = greatest(t.no_antes_de, v_ahora + interval '6 hours')
    where t.celda_lat = v_lat and t.celda_lon = v_lon and t.cerrada is null;
   get diagnostics k = row_count;
-  update public.imerg_celda_estado e set fuente = 'fallo (colectores)', actualizado = now()
+  update public.imerg_celda_estado e set fuente = 'fallo (colectores)', actualizado = v_ahora
    where e.celda_lat = v_lat and e.celda_lon = v_lon and e.filas is null and e.fuente = 'en curso (colectores)';
   return k > 0;
 end $$;
