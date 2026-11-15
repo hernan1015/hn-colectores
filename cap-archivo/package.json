@@ -1,0 +1,14 @@
+{
+  "name": "hn-colector-cap-archivo",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · archivo del índice CAP del SMN y de los XML de cada aviso (225)",
+  "scripts": {
+    "archivar": "node archivar.mjs",
+    "test": "node --test test/cap-archivo.test.mjs test/base.test.mjs test/workflow.test.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "postgres": "3.4.4"
+  }
+}

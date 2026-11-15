@@ -15,5 +15,6 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | vigia-satchi | cada 15 min (apagado hasta que la variable SATCHI_VIGIA_ON sea «si»; ver vigia/LEEME.md) | SATCHI público (crecidas y focos de calor): manda un mail si hay algo nuevo |
 | granizo-archivo | cada 10 min (apagado hasta que la variable GRANIZO_ARCHIVO_ON sea «si»; ver granizo-archivo/PRENDER.md) | SATCHI público (granizo en vivo): cada barrido, entero, a una release diaria del repo privado |
 | granizo-frescura | cada 20 min (con la misma variable) | el archivo de granizo: manda un mail si en 40 min no se guardó nada |
+| cap-archivo | cada 10 min (apagado hasta que la variable CAP_ARCHIVO_ON sea «si»; ver cap-archivo/PRENDER.md) | SMN, índice CAP y XML de cada aviso (CC BY 4.0): a una release diaria del repo privado |
 
 Los registros de cada corrida muestran sólo cantidades.
