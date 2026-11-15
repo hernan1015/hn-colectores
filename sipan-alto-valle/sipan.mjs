@@ -12,7 +12,9 @@
 //    429 o 5xx se deja de pedir en esa corrida. User-Agent genérico (sin datos de nadie).
 // Controles: dedup por estación y hora (el crudo de cada día se une con lo ya guardado), faltante = null (nunca 0),
 // valores imposibles marcados (no entran en los resúmenes), formato cambiado → registro_procesos con aviso y NO se carga,
-// estación sin registros nuevos en más de 24 h → aviso. Con avisos el proceso sale con código 2 (Actions avisa).
+// estación sin registros nuevos en más de 24 h → aviso. Sale con código 2 SÓLO ante una FALLA (formato, no responde,
+// SIPAN cortado, ninguna estación al día, filas que no se guardaron); los avisos de ESTADO de una estación (quieta,
+// inactiva, revivió) quedan en registro_procesos y como ::warning:: de Actions, pero no ponen la corrida en rojo.
 // El registro de Actions es PÚBLICO: se imprimen sólo cantidades, nunca valores ni claves.
 import zlib from 'node:zlib';
 import { leerDavis } from './lib/davis.mjs';
@@ -28,6 +30,13 @@ export const TOPE_BARRIDO = 15;
 export const QUIETA_H = 24;
 export const USER_AGENT = 'Mozilla/5.0 (compatible; colector-agrometeorologico/1.0)';
 const PROCESO = 'sipan_alto_valle';
+/* Los avisos de ESTADO de una estación son novedades del INTA (la 10, la 41 y la 42 están quietas hace meses), no fallas
+   del colector: se registran y se ven, pero no cambian el código de salida. Antes daban exit 2 en CADA corrida y el
+   rojo tapaba cualquier falla real. Cualquier otro tipo de aviso (y uno nuevo que se agregue) cuenta como FALLA. */
+export const AVISOS_DE_ESTADO = new Set(['estacion_quieta', 'estacion_inactiva', 'estacion_revivio']);
+export const esFalla = (a) => !AVISOS_DE_ESTADO.has(a && a.tipo);
+/** El código de salida: 2 si hay alguna falla o filas que no se guardaron; 0 si sólo hay avisos de estado (o nada). */
+export function codigoSalida({ avisos = [], errores = [] } = {}) { return avisos.some(esFalla) || errores.length ? 2 : 0; }
 
 const ahoraLocal = (ms) => new Date(ms - 3 * 3600e3).toISOString().slice(0, 16);     // UTC−3
 const msLocal = (local) => Date.parse(local + ':00Z') + 3 * 3600e3;                  // local → UTC real
@@ -225,8 +234,15 @@ async function correrInterno({ seco = true, ids = null, barrer = false, aceptar 
     if (pb.cortado) avisos.push({ tipo: 'sipan_corto', motivo: 'barrido: ' + pb.cortado, pedidos: pb.pedidos });
   }
 
-  const resumen = { modo: seco ? 'seco' : 'real', pedidos: pedidor.pedidos, pedidos_barrido: pb ? pb.pedidos : 0, estaciones: porEstacion, filas_obs: filasObs, crudos_dias: crudosDias, crudos: almacen ? almacen.tipo : 'sin destino (sólo el resumen diario)', errores: errores.length, avisos, barrido };
-  if (!seco) { try { await base.registrar(PROCESO, avisos.length === 0 && errores.length === 0, { ...resumen, errores_detalle: errores.slice(0, 20) }); } catch (e) { resumen.registro = 'no se pudo anotar'; } }
+  /* en la corrida COMPLETA (la del schedule: sin --ids ni --archivo), que ninguna esté al día (todas quietas, o ninguna
+     se pudo leer) ya no es «una estación quieta»: no entra ningún dato nuevo de la red, y eso sí es falla. Una corrida
+     a mano de una sola estación no la dispara. */
+  const alDia = Object.values(porEstacion).filter((v) => typeof v === 'object' && v.horas_desde_ultimo <= QUIETA_H).length;
+  if (!ids && lista.length && alDia === 0) avisos.push({ tipo: 'ninguna_al_dia', estaciones: lista.length });
+  const fallas = avisos.filter(esFalla).length;
+
+  const resumen = { modo: seco ? 'seco' : 'real', pedidos: pedidor.pedidos, pedidos_barrido: pb ? pb.pedidos : 0, estaciones: porEstacion, filas_obs: filasObs, crudos_dias: crudosDias, crudos: almacen ? almacen.tipo : 'sin destino (sólo el resumen diario)', errores: errores.length, fallas, avisos, barrido };
+  if (!seco) { try { await base.registrar(PROCESO, fallas === 0 && errores.length === 0, { ...resumen, errores_detalle: errores.slice(0, 20) }); } catch (e) { resumen.registro = 'no se pudo anotar'; } }
   /* al registro público: sólo cantidades y tipos (nada de valores medidos) */
   log(JSON.stringify({ ...resumen, avisos: avisos.map((a) => `${a.tipo}${a.id ? ' ' + a.id : ''}`) }));
   return { resumen, avisos, errores };
@@ -250,6 +266,12 @@ if (esPrincipal) {
   const archivos = Object.fromEntries(Object.entries(pares(val('--archivo'))).map(([k, v]) => [k, fs.readFileSync(v, 'latin1')]));
   const ids = val('--ids') ? val('--ids').split(',') : (Object.keys(archivos).length ? Object.keys(archivos) : null);
   correr({ seco: a.includes('--seco'), ids, barrer: a.includes('--barrer'), aceptar: pares(val('--aceptar-formato') || process.env.SIPAN_ACEPTAR_FORMATO), archivos })
-    .then((r) => { if (r.avisos.length || r.errores.length) { console.log('::warning::SIPAN: ' + r.avisos.map((x) => x.tipo + (x.id ? ' ' + x.id : '')).join(', ') + (r.errores.length ? ` · ${r.errores.length} filas no se guardaron` : '')); process.exitCode = 2; } })
+    .then((r) => {
+      const t = (x) => x.tipo + (x.id ? ' ' + x.id : '');
+      const est = r.avisos.filter((x) => !esFalla(x)), fal = r.avisos.filter(esFalla);
+      if (est.length) console.log('::warning::SIPAN (aviso, no falla): ' + est.map(t).join(', '));
+      if (fal.length || r.errores.length) console.log('::error::SIPAN: ' + fal.map(t).join(', ') + (r.errores.length ? ` · ${r.errores.length} filas no se guardaron` : ''));
+      process.exitCode = codigoSalida(r);
+    })
     .catch((e) => { console.error('sipan: ' + String(e && e.message).slice(0, 160)); process.exitCode = 1; });
 }

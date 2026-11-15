@@ -8,6 +8,13 @@ import { fileURLToPath } from 'node:url';
 
 const RAIZ = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MUTANTES = [
+  ['salida: la quieta vuelve a dar exit 2', 'sipan.mjs', "new Set(['estacion_quieta', 'estacion_inactiva', 'estacion_revivio'])", 'new Set([])'],
+  ['salida: una falla ya no da exit 2', 'sipan.mjs', 'return avisos.some(esFalla) || errores.length ? 2 : 0;', 'return 0;'],
+  ['salida: filas sin guardar no dan exit 2', 'sipan.mjs', 'return avisos.some(esFalla) || errores.length ? 2 : 0;', 'return avisos.some(esFalla) ? 2 : 0;'],
+  ['salida: ninguna al día no se detecta', 'sipan.mjs', 'if (!ids && lista.length && alDia === 0)', 'if (false)'],
+  ['salida: registro ok=false con sólo quietas', 'sipan.mjs', 'fallas === 0 && errores.length === 0,', 'avisos.length === 0 && errores.length === 0,'],
+  ['salida: la CLI sale con 2 ante cualquier aviso', 'sipan.mjs', 'process.exitCode = codigoSalida(r);', 'process.exitCode = r.avisos.length || r.errores.length ? 2 : 0;'],
+  ['salida: la quieta no se muestra como ::warning::', 'sipan.mjs', "if (est.length) console.log(", 'if (false) console.log('],
   ['el faltante «---» se lee como 0', 'lib/davis.mjs', "if (t === '' || /^-+$/.test(t) || /^n\\/?d$/i.test(t) || /^nan$/i.test(t)) return null;", "if (t === '' || /^-+$/.test(t)) return 0;"],
   ['no se controla la cantidad de campos', 'lib/davis.mjs', "if (c.length !== cols.length) { descartadas.push({ motivo: 'campos', n: c.length }); continue; }", ''],
   ['no se exigen las columnas obligatorias', 'lib/davis.mjs', "if (faltan.length) return { ok: false, motivo: 'faltan_columnas', detalle: faltan.join(','), columnas: cols };", ''],
@@ -63,7 +70,7 @@ function correrCon(nombre, archivo, viejo, nuevo) {
     if (veces !== 1) throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces (tiene que ser 1)`);
     fs.writeFileSync(p, txt.replace(viejo, nuevo));
   }
-  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs'), path.join(dir, 'test', 'pg-real.test.mjs')], { encoding: 'utf8', env: process.env });
+  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs'), path.join(dir, 'test', 'pg-real.test.mjs'), path.join(dir, 'test', 'salida.test.mjs')], { encoding: 'utf8', env: process.env });
   return r.status === 0;
 }
 
