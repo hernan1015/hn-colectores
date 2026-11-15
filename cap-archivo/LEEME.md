@@ -30,8 +30,11 @@ La misma cita va en las notas de cada release (`notasRelease` en `lib/flujo.mjs`
    argentino). Las fallas también se guardan: lo que el SMN contestó a esa hora también es un dato.
 5. **Guarda el estado nuevo**: primero sube el nuevo y después borra el viejo (`lib/releases.mjs · reemplazar`).
 6. **Anota en `registro_procesos`** (proceso `smn_cap_archivo`): los pedidos, el índice (HTTP, bytes, si cambió,
-   ítems, enlaces por carpeta) y los XML (en el índice, ya guardados, pendientes, pedidos, nuevos, repetidos por
-   hash, no disponibles, cortados y sin pedir). También van los avisos y las fallas.
+   ítems, enlaces por carpeta) y los XML (en el índice, ya guardados, fallidos antes, pendientes, pedidos, nuevos,
+   repetidos por hash, no disponibles, redirigidos, cortados y sin pedir). También van los avisos y las fallas.
+   - **Ya guardados** son sólo los que tienen su contenido en un asset. Los que quedaron finales sin contenido (un
+     404, un redirect, una URL cortada dos veces) van aparte, en **fallidos antes**: un faltante no se cuenta como
+     archivado. Siempre: en el índice = ya guardados + fallidos antes + pendientes.
 
 ## Dónde guarda y por qué
 
@@ -51,12 +54,16 @@ Si alguna vez se quiere un archivo público (la licencia lo permite, citando), a
 
 ## La lista blanca (la regla de la 222)
 
+- **Cómo se lee:** como XML, con una pila de etiquetas, después de sacar los comentarios y de tomar los CDATA como texto.
+  Cuentan sólo los `<item>` hijos de `rss > channel`, y de cada uno sólo sus `<link>` hijos directos. Un ítem
+  dentro de un comentario o de un CDATA no se pide, ni tampoco un `<link>` comentado o anidado en otro elemento.
 - **Qué se sigue:** sólo los `<link>` de un `<item>` con la forma completa y anclada
   `http(s)://(ssl|forms).smn.gob.ar/feeds/CAP/<carpeta>/<archivo>.xml`, y sólo de las carpetas `xml_generados`,
   `avisocortoplazo` (los ACP) y `oladecalor`.
 - **Una carpeta nueva del SMN:** no se pide, y es **falla** (`carpeta_nueva`), para que alguien la mire y la sume. Así
   se perdieron los ACP hasta el 14/11.
-- **Un link con otra forma** (otro host, cortado o vacío): no se pide, y es **falla** (`enlace_raro`).
+- **Un link con otra forma** (otro host, cortado o vacío): no se pide, y es **falla** (`enlace_raro`). Se cuenta
+  **cada** link rechazado, aunque el mismo ítem tenga otro bueno, y cada ítem sin ningún `<link>`.
 - **El índice se guarda entero igual:** lo que no se siguió queda en el archivo.
 
 ## Anti-spam (el SMN nos frenó el 14/11)
@@ -65,8 +72,16 @@ Si alguna vez se quiere un archivo público (la licencia lo permite, citando), a
 - **De a uno**, con 1,5 s entre pedidos y un tope de 150 XML por corrida. Lo que queda va en la próxima (aviso `tope`).
 - **User-Agent identificable:** `hn-colectores-cap-archivo/1.0 (HN AGRO; archivo de avisos CAP del SMN, un pedido cada 10 min)`.
 - **Ante un 429, un 403, un 5xx o sin conexión, se CORTA:** no se hace ningún pedido más en esa corrida.
-  - Queda una **pausa** de 60 min (429 y 403) o de 20 min (5xx y red). Si el `Retry-After` pide más, se respeta (como mucho, 6 h).
+  - Queda una **pausa** de 60 min (429 y 403) o de 20 min (5xx y red). Si el `Retry-After` pide más, se respeta
+    (como mucho, 6 h). Vale en sus dos formas: en segundos o como fecha HTTP (contada desde la hora del pedido).
   - Las corridas que caen dentro de la pausa **no le piden nada al SMN**.
+- **Los redirects no se siguen** (`redirect: 'manual'`): el destino no pasaría por la lista blanca ni por el
+  contador de pedidos. Un 3xx queda anotado con su `Location`, es final y es **falla** (`xml_redirige`; en el
+  índice, `indice_http`).
+- **Un estado que existe y no se puede leer frena todo** (`estado_ilegible`): cero pedidos, ni siquiera el índice,
+  y no se retrocede al estado de un día anterior. Ese estado puede tener una pausa vigente. Arrancar de cero
+  (`estado_nuevo`) queda sólo para cuando no hay ningún estado. Para destrabarlo, alguien tiene que mirar el asset
+  roto y borrarlo a mano, sabiendo que la corrida siguiente arranca de cero.
 - **Sin reintentos en bucle:** una URL cortada se reintenta **una sola vez**, en otra corrida y pasada la pausa. Después
   queda como final. Un 404 es final de entrada.
 
@@ -80,6 +95,8 @@ Si alguna vez se quiere un archivo público (la licencia lo permite, citando), a
 | `xml_no_cap` | aviso | un XML llegó, pero no parece CAP (se guarda igual) |
 | `estado_nuevo` | aviso | no había estado: se arranca de cero (la primera corrida) |
 | `smn_corto` | **falla** | 429, 403, 5xx o sin conexión: se cortó y quedó la pausa |
+| `estado_ilegible` | **falla** | hay un estado que no se pudo leer: no se le pidió nada al SMN |
+| `xml_redirige` | **falla** | un XML contestó un 3xx: no se siguió y no se vuelve a pedir |
 | `indice_http` · `indice_no_rss` · `indice_cortado` | **falla** | el índice no llegó, no es RSS o vino cortado |
 | `carpeta_nueva` · `enlace_raro` | **falla** | la lista blanca: algo que no se siguió |
 | `sin_registro` · `registro_no_anotado` | **falla** | `registro_procesos` no quedó anotado (los datos sí se guardaron) |
@@ -95,8 +112,13 @@ Si alguna vez se quiere un archivo público (la licencia lo permite, citando), a
   - `fuente`, `licencia` y `user_agent`;
   - `indice`: `url`, `http`, `bytes`, `sha256` y `cuerpo` (el texto tal cual), o `igual_a` si no cambió;
   - `xml[]`: cada aviso pedido, con su hora, `http`, `sha256` y `cuerpo`, o `igual_a` si el contenido ya estaba guardado;
-  - `resumen`: las mismas cantidades que van a `registro_procesos`.
-  - Si un cuerpo no es UTF-8 válido, va en `cuerpo_b64`.
+  - **los cuerpos de error también** (un 429, un 404, un 5xx), si llegaron enteros: lo que el SMN contestó a esa hora;
+  - `resumen`: las cantidades de los pedidos (las mismas de `registro_procesos`), sin lo de la subida, que todavía
+    no se sabe cuando se arma el sobre.
+  - Si un cuerpo no es UTF-8 válido, o si su texto no devuelve exactamente los mismos bytes, va en `cuerpo_b64`. Un
+    BOM inicial queda en el texto (U+FEFF): el `sha256` siempre cierra con los bytes reconstruidos.
+- **Si el nombre del sobre ya existía** (otro proceso, el mismo segundo), se lo baja y se compara byte por byte. Si no
+  es igual, la corrida sale con error 1 y el estado **no** se guarda: no queda ninguna referencia a algo que no subió.
 - **`estado__<sello>.json.gz`**: las URL ya pedidas (hash, asset, intentos), el hash del último índice y la pausa.
 
 Para reconstruir una hora: bajar el sobre de esa hora y, si dice `igual_a`, el asset que nombra.
@@ -104,9 +126,9 @@ Para reconstruir una hora: bajar el sobre de esa hora y, si dice `igual_a`, el a
 ## Tests
 
 ```bash
-npm ci --prefix cap-archivo && npm test --prefix cap-archivo      # 28 tests, sin red ni base
-node cap-archivo/test/control-negativo.mjs                        # 35 mutantes: tienen que morir todos
+npm ci --prefix cap-archivo && npm test --prefix cap-archivo      # 39 tests, sin red ni base
+node cap-archivo/test/control-negativo.mjs                        # 49 mutantes: tienen que morir todos
 ```
 
 - **El fixture** es el índice **real** del 14/11 a las 14:26 (`test/fixtures/cap_indice_1426.xml.gz`, el mismo de la 222, CC BY 4.0).
-- **El SMN y GitHub son falsos:** ningún test sale a la red.
+- **El SMN y GitHub son falsos:** ningún test sale a la red. El único HTTP de verdad es el del test de redirects, contra un servidor de fixture en 127.0.0.1.

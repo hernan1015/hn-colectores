@@ -18,9 +18,9 @@ const MUTANTES = [
   ['el pedidor sigue después de un corte', S, "    if (p.cortado) return { url, pedido: false, motivo: 'cortado' };\n", ''],
   ['un 429 no corta', S, "  if (r.http === 429) return 'http_429';\n", ''],
   ['un 403 no corta', S, "  if (r.http === 403) return 'http_403';\n", ''],
-  ['sin pausa después de un corte', F, '    estado.pausa_hasta = ahora() + minutos(minutosDePausa(m, r.retry_after));\n', ''],
+  ['sin pausa después de un corte', F, '    estado.pausa_hasta = ahora() + minutos(minutosDePausa(m, r.retry_after, r.pedido_ms));\n', ''],
   ['la pausa no se respeta', F, '  if (estado.pausa_hasta && estado.pausa_hasta > t0) {', '  if (false) {'],
-  ['el Retry-After no se respeta', S, 'return Number.isFinite(ra) && ra > 0 ? Math.max(base, Math.min(360, Math.ceil(ra / 60))) : base;', 'return base;'],
+  ['el Retry-After no se respeta', S, 'return ra ? Math.max(base, Math.min(360, Math.ceil(ra / 60))) : base;', 'return base;'],
   ['reintentos sin tope (en bucle)', E, 'export const INTENTOS_MAX = 2;', 'export const INTENTOS_MAX = 99;'],
   ['sin pausa entre pedidos', S, '    if (p.pedidos > 0 && pausaMs > 0) { await dormir(pausaMs); p.pausas++; }\n', ''],
   ['sin tope de XML por corrida', F, '        if (pedidos >= tope) break;\n', ''],
@@ -33,7 +33,7 @@ const MUTANTES = [
   ['no se lee el estado del día anterior', E, 'export const DIAS_ATRAS = 3;', 'export const DIAS_ATRAS = 0;'],
   ['el estado se guarda aunque el sobre no subió', F, '    return fin();   // sin el sobre no se toca el estado', '    // sin el sobre no se toca el estado'],
   // lista blanca (222)
-  ['lista blanca abierta (cualquier carpeta del SMN)', S, '      if (!CARPETAS.includes(carpeta)) { fuera[carpeta] = (fuera[carpeta] || 0) + 1; continue; }\n', ''],
+  ['lista blanca abierta (cualquier carpeta del SMN)', S, '    if (!CARPETAS.includes(carpeta)) { fuera[carpeta] = (fuera[carpeta] || 0) + 1; return; }\n', ''],
   ['el link sin anclar (otro host pasa)', S, "export const RE_LINK = /^https?:\\/\\/(ssl|forms)\\.smn\\.gob\\.ar\\/feeds", "export const RE_LINK = /https?:\\/\\/[\\w.]+\\/feeds"],
   ['sin el ACP en la lista', S, "export const CARPETAS = Object.freeze(['xml_generados', 'avisocortoplazo', 'oladecalor']);", "export const CARPETAS = Object.freeze(['xml_generados', 'oladecalor']);"],
   ['carpeta nueva sin falla', F, "    for (const [carpeta, n] of Object.entries(lectura.fuera)) avisos.push({ tipo: 'carpeta_nueva', carpeta: carpeta.slice(0, 40), n });\n", ''],
@@ -53,6 +53,21 @@ const MUTANTES = [
   // workflow
   ['el workflow prendido sin la variable', 'cap-archivo/cap-archivo.workflow.yml.txt', " || vars.CAP_ARCHIVO_ON == 'si' }}", " || true }}"],
   ['a mano, real por defecto', 'cap-archivo/cap-archivo.workflow.yml.txt', '        default: seco', '        default: real'],
+  // 2.ª vuelta (n3-225-1511): uno por cada arreglo
+  ['P2-1 · un fallido final cuenta como guardado', F, '    res.xml.ya_guardados = lectura.enlaces.filter((e) => estado.urls[e.url] && estado.urls[e.url].asset).length;', '    res.xml.ya_guardados = lectura.enlaces.length - pend.length;'],
+  ['P2-2 · el sobre sin los pedidos finales', F, '  // el resumen del sobre: los pedidos ya están todos hechos; lo de la subida (asset, errores) todavía no se sabe y no va\n  res.pedidos = pedidor.pedidos;\n', ''],
+  ['P2-3 · un estado ilegible se ignora', F, '  if (est.rotos.length) {', '  if (false) {'],
+  ['P2-3 · un estado ilegible hace retroceder a uno viejo', F, '    if (x) return { estado: x.estado, assets: [], rotos: x.rotos,', '    if (x && x.estado) return { estado: x.estado, assets: [], rotos: [],'],
+  ['P2-4 · fetch sigue los redirects', S, "redirect: 'manual', signal", 'signal'],
+  ['P2-4 · un XML redirigido no es falla', F, "      if (res.xml.redirigidos) avisos.push({ tipo: 'xml_redirige', n: res.xml.redirigidos });\n", ''],
+  ['P2-5 · el Retry-After con fecha se ignora', S, '  const ms = Date.parse(t);', '  const ms = NaN;'],
+  ['P2-6 · el BOM se come', S, 'ignoreBOM: true', 'ignoreBOM: false'],
+  ['P2-7 · yaEstaba con otro contenido pasa', F, '    if (s.yaEstaba && !(await mismoContenido(cliente, rel, nombre, cuerpoSobre))) {', '    if (false) {'],
+  ['P2-8 · comentarios y CDATA se leen como marcado', S, '  const t = sinComentariosNiCdata(t0);', '  const t = t0;'],
+  ['P2-8 · un link ajeno en un ítem con otro bueno no cuenta', S, '    if (!m) { raros++; return; }', '    if (!m) return;'],
+  ['P2-9 · el cuerpo de error del índice no se guarda', F, '  if (ri.http !== 200 && ri.buf) Object.assign(sobre.indice, cuerpoDe(ri.buf));\n', ''],
+  ['P2-9 · el cuerpo de error de un XML no se guarda', F, '        if (r.http !== 200 && r.buf) Object.assign(x, cuerpoDe(r.buf));   // el cuerpo de error, si llegó\n', ''],
+  ['P2-10 · comillas escapadas en PRENDER', 'cap-archivo/PRENDER.md', 'VERIF=$(CLAVE="$CLAVE" node', 'VERIF=$(CLAVE=\\"$CLAVE\\" node'],
 ];
 
 function copia() {

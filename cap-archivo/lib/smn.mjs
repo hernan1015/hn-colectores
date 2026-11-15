@@ -42,18 +42,37 @@ export function motivoCorte(r) {
   return null;
 }
 
-/** Minutos de pausa después de un corte: el de la tabla, o el Retry-After si pide más (con un tope de 6 h). */
-export function minutosDePausa(motivo, retryAfter) {
-  const base = PAUSA_CORTE[motivo] ?? 20;
-  const ra = Number(retryAfter);
-  return Number.isFinite(ra) && ra > 0 ? Math.max(base, Math.min(360, Math.ceil(ra / 60))) : base;
+/** Los segundos que pide un Retry-After, en sus dos formas (RFC 9110 §10.2.3): un número de segundos, o una fecha HTTP
+ *  (contada desde `desdeMs`, la hora del pedido). null si no se entiende o no pide esperar. */
+export function segundosRetryAfter(retryAfter, desdeMs = Date.now()) {
+  if (retryAfter == null) return null;
+  const t = String(retryAfter).trim();
+  if (/^\d+$/.test(t)) { const n = Number(t); return n > 0 ? n : null; }
+  if (!/[A-Za-z]/.test(t)) return null;   // «-5», «1.5»: no es ninguna de las dos formas
+  const ms = Date.parse(t);
+  if (!Number.isFinite(ms)) return null;
+  const s = Math.ceil((ms - desdeMs) / 1000);
+  return s > 0 ? s : null;
 }
 
-/** El cuerpo: texto si es UTF-8 válido (lo normal), si no base64. Así se guarda byte por byte lo que llegó. */
-export function cuerpoDe(buf) {
-  try { return { cuerpo: new TextDecoder('utf-8', { fatal: true }).decode(buf) }; }
-  catch { return { cuerpo_b64: buf.toString('base64') }; }
+/** Minutos de pausa después de un corte: el de la tabla, o el Retry-After si pide más (con un tope de 6 h). */
+export function minutosDePausa(motivo, retryAfter, desdeMs = Date.now()) {
+  const base = PAUSA_CORTE[motivo] ?? 20;
+  const ra = segundosRetryAfter(retryAfter, desdeMs);
+  return ra ? Math.max(base, Math.min(360, Math.ceil(ra / 60))) : base;
 }
+
+/** El cuerpo: texto si es UTF-8 válido (lo normal), si no base64. Así se guarda byte por byte lo que llegó.
+ *  · ignoreBOM: el BOM (EF BB BF) queda en el texto como U+FEFF; sin eso TextDecoder lo come y el sha256 no cierra;
+ *  · y se comprueba la vuelta: si el texto no reconstruye EXACTAMENTE los mismos bytes, va en base64. */
+export function cuerpoDe(buf) {
+  let texto = null;
+  try { texto = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf); } catch { texto = null; }
+  if (texto != null && Buffer.from(texto, 'utf8').equals(buf)) return { cuerpo: texto };
+  return { cuerpo_b64: buf.toString('base64') };
+}
+/** Los bytes de un registro guardado con cuerpoDe (para comprobar el sha256). */
+export const bytesDe = (x) => (x.cuerpo_b64 != null ? Buffer.from(x.cuerpo_b64, 'base64') : x.cuerpo != null ? Buffer.from(x.cuerpo, 'utf8') : null);
 
 /**
  * El pedidor de UNA corrida. Nunca lanza: lo que pase queda en el resultado.
@@ -72,11 +91,14 @@ export function crearPedidor({ fetchFn = globalThis.fetch, pausaMs = PAUSA_MS, d
     if (p.pedidos > 0 && pausaMs > 0) { await dormir(pausaMs); p.pausas++; }
     p.pedidos++;
     const t0 = ahora();
-    const out = { url, pedido: true, pedido_ms: t0, http: null, error: null, bytes: 0, sha256: null, buf: null, retry_after: null, duracion_ms: null };
+    const out = { url, pedido: true, pedido_ms: t0, http: null, error: null, bytes: 0, sha256: null, buf: null, retry_after: null, location: null, duracion_ms: null };
     try {
-      const r = await fetchFn(url, { headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/xml, text/xml' }, signal: AbortSignal.timeout(tiempoMs) });
+      // redirect: 'manual' → un 3xx NO se sigue: el destino no pasaría por la lista blanca ni por el Set de pedidas, y
+      // sería un pedido más sin contar. Vuelve tal cual (http 3xx, con su Location) y flujo.mjs lo trata como falla.
+      const r = await fetchFn(url, { headers: { 'User-Agent': UA, Accept: 'application/rss+xml, application/xml, text/xml' }, redirect: 'manual', signal: AbortSignal.timeout(tiempoMs) });
       out.http = r.status;
       out.retry_after = r.headers && r.headers.get ? r.headers.get('retry-after') : null;
+      if (r.status >= 300 && r.status < 400 && r.headers && r.headers.get) out.location = String(r.headers.get('location') || '').slice(0, 200) || null;
       const buf = Buffer.from(await r.arrayBuffer());
       if (buf.length > TOPE_BYTES) out.error = 'cuerpo de más de ' + TOPE_BYTES + ' bytes (no se guarda)';
       else { out.buf = buf; out.bytes = buf.length; out.sha256 = sha256(buf); }
@@ -95,38 +117,68 @@ export function crearPedidor({ fetchFn = globalThis.fetch, pausaMs = PAUSA_MS, d
 const ENT = /&(lt|gt|amp|quot|apos);/g;
 const ENT_V = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
 
+const escXml = (x) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/** Lo que NO es marcado sale antes de leer: los comentarios se van; un CDATA es TEXTO (se escapa: un <item> adentro no
+ *  es un ítem, y un <link><![CDATA[url]]></link> sigue siendo un link); las <?…?> y el <!DOCTYPE> también se van. */
+export const sinComentariosNiCdata = (t) =>
+  t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>/g, (_, cd) => (cd != null ? escXml(cd) : ''));
+
+const ITEM = 'rss>channel>item', LINK = 'rss>channel>item>link';
+const RE_TAG = /<(\/?)([A-Za-z_][\w.:-]*)(?:\s(?:[^>"']|"[^"]*"|'[^']*')*?)?(\/?)>/g;
+
 /**
- * PURA. El índice → qué ítems trae y a qué XML apunta cada uno.
- *  · items: los <item>…</item> completos; abiertos: los <item que aparecen (si difieren, hay un ítem cortado);
+ * PURA. El índice → qué ítems trae y a qué XML apunta cada uno. Se recorre como XML (una pila de etiquetas), sobre el
+ * texto sin comentarios ni CDATA: cuentan sólo los <item> HIJOS de rss > channel, y de cada uno sólo sus <link> HIJOS.
+ *  · items: los <item> completos de rss > channel; abiertos: todas las etiquetas <item (si difieren, hay un ítem
+ *    cortado o fuera de lugar → indice_cortado);
  *  · entero: termina en </channel></rss>;
  *  · enlaces: los de la lista blanca, sin repetir (una URL que aparece dos veces se pide una sola vez);
- *  · fuera: carpetas del SMN que no están en la lista ({ carpeta, n }); raros: ítems sin un <link> con la forma completa.
+ *  · fuera: carpetas del SMN que no están en la lista ({ carpeta, n });
+ *  · raros: CADA <link> de un ítem que no tiene la forma completa (aunque el ítem tenga otro bueno), más cada ítem sin
+ *    ningún <link>.
  */
 export function leerIndice(texto) {
-  const t = String(texto == null ? '' : texto);
-  const items = t.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/g) || [];
-  const abiertos = (t.match(/<item[\s>]/g) || []).length;
-  const entero = /<\/channel>\s*<\/rss>\s*$/.test(t);
+  const t0 = String(texto == null ? '' : texto);
+  const entero = /<\/channel>\s*<\/rss>\s*$/.test(t0);
+  const t = sinComentariosNiCdata(t0);
+  const abiertos = (t.match(/<item[\s>/]/g) || []).length;
   const vistos = new Set(), enlaces = [], fuera = {}, porCarpeta = {};
-  let raros = 0;
-  for (const it of items) {
-    const links = it.match(/<link>([^<]*)<\/link>/g) || [];
-    let alguno = false;
-    for (const l of links) {
-      const url = l.slice(6, -7).trim().replace(ENT, (_, e) => ENT_V[e]);
-      const m = RE_LINK.exec(url);
-      if (!m) continue;
-      alguno = true;
-      const carpeta = m[2];
-      if (!CARPETAS.includes(carpeta)) { fuera[carpeta] = (fuera[carpeta] || 0) + 1; continue; }
-      if (vistos.has(url)) continue;
-      vistos.add(url);
-      porCarpeta[carpeta] = (porCarpeta[carpeta] || 0) + 1;
-      enlaces.push({ url, carpeta, archivo: m[3] });
+  let raros = 0, items = 0;
+  const anotar = (l) => {
+    const url = l.trim().replace(ENT, (_, e) => ENT_V[e]);
+    const m = RE_LINK.exec(url);
+    if (!m) { raros++; return; }
+    const carpeta = m[2];
+    if (!CARPETAS.includes(carpeta)) { fuera[carpeta] = (fuera[carpeta] || 0) + 1; return; }
+    if (vistos.has(url)) return;
+    vistos.add(url);
+    porCarpeta[carpeta] = (porCarpeta[carpeta] || 0) + 1;
+    enlaces.push({ url, carpeta, archivo: m[3] });
+  };
+  const pila = [];
+  let item = null, link = null, desde = 0, m;   // item = los links del <item> abierto; link = su texto (null: no hay)
+  RE_TAG.lastIndex = 0;
+  while ((m = RE_TAG.exec(t))) {
+    if (link != null) link += t.slice(desde, m.index);
+    desde = RE_TAG.lastIndex;
+    const [, cierre, nombre, auto] = m;
+    if (cierre) {
+      const i = pila.lastIndexOf(nombre);
+      if (i < 0) continue;
+      const camino = pila.slice(0, i + 1).join('>');
+      if (camino === LINK && item) { item.push(link ?? ''); link = null; }
+      else if (camino === ITEM && item) { items++; if (!item.length) raros++; for (const l of item) anotar(l); item = null; link = null; }
+      pila.length = i;
+      continue;
     }
-    if (!alguno) raros++;
+    const camino = [...pila, nombre].join('>');
+    if (auto) { if (camino === LINK && item) item.push(''); continue; }
+    pila.push(nombre);
+    if (camino === ITEM) { item = []; link = null; }
+    else if (camino === LINK && item) link = '';
+    else if (link != null) link = '\u0000';   // marcado adentro del <link>: no es una URL (queda raro)
   }
-  return { items: items.length, abiertos, entero, enlaces, por_carpeta: porCarpeta, fuera, raros };
+  return { items, abiertos, entero, enlaces, por_carpeta: porCarpeta, fuera, raros };
 }
 
 /** ¿parece un aviso CAP? (no se valida más: se guarda tal cual; esto sólo marca lo que no lo parece). */

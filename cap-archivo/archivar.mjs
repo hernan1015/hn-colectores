@@ -25,8 +25,8 @@ export function lineaResumen(r) {
   const x = r.resumen;
   return `cap-archivo${x.modo === 'seco' ? ' (SECO)' : ''}: índice HTTP ${x.indice.http ?? '—'} · ${(x.indice.bytes / 1024).toFixed(0)} KB · ` +
     `${x.indice.nuevo == null ? '—' : x.indice.nuevo ? 'NUEVO' : 'igual al anterior'} · ${x.indice.items} ítems, ${x.xml.en_indice} XML en la lista blanca · ` +
-    `pedidos ${x.pedidos} · XML nuevos ${x.xml.nuevos}, repetidos por hash ${x.xml.repetidos_hash}, ya guardados ${x.xml.ya_guardados}, ` +
-    `no disponibles ${x.xml.no_disponibles}, cortados ${x.xml.cortados}, sin pedir ${x.xml.sin_pedir} · ${x.tag}/${x.asset || '—'} · ` +
+    `pedidos ${x.pedidos} · XML nuevos ${x.xml.nuevos}, repetidos por hash ${x.xml.repetidos_hash}, ya guardados ${x.xml.ya_guardados}, fallidos antes ${x.xml.ya_fallidos}, ` +
+    `no disponibles ${x.xml.no_disponibles}, redirigidos ${x.xml.redirigidos}, cortados ${x.xml.cortados}, sin pedir ${x.xml.sin_pedir} · ${x.tag}/${x.asset || '—'} · ` +
     `fallas ${x.fallas} · errores ${x.errores}`;
 }
 

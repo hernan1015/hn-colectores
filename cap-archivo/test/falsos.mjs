@@ -21,6 +21,8 @@ export function indiceCon(links) {
 /**
  * El SMN falso. `rutas`: url → { status, cuerpo, headers } o una función (url, n) → eso. Sin ruta, un XML de la carpeta
  * de avisos contesta un CAP mínimo y el índice contesta `indice`. Anota cada pedido (url, User-Agent).
+ * Un 3xx con `Location` se SIGUE (como fetch por defecto: otro pedido, anotado) salvo que el pedido traiga
+ * redirect: 'manual'. `cuerpo` puede ser un Buffer (para probar bytes exactos).
  */
 export function smnFalso({ indice = INDICE_1426, rutas = {} } = {}) {
   const pedidos = [];
@@ -31,22 +33,23 @@ export function smnFalso({ indice = INDICE_1426, rutas = {} } = {}) {
     if (typeof r === 'function') r = r(url, n);
     if (r && r.lanzar) throw Object.assign(new Error('fetch failed'), { cause: { code: r.lanzar } });
     if (!r) r = url === 'https://ssl.smn.gob.ar/CAP/AR.php' ? { status: 200, cuerpo: indice } : /\/feeds\/CAP\/[\w-]+\/[\w.-]+\.xml$/.test(url) ? { status: 200, cuerpo: capDe(url) } : { status: 404, cuerpo: 'no' };
-    const buf = Buffer.from(r.cuerpo || '', 'utf8');
+    const buf = Buffer.isBuffer(r.cuerpo) ? r.cuerpo : Buffer.from(r.cuerpo || '', 'utf8');
     const h = new Map(Object.entries(r.headers || {}).map(([k, v]) => [k.toLowerCase(), v]));
+    if (r.status >= 300 && r.status < 400 && h.get('location') && opts.redirect !== 'manual') return fetchFn(new URL(h.get('location'), url).href, opts);
     return { status: r.status, ok: r.status >= 200 && r.status < 300, headers: { get: (k) => h.get(k.toLowerCase()) ?? null }, arrayBuffer: async () => buf };
   };
   return { fetchFn, pedidos };
 }
 
 /** El almacén de releases falso, con la interfaz de lib/releases.mjs (release/assets/subir/reemplazar/leerVarios/bajar). */
-export function almacenFalso({ fallarSubida = false } = {}) {
+export function almacenFalso({ fallarSubida = false, previos = {} } = {}) {
   const rels = new Map();   // tag → { id, tag, archivos: Map(nombre → Buffer), notas }
   let id = 1;
   const llamadas = [];
   const cliente = {
     async release(tag, { crear = false, notas = '' } = {}) {
       llamadas.push('release ' + tag + (crear ? ' (crear)' : ''));
-      if (!rels.has(tag) && crear) rels.set(tag, { id: id++, tag, archivos: new Map(), notas });
+      if (!rels.has(tag) && crear) rels.set(tag, { id: id++, tag, archivos: new Map(Object.entries(previos[tag] || {})), notas });
       return rels.get(tag) || null;
     },
     async assets(rel) { return rel ? [...rel.archivos.keys()].map((name) => ({ id: rel.tag + '/' + name, name, state: 'uploaded' })) : []; },

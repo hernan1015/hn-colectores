@@ -1,7 +1,8 @@
 // HN AGRO · ARCHIVO DEL ÍNDICE CAP (225) · el ESTADO entre corridas: qué URL ya se pidió (y con qué hash quedó
 // guardada), el hash del último índice y la pausa después de un corte del SMN.
 // Vive como asset `estado__<sello>.json.gz` en la release del día (se reemplaza: el nuevo antes que el viejo). Al
-// empezar el día se lee el de la release del día anterior (hasta DIAS_ATRAS). Sin estado, se arranca vacío: en ese caso
+// empezar el día se lee el de la release del día anterior (hasta DIAS_ATRAS). Un estado que existe y no se lee FRENA la
+// corrida (flujo.mjs, estado_ilegible). Sin ningún estado, se arranca vacío: en ese caso
 // se vuelven a pedir los XML del índice vigente (una vez; es la única forma de no perderlos).
 import zlib from 'node:zlib';
 
