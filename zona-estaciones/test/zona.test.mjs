@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { clasificar, porcentajes } from '../lib/regla.mjs';
 import { tileDe, pixelGlobal, centroPixel, ventana, tileDePixel } from '../lib/grilla.mjs';
-import { leerVentanas, contarVentana } from '../lib/worldcover.mjs';
+import { leerVentanas, contarVentana, TileInexistente } from '../lib/worldcover.mjs';
 import { detalle, leerCsv, CITA } from '../clasificar-zona.mjs';
 
 const fx = JSON.parse(fs.readFileSync(new URL('./fixtures/ventanas-regla.json', import.meta.url), 'utf8'));
@@ -18,8 +18,10 @@ for (const c of fx.casos) {
 }
 
 test('porcentajes: suman ~100 y excluyen el 0', () => {
-  const { total, pct } = porcentajes({ 0: 50, 40: 30, 50: 10 });
+  const { total, circulo, cobertura, pct } = porcentajes({ 0: 50, 40: 30, 50: 10 });
   assert.equal(total, 40);
+  assert.equal(circulo, 90);
+  assert.equal(cobertura, 44.4);
   assert.equal(pct[40], 75);
   assert.equal(pct[50], 25);
 });
@@ -53,7 +55,7 @@ function tilesFalsos(f, { faltan = [], roto = [] } = {}) {
   const pedidos = [];
   const abrir = async (nombre) => {
     pedidos.push(nombre);
-    if (faltan.includes(nombre)) throw new Error('Request failed with status code 404 Not Found');
+    if (faltan.includes(nombre)) throw new TileInexistente();
     if (roto.includes(nombre)) throw new Error('Request failed with status code 503');
     // el origen del tile en píxeles globales, a partir del nombre
     const lat = (nombre[0] === 'S' ? -1 : 1) * Number(nombre.slice(1, 3)) + 1.5, lon = (nombre[3] === 'W' ? -1 : 1) * Number(nombre.slice(4, 7)) + 1.5;
@@ -120,7 +122,7 @@ test('control negativo: un tile inexistente (404) da sin_dato, no una zona inven
   const m = await leerVentanas([{ clave: 'mar', lat: -52.5, lon: -58.5 }], { abrir, pausaTileMs: 0, pausaLecturaMs: 0 });
   const z = detalle(m.get('mar'), -52.5, -58.5);
   assert.equal(z.zona, 'sin_dato');
-  assert.deepEqual(m.get('mar').faltantes, ['S54W060']);
+  assert.equal(m.get('mar').faltantes, 1);
 });
 
 test('control negativo: un 503 de S3 corta (no se toma como «sin dato»)', async () => {

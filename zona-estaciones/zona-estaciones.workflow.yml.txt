@@ -41,6 +41,7 @@ jobs:
       - name: Clasificar
         env:
           ZONA_PG_URL: ${{ secrets.ZONA_PG_URL }}   # postgresql://clasificador_zona.<ref>:<clave>@<pooler>:6543/postgres (rol 0153; nunca se imprime)
+          ZONA_PG_CA: ${{ secrets.ZONA_PG_CA }}     # la CA de Supabase en PEM (prod-ca-2021.crt): sin ella no conecta (TLS que autentica al servidor)
           MODO: ${{ inputs.modo }}
           TODAS: ${{ inputs.todas }}
         run: |

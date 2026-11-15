@@ -4,8 +4,10 @@
 // pide el encabezado y después sólo los bloques que toca la ventana de cada estación (≈ 1 bloque por estación).
 // Reglas de la bajada (pedido 257): un tile por vez, en orden, con pausa entre tiles; cero pedidos en paralelo; lo ya
 // leído no se vuelve a pedir (caché por punto en disco, si se pasa `cache`).
+// El log y los errores llevan sólo cantidades y mensajes nuestros: nada de nombres de tile ni el texto de un error ajeno.
 import { ventana, centroPixel, distM } from './grilla.mjs';
 import { urlTile } from './grilla.mjs';
+import { NO_LEIDO } from './regla.mjs';
 
 export const RADIOS_M = [100, 250, 500];
 
@@ -14,7 +16,8 @@ const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * Los conteos de clases de una ventana ya leída.
  * `caja` = { gx0, gy0, gx1, gy1 } (píxeles globales, x1/y1 exclusivos) y `datos` = Uint8Array fila por fila.
- * Devuelve { pixel: clase del píxel del punto, conteos: { [radio]: { [clase]: n } } }.
+ * Devuelve { pixel: clase del píxel del punto (null si no se leyó), conteos: { [radio]: { [clase]: n } } }.
+ * Los píxeles no leídos (NO_LEIDO = 255) se cuentan aparte, con su clave 255: son parte del círculo, no dato.
  */
 export function contarVentana(lat, lon, caja, datos, radios = RADIOS_M) {
   const ancho = caja.gx1 - caja.gx0, alto = caja.gy1 - caja.gy0;
@@ -26,7 +29,7 @@ export function contarVentana(lat, lon, caja, datos, radios = RADIOS_M) {
     for (let x = 0; x < ancho; x++) {
       const gx = caja.gx0 + x, gy = caja.gy0 + y;
       const v = datos[y * ancho + x];
-      if (gx === gxP && gy === gyP) pixel = v;
+      if (gx === gxP && gy === gyP) pixel = v === NO_LEIDO ? null : v;
       const c = centroPixel(gx, gy);
       const d = distM(lat, lon, c.lat, c.lon);
       for (const r of radios) if (d <= r) conteos[r][v] = (conteos[r][v] || 0) + 1;
@@ -35,18 +38,37 @@ export function contarVentana(lat, lon, caja, datos, radios = RADIOS_M) {
   return { pixel, conteos };
 }
 
-/** Abre un tile remoto con geotiff.js (import perezoso, así los tests de la regla no necesitan la dependencia). */
-export async function abrirRemoto(nombre) {
-  const { fromUrl } = await import('geotiff');
+/** Un tile que NO existe: S3 contestó 404 (y sólo 404). Lo marca nuestro código, no el texto de un error ajeno. */
+export class TileInexistente extends Error {
+  constructor() { super('el tile no existe (404)'); this.tileInexistente = true; }
+}
+/** Una falla de la lectura, con un mensaje NUESTRO (sin el nombre del tile ni el texto original del error). */
+export class FallaLectura extends Error {
+  constructor(que, status) { super(`${que}${status ? ` (HTTP ${status})` : ''}`); this.propio = true; this.status = status || null; }
+}
+
+/**
+ * Abre un tile remoto con geotiff.js (import perezoso, así los tests de la regla no necesitan la dependencia).
+ * `fetch` y `fromUrl` se inyectan en los tests (nunca hay red).
+ */
+export async function abrirRemoto(nombre, { fetch: pedir = globalThis.fetch, fromUrl = null } = {}) {
   // geotiff.js no dice el código HTTP («Request failed»): un pedido de 1 byte antes distingue el tile que no existe
-  // (S3 contesta 403/404 para una clave ausente) de una falla de verdad (5xx, red), que tiene que cortar.
-  const sonda = await fetch(urlTile(nombre), { headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(30000) });
-  await sonda.arrayBuffer().catch(() => {});
-  if (sonda.status === 404 || sonda.status === 403) throw new Error(`${sonda.status} Not Found`);
-  if (!sonda.ok) throw new Error(`HTTP ${sonda.status}`);
-  const tif = await fromUrl(urlTile(nombre), { allowFullFile: false });
-  const img = await tif.getImage(0);
-  if (img.getWidth() !== 36000 || img.getHeight() !== 36000) throw new Error(`tile ${nombre}: tamaño inesperado`);
+  // (404: la clave no está en el bucket público, que permite listar) de cualquier otra cosa. Un 403 NO es «no
+  // existe»: es un rechazo de acceso (el bucket cambió de permisos, una política, un proxy) y corta, igual que un
+  // 5xx, un 3xx o una falla de red. Sólo el 404 se toma como ausencia.
+  let sonda;
+  try { sonda = await pedir(urlTile(nombre), { headers: { Range: 'bytes=0-0' }, signal: AbortSignal.timeout(30000) }); }
+  catch { throw new FallaLectura('un tile no se pudo pedir'); }
+  try { await sonda.arrayBuffer(); } catch { /* el cuerpo de la sonda no importa */ }
+  if (sonda.status === 404) throw new TileInexistente();
+  if (sonda.status !== 200 && sonda.status !== 206) throw new FallaLectura('un tile no se pudo abrir', sonda.status);
+  if (!fromUrl) ({ fromUrl } = await import('geotiff'));
+  let tif, img;
+  try {
+    tif = await fromUrl(urlTile(nombre), { allowFullFile: false });
+    img = await tif.getImage(0);
+  } catch { throw new FallaLectura('un tile no se pudo abrir'); }
+  if (img.getWidth() !== 36000 || img.getHeight() !== 36000) throw new FallaLectura('un tile tiene un tamaño inesperado');
   return {
     async leer(x0, y0, x1, y1) {
       const r = await img.readRasters({ window: [x0, y0, x1, y1], samples: [0], interleave: true });
@@ -56,14 +78,16 @@ export async function abrirRemoto(nombre) {
   };
 }
 
-/** Un tile que no existe (mar abierto, fuera de la cobertura) → 404/403 de S3. */
-const esFaltante = (e) => /\b(404|403)\b|Not Found|Forbidden/i.test(String(e?.message || e));
+/** Sólo un TileInexistente (404) es un faltante. Nada de buscar «403» o «Not Found» en el texto de un error. */
+export const esFaltante = (e) => e?.tileInexistente === true;
 
 /**
  * Lee las ventanas de todos los puntos. `puntos` = [{ clave, lat, lon }].
  * Opciones: radios, abrir (inyectable para tests), cache ({ get(clave), set(clave, valor) }), pausaTileMs,
  * pausaLecturaMs, log (sólo cantidades).
- * Devuelve Map clave → { pixel, conteos, tiles, faltantes } (faltantes = tiles inexistentes que tocaba la ventana).
+ * Devuelve Map clave → { pixel, conteos, tiles, faltantes } (tiles = cuántos tiles toca la ventana; faltantes =
+ * cuántos de ellos no existen). Los píxeles de un tile inexistente quedan como NO_LEIDO (255): la regla los cuenta
+ * en el círculo pero no como dato, y así sabe qué fracción de la ventana está cubierta.
  */
 export async function leerVentanas(puntos, op = {}) {
   const radios = op.radios || RADIOS_M;
@@ -78,7 +102,7 @@ export async function leerVentanas(puntos, op = {}) {
     if (enCache) { out.set(p.clave, enCache); continue; }
     const v = ventana(p.lat, p.lon, radioMax);
     const ancho = v.caja.gx1 - v.caja.gx0, alto = v.caja.gy1 - v.caja.gy0;
-    pendientes.push({ ...p, v, buf: new Uint8Array(ancho * alto), ancho, faltantes: [] });
+    pendientes.push({ ...p, v, buf: new Uint8Array(ancho * alto).fill(NO_LEIDO), ancho, faltantes: 0 });
   }
   // Agrupar las partes por tile: cada tile se abre UNA vez y se lee entero lo que haga falta de él.
   const porTile = new Map();
@@ -88,17 +112,22 @@ export async function leerVentanas(puntos, op = {}) {
   }
   const nombres = [...porTile.keys()].sort();
   log(`ventanas: ${puntos.length} puntos, ${puntos.length - pendientes.length} en caché, ${pendientes.length} a leer en ${nombres.length} tiles`);
-  let i = 0;
+  let i = 0, inexistentes = 0;
   for (const nombre of nombres) {
     i++;
     let tile = null;
     try { tile = await abrir(nombre); } catch (e) {
-      if (!esFaltante(e)) throw new Error(`tile ${nombre}: no se pudo abrir (${String(e?.message || e).slice(0, 80)})`);
+      // sin el nombre del tile ni el texto del error original
+      if (!esFaltante(e)) throw (e?.propio ? e : new FallaLectura('un tile no se pudo abrir'));
+      inexistentes++;
     }
     for (const { p, parte } of porTile.get(nombre)) {
-      if (!tile) { p.faltantes.push(nombre); continue; } // queda en 0 = sin dato
-      const datos = await tile.leer(parte.x0, parte.y0, parte.x1, parte.y1);
+      if (!tile) { p.faltantes++; continue; } // queda en NO_LEIDO: la regla lo ve como faltante
+      let datos;
+      try { datos = await tile.leer(parte.x0, parte.y0, parte.x1, parte.y1); }
+      catch (e) { throw (e?.propio ? e : new FallaLectura('una ventana no se pudo leer')); }
       const w = parte.x1 - parte.x0;
+      if (!(datos instanceof Uint8Array) || datos.length !== w * (parte.y1 - parte.y0)) throw new FallaLectura('una ventana vino de otro tamaño');
       for (let y = 0; y < parte.y1 - parte.y0; y++) {
         const gy = parte.gy0 + parte.y0 + y, gx = parte.gx0 + parte.x0;
         p.buf.set(datos.subarray(y * w, (y + 1) * w), (gy - p.v.caja.gy0) * p.ancho + (gx - p.v.caja.gx0));
@@ -106,12 +135,13 @@ export async function leerVentanas(puntos, op = {}) {
       if (pausaLectura) await espera(pausaLectura);
     }
     tile?.cerrar?.();
-    log(`tile ${i}/${nombres.length} listo (${porTile.get(nombre).length} ventanas)${tile ? '' : ' · no existe: sin dato'}`);
+    log(`tile ${i}/${nombres.length} listo (${porTile.get(nombre).length} ventanas)${tile ? '' : ' · no existe (404): sin dato'}`);
     if (pausaTile && i < nombres.length) await espera(pausaTile);
   }
+  if (inexistentes) log(`tiles inexistentes (404): ${inexistentes}`);
   for (const p of pendientes) {
     const r = contarVentana(p.lat, p.lon, p.v.caja, p.buf, radios);
-    const valor = { ...r, tiles: p.v.partes.map((x) => x.nombre), faltantes: p.faltantes };
+    const valor = { ...r, tiles: p.v.partes.length, faltantes: p.faltantes };
     out.set(p.clave, valor);
     op.cache?.set(p.clave, valor);
   }

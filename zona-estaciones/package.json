@@ -5,7 +5,7 @@
   "description": "HN AGRO · 257 · la zona de cada estación (agricola / pastizal / urbana / natural) por ESA WorldCover 2021 v200",
   "scripts": {
     "clasificar": "node clasificar-zona.mjs",
-    "test": "node --test test/zona.test.mjs test/migracion.test.mjs",
+    "test": "node --test test/zona.test.mjs test/vuelta2.test.mjs test/migracion.test.mjs",
     "control-negativo": "node test/control-negativo.mjs"
   },
   "engines": { "node": ">=20" },

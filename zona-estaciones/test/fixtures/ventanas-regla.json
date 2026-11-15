@@ -13,6 +13,7 @@
     { "nombre": "empate cultivo-pastizal → agricola", "conteos": { "40": 1000, "30": 1000, "10": 500 }, "zona": "agricola" },
     { "nombre": "empate pastizal-natural → pastizal", "conteos": { "30": 1000, "10": 1000 }, "zona": "pastizal" },
     { "nombre": "sin dato (fuera de tiles)", "conteos": { "0": 2750 }, "zona": "sin_dato" },
-    { "nombre": "el 0 no cuenta en el porcentaje", "conteos": { "0": 2000, "40": 500, "50": 200 }, "zona": "agricola" }
+    { "nombre": "el 0 no cuenta en el porcentaje (760 de 2.500 con dato = 30,4 %; de 2.600 serían 29,2 %)", "conteos": { "0": 100, "50": 760, "40": 1740 }, "zona": "urbana" },
+    { "nombre": "poca cobertura (2.000 sin dato de 2.700) → sin_dato aunque lo que hay sea cultivo", "conteos": { "0": 2000, "40": 500, "50": 200 }, "zona": "sin_dato" }
   ]
 }
