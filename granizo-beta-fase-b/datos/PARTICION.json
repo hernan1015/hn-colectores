@@ -1,0 +1,1124 @@
+{
+ "que": "19 · validar el OJO DEL GRANIZO EN VIVO (_v1441: índice v2 + 3 patas, lib/granizo-vivo.mjs de main b3e3ea57) contra el catálogo G1 · SÓLO MEDIR, sin tocar umbrales · sellado antes de bajar un solo archivo GOES/GLM (pc-nanci, Agente A, 10/11/2026)",
+ "algoritmo": "armar() de netlify/functions/lib/granizo-vivo.mjs de origin/main b3e3ea57, tal cual, corrido con dep.ahora = cada instante y un fetch que (a) cambia noaa-goes19 por noaa-goes16 antes del 2025-04-07 (GOES-16 era GOES-Este; mismo producto ACHA y GLM) y (b) responde el pedido de H0 de Open-Meteo con historical-forecast-api del mismo día (un pedido por día UTC, en caché local), y (c) NO baja ACTPF (fase): responde 404. Se declara por qué no cambia nada: «destacada» exige las 3 patas completas, y la fase sólo decide entre G = 0 y G = null (los dos impiden la pata «crece») y entre P=T=G=0 y null en celdas SIN tope (que no pueden tener la pata «altura»). Ninguna celda destacada depende de la fase",
+ "base": "G3-lote/EPISODIOS.md (sello d7f95726…): 28 confirmados + 14 controles. Es la MUESTRA de 15 + 14 que permite el pedido de local (15 + 15; hay sólo 14 controles sellados en G3 y no se inventa uno)",
+ "confirmados_regla": "de los 28: los episodios con al menos un evento celda-hora del piloto que no sea hora inferida del GOES (C-20261103-02/-03). Se SACA 2026-11-03 entero: es el caso con que se armó el índice v2 (laboratorio del 3/11), sería circular. Quedan 18; se toman 15 por orden de sha256(episodio + \"|v1441-19\") (sin mirar datos)",
+ "confirmados_fuera_de_muestra": [
+  "2024-03-08",
+  "2026-10-29",
+  "2026-07-31"
+ ],
+ "instantes": "cada scan ACHAF (cada 10 min) cuyo INICIO cae en la ventana; dep.ahora = inicio del scan + 13 min (el archivo sale ~12 min después)",
+ "acierto": "un evento es ACIERTO si en algún scan con inicio en [hora_ini − 2 h, hora_fin] hay una celda DESTACADA (3 patas) cuyo centro está a ≤ 30 km del punto del evento. Episodio acertado = algún evento suyo acertado",
+ "anticipacion": "para un acierto: (hora del reporte = fecha_hora_utc) − (creación _c del primer archivo ACHAF con celda destacada a ≤ 30 km dentro de la ventana): es el adelanto con que el productor lo habría VISTO; también se da contra el inicio del scan",
+ "control": "un día de control tiene FALSA ALARMA si en algún scan con inicio en [hora_ini − 2 h, hora_fin] de alguna de sus horas de tormenta sin granizo (uso_far alta) hay una celda destacada a ≤ 30 km de esa estación",
+ "sin_dato": "un scan sin ACHAF t o con GLM incompleto (ok:false o parcial por glm/achaf) no cuenta; un evento/día sin NINGÚN scan completo en su ventana sale del denominador y se dice",
+ "metricas": "POD = episodios acertados / episodios con dato (IC 95 % de Wilson); falsa alarma por día de control = días con alarma / días con dato (Wilson); FAR = alarmas de control / (aciertos + alarmas de control), declarado que mezcla dos muestras; anticipación mediana con IC por bootstrap (2000, semilla fija 19); además por evento",
+ "no_se_toca": "ningún umbral (UMBRAL_PATA 0,5, H_MIN_CRECE_KM 8, pesos, 30 km); el criterio de acierto de arriba no se cambia después de mirar",
+ "cuidado_con_terceros": "NOAA AWS público, 24 descargas en paralelo como la función, sin guardar los GLM en disco (sólo el resultado por instante); Open-Meteo: un pedido de 54 puntos por día UTC, con caché local y pausa ≥ 8 s",
+ "confirmados": [
+  {
+   "episodio": "2024-12-05",
+   "eventos": [
+    {
+     "id": "C-20241205-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2024-12-06T04:47Z",
+     "ini": "2024-12-06T04:47Z",
+     "fin": "2024-12-06T04:47Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-05-17",
+   "eventos": [
+    {
+     "id": "C-20250517-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2025-05-17T20:00Z",
+     "ini": "2025-05-17T19:30Z",
+     "fin": "2025-05-17T20:30Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero / Rosario (San Eduardo y zona del aeropuerto) / Funes",
+     "diametro_cm": "4.3"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-10-04",
+   "eventos": [
+    {
+     "id": "C-20251004-03",
+     "lat": -34.135,
+     "lon": -63.362,
+     "t": "2025-10-04T20:50Z",
+     "ini": "2025-10-04T20:50Z",
+     "fin": "2025-10-04T20:50Z",
+     "inc_h": 0.25,
+     "inc_km": 3,
+     "localidad": "Laboulaye Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-02-24",
+   "eventos": [
+    {
+     "id": "C-20250224-01",
+     "lat": -33.667,
+     "lon": -61.967,
+     "t": "2025-02-24T13:50Z",
+     "ini": "2025-02-24T12:50Z",
+     "fin": "2025-02-24T14:50Z",
+     "inc_h": 0.25,
+     "inc_km": 3,
+     "localidad": "Venado Tuerto Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-08-01",
+   "eventos": [
+    {
+     "id": "C-20250801-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2025-08-01T14:06Z",
+     "ini": "2025-08-01T14:06Z",
+     "fin": "2025-08-01T14:06Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "<0.5"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-10-11",
+   "eventos": [
+    {
+     "id": "C-20251011-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2025-10-11T19:53Z",
+     "ini": "2025-10-11T19:53Z",
+     "fin": "2025-10-11T19:53Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "<0.5"
+    }
+   ]
+  },
+  {
+   "episodio": "2022-02-27",
+   "eventos": [
+    {
+     "id": "C-20220227-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2022-02-27T20:27Z",
+     "ini": "2022-02-27T20:27Z",
+     "fin": "2022-02-27T20:27Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-02-04",
+   "eventos": [
+    {
+     "id": "C-20250204-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2025-02-05T11:28Z",
+     "ini": "2025-02-05T11:28Z",
+     "fin": "2025-02-05T11:28Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-03-27",
+   "eventos": [
+    {
+     "id": "C-20250327-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2025-03-28T11:00Z",
+     "ini": "2025-03-28T10:30Z",
+     "fin": "2025-03-28T11:30Z",
+     "inc_h": 0.23,
+     "inc_km": 3,
+     "localidad": "Rosario Aero / Funes / Roldán / Granadero Baigorria / Ybarlucea",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2022-11-09",
+   "eventos": [
+    {
+     "id": "C-20221109-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2022-11-10T08:50Z",
+     "ini": "2022-11-10T08:50Z",
+     "fin": "2022-11-10T08:50Z",
+     "inc_h": 0.25,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2025-12-11",
+   "eventos": [
+    {
+     "id": "C-20251211-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2025-12-11T16:24Z",
+     "ini": "2025-12-11T16:24Z",
+     "fin": "2025-12-11T16:24Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "<0.5"
+    }
+   ]
+  },
+  {
+   "episodio": "2023-04-03",
+   "eventos": [
+    {
+     "id": "C-20230403-01",
+     "lat": -33.667,
+     "lon": -61.967,
+     "t": "2023-04-03T19:50Z",
+     "ini": "2023-04-03T19:50Z",
+     "fin": "2023-04-03T19:50Z",
+     "inc_h": 0.25,
+     "inc_km": 3,
+     "localidad": "Venado Tuerto Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2023-05-25",
+   "eventos": [
+    {
+     "id": "C-20230525-01",
+     "lat": -34.546,
+     "lon": -60.931,
+     "t": "2023-05-26T02:50Z",
+     "ini": "2023-05-26T02:50Z",
+     "fin": "2023-05-26T02:50Z",
+     "inc_h": 0.25,
+     "inc_km": 3,
+     "localidad": "Junín Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-05-06",
+   "eventos": [
+    {
+     "id": "C-20260506-01",
+     "lat": -32.904,
+     "lon": -60.785,
+     "t": "2026-05-07T03:37Z",
+     "ini": "2026-05-07T03:37Z",
+     "fin": "2026-05-07T03:37Z",
+     "inc_h": 0.2,
+     "inc_km": 3,
+     "localidad": "Rosario Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  },
+  {
+   "episodio": "2023-10-29",
+   "eventos": [
+    {
+     "id": "C-20231029-02",
+     "lat": -32.684,
+     "lon": -62.158,
+     "t": "2023-10-30T05:50Z",
+     "ini": "2023-10-30T05:50Z",
+     "fin": "2023-10-30T05:50Z",
+     "inc_h": 0.25,
+     "inc_km": 3,
+     "localidad": "Marcos Juárez Aero",
+     "diametro_cm": "desconocido"
+    }
+   ]
+  }
+ ],
+ "controles": [
+  {
+   "episodio": "2026-03-27",
+   "horas": [
+    {
+     "id": "A-20260327-15839",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-03-28T06:00Z",
+     "fin": "2026-03-28T07:00Z"
+    },
+    {
+     "id": "A-20260327-15840",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-03-28T07:00Z",
+     "fin": "2026-03-28T08:00Z"
+    },
+    {
+     "id": "A-20260327-15841",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-03-28T08:00Z",
+     "fin": "2026-03-28T09:00Z"
+    },
+    {
+     "id": "A-20260327-15842",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-03-28T09:00Z",
+     "fin": "2026-03-28T10:00Z"
+    },
+    {
+     "id": "A-20260327-15843",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-03-28T10:00Z",
+     "fin": "2026-03-28T11:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-04-01",
+   "horas": [
+    {
+     "id": "A-20260401-15845",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-01T12:00Z",
+     "fin": "2026-04-01T13:00Z"
+    },
+    {
+     "id": "A-20260401-15846",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-01T13:00Z",
+     "fin": "2026-04-01T14:00Z"
+    },
+    {
+     "id": "A-20260401-15847",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-01T14:00Z",
+     "fin": "2026-04-01T15:00Z"
+    },
+    {
+     "id": "A-20260401-15857",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-02T05:00Z",
+     "fin": "2026-04-02T06:00Z"
+    },
+    {
+     "id": "A-20260401-15858",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-02T06:00Z",
+     "fin": "2026-04-02T07:00Z"
+    },
+    {
+     "id": "A-20260401-15859",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-02T07:00Z",
+     "fin": "2026-04-02T08:00Z"
+    },
+    {
+     "id": "A-20260401-15860",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-02T08:00Z",
+     "fin": "2026-04-02T09:00Z"
+    },
+    {
+     "id": "A-20260401-15861",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-02T09:00Z",
+     "fin": "2026-04-02T10:00Z"
+    },
+    {
+     "id": "A-20260401-15863",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-02T10:00Z",
+     "fin": "2026-04-02T11:00Z"
+    },
+    {
+     "id": "A-20260401-15866",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T10:00Z",
+     "fin": "2026-04-02T11:00Z"
+    },
+    {
+     "id": "A-20260401-15867",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-02T11:00Z",
+     "fin": "2026-04-02T12:00Z"
+    },
+    {
+     "id": "A-20260401-15870",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T11:00Z",
+     "fin": "2026-04-02T12:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-04-02",
+   "horas": [
+    {
+     "id": "A-20260402-15872",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T12:00Z",
+     "fin": "2026-04-02T13:00Z"
+    },
+    {
+     "id": "A-20260402-15874",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T13:00Z",
+     "fin": "2026-04-02T14:00Z"
+    },
+    {
+     "id": "A-20260402-15875",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T14:00Z",
+     "fin": "2026-04-02T15:00Z"
+    },
+    {
+     "id": "A-20260402-15876",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T15:00Z",
+     "fin": "2026-04-02T16:00Z"
+    },
+    {
+     "id": "A-20260402-15877",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T16:00Z",
+     "fin": "2026-04-02T17:00Z"
+    },
+    {
+     "id": "A-20260402-15878",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-02T17:00Z",
+     "fin": "2026-04-02T18:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-04-03",
+   "horas": [
+    {
+     "id": "A-20260403-15879",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-03T15:00Z",
+     "fin": "2026-04-03T16:00Z"
+    },
+    {
+     "id": "A-20260403-15880",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-03T16:00Z",
+     "fin": "2026-04-03T17:00Z"
+    },
+    {
+     "id": "A-20260403-15881",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-03T17:00Z",
+     "fin": "2026-04-03T18:00Z"
+    },
+    {
+     "id": "A-20260403-15883",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-03T18:00Z",
+     "fin": "2026-04-03T19:00Z"
+    },
+    {
+     "id": "A-20260403-15885",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-03T19:00Z",
+     "fin": "2026-04-03T20:00Z"
+    },
+    {
+     "id": "A-20260403-15887",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-03T20:00Z",
+     "fin": "2026-04-03T21:00Z"
+    },
+    {
+     "id": "A-20260403-15890",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-03T22:00Z",
+     "fin": "2026-04-03T23:00Z"
+    },
+    {
+     "id": "A-20260403-15892",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-03T23:00Z",
+     "fin": "2026-04-04T00:00Z"
+    },
+    {
+     "id": "A-20260403-15894",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-04T00:00Z",
+     "fin": "2026-04-04T01:00Z"
+    },
+    {
+     "id": "A-20260403-15895",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-04T01:00Z",
+     "fin": "2026-04-04T02:00Z"
+    },
+    {
+     "id": "A-20260403-15896",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-04T02:00Z",
+     "fin": "2026-04-04T03:00Z"
+    },
+    {
+     "id": "A-20260403-15897",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-04T03:00Z",
+     "fin": "2026-04-04T04:00Z"
+    },
+    {
+     "id": "A-20260403-15898",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-04T04:00Z",
+     "fin": "2026-04-04T05:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-04-06",
+   "horas": [
+    {
+     "id": "A-20260406-15906",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-06T14:00Z",
+     "fin": "2026-04-06T15:00Z"
+    },
+    {
+     "id": "A-20260406-15907",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-06T15:00Z",
+     "fin": "2026-04-06T16:00Z"
+    },
+    {
+     "id": "A-20260406-15909",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-06T16:00Z",
+     "fin": "2026-04-06T17:00Z"
+    },
+    {
+     "id": "A-20260406-15912",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-06T17:00Z",
+     "fin": "2026-04-06T18:00Z"
+    },
+    {
+     "id": "A-20260406-15915",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-06T18:00Z",
+     "fin": "2026-04-06T19:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-04-25",
+   "horas": [
+    {
+     "id": "A-20260425-15964",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-25T14:00Z",
+     "fin": "2026-04-25T15:00Z"
+    },
+    {
+     "id": "A-20260425-15965",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-25T15:00Z",
+     "fin": "2026-04-25T16:00Z"
+    },
+    {
+     "id": "A-20260425-15966",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-25T16:00Z",
+     "fin": "2026-04-25T17:00Z"
+    },
+    {
+     "id": "A-20260425-15967",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-04-25T17:00Z",
+     "fin": "2026-04-25T18:00Z"
+    },
+    {
+     "id": "A-20260425-15968",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-25T18:00Z",
+     "fin": "2026-04-25T19:00Z"
+    },
+    {
+     "id": "A-20260425-15969",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-04-25T19:00Z",
+     "fin": "2026-04-25T20:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-06-18",
+   "horas": [
+    {
+     "id": "A-20260618-16042",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-06-18T14:00Z",
+     "fin": "2026-06-18T15:00Z"
+    },
+    {
+     "id": "A-20260618-16044",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-06-18T15:00Z",
+     "fin": "2026-06-18T16:00Z"
+    },
+    {
+     "id": "A-20260618-16046",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-06-18T16:00Z",
+     "fin": "2026-06-18T17:00Z"
+    },
+    {
+     "id": "A-20260618-16048",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-06-18T17:00Z",
+     "fin": "2026-06-18T18:00Z"
+    },
+    {
+     "id": "A-20260618-16049",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-06-18T18:00Z",
+     "fin": "2026-06-18T19:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-08-06",
+   "horas": [
+    {
+     "id": "A-20260806-16152",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-08-06T12:00Z",
+     "fin": "2026-08-06T13:00Z"
+    },
+    {
+     "id": "A-20260806-16154",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-06T12:00Z",
+     "fin": "2026-08-06T13:00Z"
+    },
+    {
+     "id": "A-20260806-16156",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-08-06T13:00Z",
+     "fin": "2026-08-06T14:00Z"
+    },
+    {
+     "id": "A-20260806-16157",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-06T13:00Z",
+     "fin": "2026-08-06T14:00Z"
+    },
+    {
+     "id": "A-20260806-16159",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-08-06T14:00Z",
+     "fin": "2026-08-06T15:00Z"
+    },
+    {
+     "id": "A-20260806-16161",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-08-06T15:00Z",
+     "fin": "2026-08-06T16:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-08-29",
+   "horas": [
+    {
+     "id": "A-20260829-16381",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-29T18:00Z",
+     "fin": "2026-08-29T19:00Z"
+    },
+    {
+     "id": "A-20260829-16382",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-29T19:00Z",
+     "fin": "2026-08-29T20:00Z"
+    },
+    {
+     "id": "A-20260829-16383",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-29T20:00Z",
+     "fin": "2026-08-29T21:00Z"
+    },
+    {
+     "id": "A-20260829-16384",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-29T21:00Z",
+     "fin": "2026-08-29T22:00Z"
+    },
+    {
+     "id": "A-20260829-16385",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-29T22:00Z",
+     "fin": "2026-08-29T23:00Z"
+    },
+    {
+     "id": "A-20260829-16386",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-08-29T23:00Z",
+     "fin": "2026-08-30T00:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-09-09",
+   "horas": [
+    {
+     "id": "A-20260909-16495",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-09T17:00Z",
+     "fin": "2026-09-09T18:00Z"
+    },
+    {
+     "id": "A-20260909-16496",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-09T18:00Z",
+     "fin": "2026-09-09T19:00Z"
+    },
+    {
+     "id": "A-20260909-16497",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-09T19:00Z",
+     "fin": "2026-09-09T20:00Z"
+    },
+    {
+     "id": "A-20260909-16498",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-09T20:00Z",
+     "fin": "2026-09-09T21:00Z"
+    },
+    {
+     "id": "A-20260909-16499",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-09T21:00Z",
+     "fin": "2026-09-09T22:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-09-10",
+   "horas": [
+    {
+     "id": "A-20260910-16501",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-10T19:00Z",
+     "fin": "2026-09-10T20:00Z"
+    },
+    {
+     "id": "A-20260910-16502",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-10T20:00Z",
+     "fin": "2026-09-10T21:00Z"
+    },
+    {
+     "id": "A-20260910-16503",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-10T21:00Z",
+     "fin": "2026-09-10T22:00Z"
+    },
+    {
+     "id": "A-20260910-16504",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-10T22:00Z",
+     "fin": "2026-09-10T23:00Z"
+    },
+    {
+     "id": "A-20260910-16506",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-10T23:00Z",
+     "fin": "2026-09-11T00:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-09-11",
+   "horas": [
+    {
+     "id": "A-20260911-16508",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-11T17:00Z",
+     "fin": "2026-09-11T18:00Z"
+    },
+    {
+     "id": "A-20260911-16509",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-11T18:00Z",
+     "fin": "2026-09-11T19:00Z"
+    },
+    {
+     "id": "A-20260911-16511",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-11T19:00Z",
+     "fin": "2026-09-11T20:00Z"
+    },
+    {
+     "id": "A-20260911-16513",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-11T20:00Z",
+     "fin": "2026-09-11T21:00Z"
+    },
+    {
+     "id": "A-20260911-16515",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-11T21:00Z",
+     "fin": "2026-09-11T22:00Z"
+    },
+    {
+     "id": "A-20260911-16517",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-11T22:00Z",
+     "fin": "2026-09-11T23:00Z"
+    },
+    {
+     "id": "A-20260911-16519",
+     "estacion": "Río Cuarto Aero",
+     "lat": -33.085,
+     "lon": -64.261,
+     "ini": "2026-09-11T23:00Z",
+     "fin": "2026-09-12T00:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-09-20",
+   "horas": [
+    {
+     "id": "A-20260920-16529",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T14:00Z",
+     "fin": "2026-09-20T15:00Z"
+    },
+    {
+     "id": "A-20260920-16532",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T15:00Z",
+     "fin": "2026-09-20T16:00Z"
+    },
+    {
+     "id": "A-20260920-16535",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T16:00Z",
+     "fin": "2026-09-20T17:00Z"
+    },
+    {
+     "id": "A-20260920-16537",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T17:00Z",
+     "fin": "2026-09-20T18:00Z"
+    },
+    {
+     "id": "A-20260920-16538",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T18:00Z",
+     "fin": "2026-09-20T19:00Z"
+    },
+    {
+     "id": "A-20260920-16539",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T19:00Z",
+     "fin": "2026-09-20T20:00Z"
+    },
+    {
+     "id": "A-20260920-16540",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T20:00Z",
+     "fin": "2026-09-20T21:00Z"
+    },
+    {
+     "id": "A-20260920-16543",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T21:00Z",
+     "fin": "2026-09-20T22:00Z"
+    },
+    {
+     "id": "A-20260920-16546",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T22:00Z",
+     "fin": "2026-09-20T23:00Z"
+    },
+    {
+     "id": "A-20260920-16548",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-20T23:00Z",
+     "fin": "2026-09-21T00:00Z"
+    },
+    {
+     "id": "A-20260920-16550",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-09-21T00:00Z",
+     "fin": "2026-09-21T01:00Z"
+    }
+   ]
+  },
+  {
+   "episodio": "2026-10-02",
+   "horas": [
+    {
+     "id": "A-20261002-16799",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-10-03T07:00Z",
+     "fin": "2026-10-03T08:00Z"
+    },
+    {
+     "id": "A-20261002-16800",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-10-03T08:00Z",
+     "fin": "2026-10-03T09:00Z"
+    },
+    {
+     "id": "A-20261002-16801",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-10-03T09:00Z",
+     "fin": "2026-10-03T10:00Z"
+    },
+    {
+     "id": "A-20261002-16803",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-10-03T10:00Z",
+     "fin": "2026-10-03T11:00Z"
+    },
+    {
+     "id": "A-20261002-16804",
+     "estacion": "Rosario Aero",
+     "lat": -32.904,
+     "lon": -60.785,
+     "ini": "2026-10-03T11:00Z",
+     "fin": "2026-10-03T12:00Z"
+    }
+   ]
+  }
+ ]
+}
