@@ -1,3 +1,4 @@
+# ⚠ COPIAR A .github/workflows/estaciones-parseo.yml (lo hace local: el token de pc-nanci no tiene el permiso «workflow»).
 # HN AGRO · el parseo de las estaciones de USO INTERNO: R2 (lo que guardó la ronda) → estaciones / estaciones_obs.
 # Corre SOLO después de cada ronda de colector-estaciones-privadas (workflow_run) y a mano (workflow_dispatch, con
 # «horas» para levantar rondas atrasadas). NO le pide nada a ninguna fuente: lee R2 y escribe la base.
