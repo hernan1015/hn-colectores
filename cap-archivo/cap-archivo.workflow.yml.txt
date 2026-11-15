@@ -1,0 +1,55 @@
+# HN AGRO · ARCHIVO DEL ÍNDICE CAP DEL SMN (225). Ver cap-archivo/LEEME.md y cap-archivo/PRENDER.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/cap-archivo.yml (viene como .txt porque el token de pc-nanci
+# no tiene el permiso «workflow», igual que granizo-archivo, sipan e imerg-pendientes). Lo prende local.
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo CAP_ARCHIVO_ON vale «si». A mano: seco por defecto.
+# Cada 10 min: UN pedido al índice https://ssl.smn.gob.ar/CAP/AR.php y, de a uno (1,5 s de pausa, tope 150), los XML de
+# los avisos que todavía no están guardados. Todo a la release diaria `smn-cap-AAAA-MM-DD` de hn-radar (PRIVADO), con el
+# RADAR_TOKEN que ya usan el radar y el granizo. Ante un 429 (o 403, 5xx, sin conexión) corta y deja una pausa de 20-60
+# min (o el Retry-After) que las corridas siguientes respetan SIN pedirle nada al SMN.
+# Seco = UN pedido al índice y nada más (no pide XML, no sube, no anota).
+# El registro de Actions es PÚBLICO: se imprimen sólo cantidades; el token y la URL de la base nunca.
+name: cap-archivo
+on:
+  schedule:
+    - cron: '4,14,24,34,44,54 * * * *'   # cada 10 min, lejos de la hora en punto y de granizo-archivo (7,17,…)
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = UN pedido al índice, sin XML, sin subir ni anotar · real = archiva'
+        type: choice
+        options: [seco, real]
+        default: seco
+      tope:
+        description: 'XML por corrida (1-150)'
+        type: string
+        default: '150'
+permissions:
+  contents: read
+concurrency:
+  group: cap-archivo
+  cancel-in-progress: false
+jobs:
+  archivar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.CAP_ARCHIVO_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 9            # 150 XML × 1,5 s ≈ 4 min en el peor día; nunca se pisa con la corrida siguiente
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            lib
+            cap-archivo
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (postgres.js fijado en package-lock) y tests (sin red ni base)
+        run: npm ci --prefix cap-archivo --no-audit --no-fund && npm test --prefix cap-archivo
+      - name: Archivar
+        env:
+          CAP_TOKEN: ${{ secrets.RADAR_TOKEN }}        # Contents: Read and write SÓLO sobre hn-radar (privado)
+          CAP_REPO: hernan1015/hn-radar                # los datos van al repo PRIVADO; acá no queda nada
+          CAP_PG_URL: ${{ secrets.CAP_PG_URL }}        # postgresql://colector_cap.<ref>:<clave>@<pooler>:6543/postgres (nunca se imprime)
+          CAP_TOPE: ${{ github.event_name == 'schedule' && '150' || inputs.tope }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+        run: |
+          if [ "$MODO" = "real" ]; then node cap-archivo/archivar.mjs; else node cap-archivo/archivar.mjs --seco; fi
