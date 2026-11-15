@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // HN AGRO · el PARSEO de las estaciones de USO INTERNO: lee de R2 lo que guardó ronda.mjs y lo pasa a estaciones /
 // estaciones_obs (hn-agro 0110 + 0147), una red por fuente, con metadatos.mostrar = false. Corre en la nube DESPUÉS de
-// cada ronda (workflow estaciones-parseo, con la llave ESTACIONES_PARSEO_ON). NO le pide nada a ninguna fuente: sólo
+// cada ronda: es un PASO del job único de parseo de la 138b (paso-internas.workflow-step.yml.txt), con la
+// llave ESTACIONES_PARSEO_ON. NO le pide nada a ninguna fuente: sólo
 // lee R2 y escribe la base.
 //
 // Un módulo por fuente en fuentes/ (FUENTES, abajo). Cada módulo: { id (el prefijo de R2), nombre, proceso, redes:

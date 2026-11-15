@@ -187,10 +187,11 @@ test('0152 (PGlite): con la 0147b sola el rol NO escribe las internas; con la 01
   await pg.exec(t.slice(t.indexOf('grant usage on schema public to colector_estaciones;'), t.indexOf('-- (Una política «for all» no da DELETE')));
   const como = async (sql) => { try { await pg.exec(`set role colector_estaciones; ${sql}; reset role;`); return true; } catch (e) { await pg.exec('reset role;'); return String(e.message); } };
   assert.match(String(await como(`insert into estaciones (red, estacion_id) values ('BCP_RT', 'X')`)), /row-level security/);
-  const M = fs.readFileSync(path.join(DIR, '..', 'migracion', '0152_estaciones_internas_rol_PROPUESTA.sql'), 'utf8');
+  const M = fs.readFileSync(path.join(DIR, '..', 'migracion', '0152_parseo_estaciones_unificada_PROPUESTA.sql'), 'utf8');
   await pg.exec(M); await pg.exec(M);
   for (const red of REDES) assert.equal(await como(`insert into estaciones (red, estacion_id) values ('${red}', 'X'); insert into estaciones_obs (red, estacion_id, fecha, crudo) values ('${red}', 'X', '2026-11-16', '{}')`), true, red);
-  for (const p of FUENTES.map((f) => f.proceso)) assert.equal(await como(`insert into registro_procesos (proceso, ok) values ('${p}', true)`), true, p);
+  assert.equal(await como("insert into estaciones (red, estacion_id) values ('WEATHERCLOUD_PUB', 'X'); insert into estaciones_ultima_lectura (red, estacion_id, instante) values ('WEATHERCLOUD_PUB', 'X', now())"), true, 'la parte de la 138b');
+  for (const p of [...FUENTES.map((f) => f.proceso), 'estaciones_privadas_parseo']) assert.equal(await como(`insert into registro_procesos (proceso, ok) values ('${p}', true)`), true, p);
   /* control negativo */
   assert.match(String(await como(`insert into estaciones (red, estacion_id) values ('SNIH', 'X')`)), /row-level security/);
   assert.match(String(await como(`insert into registro_procesos (proceso, ok) values ('otro', true)`)), /row-level security/);

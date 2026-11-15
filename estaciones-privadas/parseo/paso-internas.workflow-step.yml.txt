@@ -1,0 +1,17 @@
+# HN AGRO · 139 internas · el PASO que se suma al job ÚNICO de parseo de la 138b
+# (estaciones-privadas-parseo.workflow.yml.txt, job `parseo`, después de su paso «Parseo»). Un solo job y una sola llave
+# (ESTACIONES_PARSEO_ON) para todas las fuentes: WeatherLink y Weathercloud (parseo.mjs, 138b) y SIGA, EEAOC, Mendoza,
+# San Luis, BCP, Entre Ríos e INA (parsear.mjs, 139). Los mismos secretos que el paso de la 138b.
+# El log público imprime sólo cantidades. Por workflow_run guarda (real); a mano, en seco salvo modo=real.
+      - name: Parseo de las internas (139)
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.PARSEO_R2_ACCESS_KEY_ID }}          # token de R2 SÓLO LECTURA
+          R2_SECRET_ACCESS_KEY: ${{ secrets.PARSEO_R2_SECRET_ACCESS_KEY }}
+          ESTACIONES_PG_URL: ${{ secrets.SIPAN_PG_URL }}                    # el MISMO rol colector_estaciones
+          MODO: ${{ github.event_name == 'workflow_run' && 'real' || inputs.modo }}
+        run: |
+          args=(--horas 3)
+          [ "$MODO" = "real" ] || args+=(--seco)
+          node estaciones-privadas/parseo/parsear.mjs "${args[@]}"

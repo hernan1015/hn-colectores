@@ -34,7 +34,7 @@ const MUTANTES = [
   ['Mendoza: la precipitación va a la lluvia', 'fuentes/dacc.mjs', "lluvia: null, eto: false, fuente: 'DACC", "lluvia: 'acumulado_consola', eto: false, fuente: 'DACC"],
   ['SIGA: entran las convencionales', 'fuentes/siga.mjs', 'if (e.idTipo != null && e.idTipo !== 2) continue;', ''],
   ['SIGA: acepta cualquier forma', 'fuentes/siga.mjs', "if (!Array.isArray(a)) throw new Error('siga: la respuesta no es un arreglo');", 'if (!Array.isArray(a)) return { estaciones: [], lecturas: [], problemas: 1 };'],
-  ['0152 sin las internas', 'migracion/0152_estaciones_internas_rol_PROPUESTA.sql', ", 'SIGA_RT', 'EEAOC', 'DACC_MZA', 'REM_SL', 'ER_HIDRAULICA', 'INA_METEO', 'INA_ALERTA', 'BCP_RT')$r$", ")$r$", { pg: true }],
+  ['0152 sin las internas', 'migracion/0152_parseo_estaciones_unificada_PROPUESTA.sql', ", 'SIGA_RT', 'EEAOC', 'DACC_MZA', 'REM_SL', 'ER_HIDRAULICA', 'INA_METEO', 'INA_ALERTA', 'BCP_RT', 'WEATHERCLOUD_PUB')$r$", ")$r$", { pg: true }],
 ];
 
 const COPIA = path.join(REPO, '.mutante');

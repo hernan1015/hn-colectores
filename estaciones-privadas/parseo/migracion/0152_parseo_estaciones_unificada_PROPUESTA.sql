@@ -1,7 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════════
--- HN AGRO · 0152 · el rol colector_estaciones (0147b) también para las 8 redes de USO INTERNO de la 139, que escribe el
---                  parseo de estaciones-privadas (R2 → estaciones_obs): SIGA_RT, EEAOC, DACC_MZA, REM_SL, ER_HIDRAULICA,
---                  INA_METEO, INA_ALERTA y BCP_RT, con sus 7 procesos en registro_procesos.            [15/11/2026]
+-- HN AGRO · 0152 · UNIFICADA para el parseo de estaciones-privadas (R2 → estaciones_obs), la 139 y la 138b juntas:
+--                  el rol colector_estaciones (0147b) escribe también SIGA_RT, EEAOC, DACC_MZA, REM_SL, ER_HIDRAULICA,
+--                  INA_METEO, INA_ALERTA y BCP_RT (139) y WEATHERCLOUD_PUB (138b), con sus procesos, y la última
+--                  lectura (estaciones_ultima_lectura, 138b).                                          [15/11/2026]
+--   ⚠ REEMPLAZA a 0152_parseo_estaciones_privadas_rol_PROPUESTA.sql de la 138b (misma lógica para su parte, copiada
+--   de ahí): se aplica UNA sola 0152, ésta.
 -- ════════════════════════════════════════════════════════════════════════════
 -- ⚠ PROPUESTA · NO APLICADA. La aplica local, DESPUÉS de la 0147b (ya aplicada) y DESPUÉS de la 0151 (SMN_ABIERTO).
 --   El número: 0150 es de la 176 y 0151 de la 139 SMN; ninguna rama de hn-agro, hn-colectores ni hn-radar tiene una
@@ -23,10 +26,16 @@
 do $$
 declare
   t text;
-  redes constant text := $r$red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB', 'SMN_ABIERTO', 'SIGA_RT', 'EEAOC', 'DACC_MZA', 'REM_SL', 'ER_HIDRAULICA', 'INA_METEO', 'INA_ALERTA', 'BCP_RT')$r$;
+  redes constant text := $r$red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB', 'SMN_ABIERTO', 'SIGA_RT', 'EEAOC', 'DACC_MZA', 'REM_SL', 'ER_HIDRAULICA', 'INA_METEO', 'INA_ALERTA', 'BCP_RT', 'WEATHERCLOUD_PUB')$r$;
 begin
   if not exists (select 1 from pg_roles where rolname = 'colector_estaciones') then
     raise exception '0152: falta el rol colector_estaciones (aplicar antes la 0147b)';
+  end if;
+  if to_regclass('public.estaciones_ultima_lectura') is null then
+    raise exception '0152: falta estaciones_ultima_lectura (aplicar antes la 0147)';
+  end if;
+  if current_user in ('anon', 'authenticated', 'service_role', 'colector_estaciones') then
+    raise exception '0152: aplicala como postgres, no como %', current_user;
   end if;
   foreach t in array array['estaciones', 'estaciones_obs', 'pronostico_helada_medicion'] loop
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = t and policyname = 'colector_estaciones_sus_redes') then
@@ -34,12 +43,19 @@ begin
     end if;
     execute format('alter policy colector_estaciones_sus_redes on public.%I using (%s) with check (%s)', t, redes, redes);
   end loop;
+  /* [138b] la última lectura (WeatherLink): la 0147b no se la daba al rol */
+  grant select, insert, update on table public.estaciones_ultima_lectura to colector_estaciones;
+  if exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estaciones_ultima_lectura' and policyname = 'colector_estaciones_sus_redes') then
+    execute format('alter policy colector_estaciones_sus_redes on public.estaciones_ultima_lectura using (%s) with check (%s)', redes, redes);
+  else
+    execute format('create policy colector_estaciones_sus_redes on public.estaciones_ultima_lectura for all to colector_estaciones using (%s) with check (%s)', redes, redes);
+  end if;
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'registro_procesos' and policyname = 'colector_estaciones_sus_procesos') then
     raise exception '0152: falta la política colector_estaciones_sus_procesos en registro_procesos (aplicar antes la 0147b)';
   end if;
   alter policy colector_estaciones_sus_procesos on public.registro_procesos
     with check (proceso in ('sipan_alto_valle', 'sipan_medicion_heladas', 'weatherlink_publico', 'smn_abierto',
-                            'interna_siga_rt', 'interna_eeaoc', 'interna_dacc_mza', 'interna_rem_sl', 'interna_er_hidraulica', 'interna_ina', 'interna_bcp_rt'));
+                            'interna_siga_rt', 'interna_eeaoc', 'interna_dacc_mza', 'interna_rem_sl', 'interna_er_hidraulica', 'interna_ina', 'interna_bcp_rt', 'estaciones_privadas_parseo'));
 end $$;
 
 -- Verificación (a mano, después de aplicar):
