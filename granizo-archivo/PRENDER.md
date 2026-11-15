@@ -60,7 +60,7 @@ No hace falta ningún secreto nuevo.
 
 - GitHub atrasa los `schedule`, a veces 10 a 30 min, y a veces saltea alguno.
 - **Lo atrasado no se duplica:** el nombre del asset es la hora del scan y el estado, y un nombre que ya está no se vuelve a subir. Una falla sin scan se nombra por el turno de 10 min.
-- **Lo salteado se pierde:** el endpoint sólo da el último scan. Para recuperarlo, hay que recalcularlo desde GOES-19, que es el plan del caso del 13/11. El vigía avisa si el hueco pasa de 40 min.
+- **Lo salteado se pierde:** el endpoint sólo da el último scan. Para recuperarlo, hay que recalcularlo desde GOES-19, que es el plan del caso del 13/11. El vigía avisa si el hueco pasa de 40 min (`parado`) y también **cada turno de 10 min que quedó sin barrido bueno** entre dos guardados, en las últimas 6 h (`huecos`, 227).
 - `concurrency` pone las corridas en fila, así que nunca hay dos a la vez.
 - GitHub **desactiva los `schedule` de un repo público tras 60 días sin actividad.** Si el vigía avisa «parado» sin motivo, mirar eso primero.
 
@@ -74,6 +74,7 @@ Manda un mail por episodio, sin repetirlo:
 | `repite` | hubo pedidos, pero todos con un scan ya guardado | SATCHI sirve un scan viejo (la caché de la red, o granizo-vivo trabado) |
 | `fallando` | todos los barridos nuevos son falla | el endpoint: 403 apagado, 429, 5xx, `ok:false` |
 | `parciales` | hay barridos nuevos, pero ninguno bueno (parciales, o parciales y fallas) | los `faltantes` del sobre: NOAA, GLM, Open-Meteo |
+| `huecos` | (227) todo anda, pero en las últimas 6 h hay un turno de 10 min (por la hora del scan) sin barrido bueno y ya se guardó otro después: ése no llega más. El 14/11 faltaron las 02:50 y las 13:00 ART y la de las 13:20 llegó parcial, y el vigía no dijo nada. La clave es el hueco más nuevo: un mail por hueco nuevo | si es uno suelto, el cron atrasado (para un caso, se recalcula desde GOES-19); si son seguidos, Actions → granizo-archivo. ⚠ Supone el scan de disco completo cada 10 min (modo 6 de GOES-19): si NOAA cambia de modo, avisaría de más |
 | `sin-lectura` | no puede leer hn-radar, también si el repo da 404 (token sin permiso) | el token o la API (como mucho un aviso por día) |
 
 ## La caché (147a)
