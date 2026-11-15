@@ -3,7 +3,7 @@
 # PARA INSTALARLO: copiar este archivo a .github/workflows/smn-abierto.yml (el token con el que se armó la rama no tiene
 # permiso «workflow», igual que el SIPAN). Lo instala local.
 # APAGADO: no tiene `schedule`. Sólo corre por workflow_dispatch: a mano, o desde pg_cron con la llave «smn-abierto» de
-# colector_llaves (0149b), que nace apagada. Por defecto, en SECO.
+# colector_llaves (0151b), que nace apagada. Por defecto, en SECO.
 # UN pedido por corrida a ssl.smn.gob.ar/dpd, User-Agent genérico. Si el archivo de ayer ya se cargó, no pide nada.
 # El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de valores, claves ni direcciones.
 name: colector-smn-abierto
@@ -42,7 +42,7 @@ jobs:
         run: npm ci --prefix smn-abierto --no-audit --no-fund && npm test --prefix smn-abierto
       - name: Colectar
         env:
-          SMN_PG_URL: ${{ secrets.SIPAN_PG_URL }}          # el MISMO rol colector_estaciones (0147b + 0149); nunca se imprime
+          SMN_PG_URL: ${{ secrets.SIPAN_PG_URL }}          # el MISMO rol colector_estaciones (0147b + 0151); nunca se imprime
           SMN_CRUDOS_TOKEN: ${{ secrets.RADAR_TOKEN }}     # copia del zip: un release por día, smn-AAAA-MM-DD, en hn-radar (privado)
           SMN_CRUDOS_REPO: hernan1015/hn-radar
           SMN_ACEPTAR_FORMATO: ${{ inputs.aceptar_formato }}

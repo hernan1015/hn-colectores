@@ -1,8 +1,8 @@
 -- ════════════════════════════════════════════════════════════════════════════
--- HN AGRO · 0149b · el disparo del colector del SMN (datos abiertos) desde pg_cron: su LLAVE en colector_llaves y sus
+-- HN AGRO · 0151b · el disparo del colector del SMN (datos abiertos) desde pg_cron: su LLAVE en colector_llaves y sus
 --                   dos jobs, con public.gh_colector_disparo() de la 0148.                              [14/11/2026]
 -- ════════════════════════════════════════════════════════════════════════════
--- ⚠ PROPUESTA · NO APLICADA. Va DESPUÉS de la 0148 (usa colector_llaves y gh_colector_disparo) y de la 0149 (el rol
+-- ⚠ PROPUESTA · NO APLICADA. Va DESPUÉS de la 0148 (usa colector_llaves y gh_colector_disparo) y de la 0151 (el rol
 --   tiene que poder escribir SMN_ABIERTO). Se aplica como postgres (editor SQL o MCP), igual que la 0148.
 --
 -- LA LLAVE NACE APAGADA (activa = false): el workflow se instala y se prueba a mano en seco; recién con el OK de local
@@ -23,16 +23,16 @@
 do $do$
 begin
   if to_regclass('public.colector_llaves') is null or to_regprocedure('public.gh_colector_disparo(text, jsonb, text)') is null then
-    raise exception '0149b: falta la 0148 (colector_llaves / gh_colector_disparo): aplicarla antes';
+    raise exception '0151b: falta la 0148 (colector_llaves / gh_colector_disparo): aplicarla antes';
   end if;
   if current_user in ('anon', 'authenticated', 'service_role') then
-    raise exception '0149b: aplicala como postgres (el editor SQL o el MCP), no como %', current_user;
+    raise exception '0151b: aplicala como postgres (el editor SQL o el MCP), no como %', current_user;
   end if;
 end
 $do$;
 
 insert into public.colector_llaves (etiqueta, activa, nota) values
-  ('smn-abierto', false, 'smn-abierto.yml · SMN datos abiertos (datos horarios), CC BY 2.5 AR · nace APAGADA (0149b)')
+  ('smn-abierto', false, 'smn-abierto.yml · SMN datos abiertos (datos horarios), CC BY 2.5 AR · nace APAGADA (0151b)')
 on conflict (etiqueta) do nothing;
 
 do $do$

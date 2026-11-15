@@ -28,8 +28,8 @@ test('workflow: APAGADO (sin schedule), sólo workflow_dispatch, seco por defect
   assert.match('postgresql://u:clave@host:6543/postgres', SECRETO);
 });
 
-test('PRENDER: el orden (0149, 0149b, instalar, seco, real, llave) y nada secreto', () => {
-  const orden = ['0149_smn_abierto_rol.sql', '0149b_smn_abierto_disparo.sql', 'smn-abierto.workflow.yml.txt', 'modo=seco', 'modo=real', "etiqueta = 'smn-abierto'"];
+test('PRENDER: el orden (0151, 0151b, instalar, seco, real, llave) y nada secreto', () => {
+  const orden = ['0151_smn_abierto_rol.sql', '0151b_smn_abierto_disparo.sql', 'smn-abierto.workflow.yml.txt', 'modo=seco', 'modo=real', "etiqueta = 'smn-abierto'"];
   let i = -1;
   for (const o of orden) { const j = PRENDER.indexOf(o, i + 1); assert.ok(j > i, 'falta o fuera de orden: ' + o); i = j; }
   assert.match(PRENDER, /CC BY 2\.5 AR/);

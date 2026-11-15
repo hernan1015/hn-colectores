@@ -12,16 +12,16 @@
 ## Secretos y variables: no hay nada nuevo
 | Lo que usa el workflow | De dónde | ¿Existe? |
 |---|---|---|
-| `SMN_PG_URL` | **el mismo secreto `SIPAN_PG_URL`**: el rol `colector_estaciones` (0147b), que con la 0149 también escribe `SMN_ABIERTO` | sí |
+| `SMN_PG_URL` | **el mismo secreto `SIPAN_PG_URL`**: el rol `colector_estaciones` (0147b), que con la 0151 también escribe `SMN_ABIERTO` | sí |
 | `SMN_CRUDOS_TOKEN` | `RADAR_TOKEN`: la copia del ZIP va a `hn-radar` (privado), un release por día `smn-AAAA-MM-DD` | sí |
 
 ## El orden
 
 ### 1 · El número y los archivos
-- **0149:** al 14/11 03:40 ninguna rama tenía una 0149. Confirmalo antes de aplicar; si está tomado, renombro las dos.
-- Copiar `smn-abierto/migracion/0149_smn_abierto_rol.sql` y `smn-abierto/migracion/0149b_smn_abierto_disparo.sql` a `hn-agro/migrations/`.
+- **0151:** era 0149 y chocó con la 0149 de la 196-2; la 0150 es de la 176. Confirmá igual que siga libre antes de aplicar; si está tomado, renombro las dos.
+- Copiar `smn-abierto/migracion/0151_smn_abierto_rol.sql` y `smn-abierto/migracion/0151b_smn_abierto_disparo.sql` a `hn-agro/migrations/`.
 
-### 2 · Aplicar la 0149 (el rol)
+### 2 · Aplicar la 0151 (el rol)
 - Con el editor SQL o el MCP: no lleva variables de psql. Necesita la 0147b aplicada; si no está, se corta sola.
 - **Sólo amplía** las dos políticas de la 0147b: suma la red `SMN_ABIERTO` y el proceso `smn_abierto`. Las redes y procesos de antes quedan igual. No toca grants, atributos ni la contraseña.
 - Verificar: `select tablename, qual, with_check from pg_policies where policyname like 'colector_estaciones_sus_%' order by 1;`
@@ -60,8 +60,8 @@ select creado_at, ok, resumen->'avisos', resumen->>'estado' from registro_proces
 - **Una segunda corrida real el mismo día** tiene que decir `estado: "ya_cargado"` y `pedidos: 0`.
 - **La copia del ZIP:** `$GH release view smn-<fecha del archivo> -R hernan1015/hn-radar` (1 asset `datohorario__….zip`).
 
-### 6 · El disparo: la 0149b y la llave
-- Aplicar `0149b_smn_abierto_disparo.sql` (editor SQL o MCP, como postgres). Necesita la 0148 y se corta si no está.
+### 6 · El disparo: la 0151b y la llave
+- Aplicar `0151b_smn_abierto_disparo.sql` (editor SQL o MCP, como postgres). Necesita la 0148 y se corta si no está.
 - Crea la llave `smn-abierto` **APAGADA** y dos jobs: `smn-abierto-disparo` (`17 13 * * *` = 10:17) y `smn-abierto-disparo-tarde` (`17 19 * * *` = 16:17, con `ultimo=si`: si el archivo sigue vacío, avisa).
 - Con el OK, prenderla:
 ```sql
@@ -70,7 +70,7 @@ update public.colector_llaves set activa = true, cambiada_en = now() where etiqu
 
 ## Para apagarlo
 - `update public.colector_llaves set activa = false, cambiada_en = now() where etiqueta = 'smn-abierto';` (lo guardado queda).
-- La red sale del rol con el ROLLBACK comentado de la 0149.
+- La red sale del rol con el ROLLBACK comentado de la 0151.
 
 ## Lo que falta (no es de este PR)
 - **Las coordenadas:** el datohorario no las trae y las estaciones quedan con `lat`/`lon` null. Salen del archivo de estaciones del mismo catálogo: es **otro pedido**, y lo hago con tu OK.

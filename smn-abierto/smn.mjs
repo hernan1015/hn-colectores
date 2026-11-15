@@ -9,7 +9,7 @@
 //
 // QUÉ BAJA: UN pedido por corrida a ssl.smn.gob.ar/dpd/zipopendata.php?dato=datohorario (el ZIP del catálogo de datos
 // abiertos; trae datohorarioAAAAMMDD.txt, las lecturas horarias del DÍA ANTERIOR de todas las estaciones). El SMN lo
-// publica UNA vez por día: el colector corre dos veces (10:17 y 16:17 de Argentina, pg_cron, 0149b) y la segunda NO
+// publica UNA vez por día: el colector corre dos veces (10:17 y 16:17 de Argentina, pg_cron, 0151b) y la segunda NO
 // pide nada si el archivo de ayer ya se cargó. Nunca más seguido que eso.
 // ⛔ POLÍTICA DEL SMN (§4.C): la demanda periódica CON garantía de servicio se cobra. Acá no se pide ninguna: se lee el
 //    archivo público tal como está, sin clave, sin acuerdo, sin reintentos agresivos.

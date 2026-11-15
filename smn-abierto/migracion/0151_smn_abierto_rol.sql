@@ -1,10 +1,10 @@
 -- ════════════════════════════════════════════════════════════════════════════
--- HN AGRO · 0149 · el rol colector_estaciones (0147b) también para la red del SMN, datos abiertos (`SMN_ABIERTO`, 139)
+-- HN AGRO · 0151 · el rol colector_estaciones (0147b) también para la red del SMN, datos abiertos (`SMN_ABIERTO`, 139)
 --                  y su proceso `smn_abierto` en registro_procesos.                                   [14/11/2026]
 -- ════════════════════════════════════════════════════════════════════════════
 -- ⚠ PROPUESTA · NO APLICADA. La aplica local, DESPUÉS de la 0147b (ya aplicada) y con la 0148 o sin ella (no la usa).
 --   El número: 0148 es el disparo (mejora/0148-disparo-colectores). Ninguna rama de hn-agro ni de hn-colectores tiene
---   una 0149 (git ls-tree de todas las ramas, 14/11 03:40); local confirma el número antes de aplicar.
+--   una 0151 (git ls-tree de todas las ramas, 15/11); era 0149 y chocó con la 0149 de la 196-2 (hn-agro), la 0150 es de la 176; local confirma el número antes de aplicar.
 --   El archivo vive en hn-colectores (smn-abierto/migracion/); local lo copia a hn-agro/migrations/.
 --
 -- ADITIVA: no crea tablas ni columnas (el SMN usa estaciones / estaciones_obs con las columnas de la 0110 y la 0147).
@@ -26,16 +26,16 @@ declare
   redes constant text := $r$red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB', 'SMN_ABIERTO')$r$;
 begin
   if not exists (select 1 from pg_roles where rolname = 'colector_estaciones') then
-    raise exception '0149: falta el rol colector_estaciones (aplicar antes la 0147b)';
+    raise exception '0151: falta el rol colector_estaciones (aplicar antes la 0147b)';
   end if;
   foreach t in array array['estaciones', 'estaciones_obs', 'pronostico_helada_medicion'] loop
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = t and policyname = 'colector_estaciones_sus_redes') then
-      raise exception '0149: falta la política colector_estaciones_sus_redes en % (aplicar antes la 0147b)', t;
+      raise exception '0151: falta la política colector_estaciones_sus_redes en % (aplicar antes la 0147b)', t;
     end if;
     execute format('alter policy colector_estaciones_sus_redes on public.%I using (%s) with check (%s)', t, redes, redes);
   end loop;
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'registro_procesos' and policyname = 'colector_estaciones_sus_procesos') then
-    raise exception '0149: falta la política colector_estaciones_sus_procesos en registro_procesos (aplicar antes la 0147b)';
+    raise exception '0151: falta la política colector_estaciones_sus_procesos en registro_procesos (aplicar antes la 0147b)';
   end if;
   alter policy colector_estaciones_sus_procesos on public.registro_procesos
     with check (proceso in ('sipan_alto_valle', 'sipan_medicion_heladas', 'weatherlink_publico', 'smn_abierto'));

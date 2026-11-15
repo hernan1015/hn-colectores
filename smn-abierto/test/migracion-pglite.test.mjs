@@ -1,5 +1,5 @@
 // node --test smn-abierto/test/migracion-pglite.test.mjs
-// La 0149 (el rol para SMN_ABIERTO) y la 0149b (llave + jobs) contra un PostgreSQL de verdad (PGlite), sin red.
+// La 0151 (el rol para SMN_ABIERTO) y la 0151b (llave + jobs) contra un PostgreSQL de verdad (PGlite), sin red.
 // PGlite va FUERA del repo: HN_PGLITE=<…>/node_modules/@electric-sql/pglite (en pc-nanci: C:/HN-AGRO/herramientas-pglite).
 // Sin él, SALTEADO. Las políticas de partida salen del TEXTO de la 0147b de main (no de una copia).
 // Cada caso fuerte con su control negativo.
@@ -13,8 +13,8 @@ const RAIZ = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DIR_PGLITE = process.env.HN_PGLITE || '';
 const HAY = !!DIR_PGLITE && fs.existsSync(path.join(DIR_PGLITE, 'dist', 'index.js'));
 const salto = !HAY && 'sin HN_PGLITE';
-const M0149 = fs.readFileSync(path.join(RAIZ, 'migracion', '0149_smn_abierto_rol.sql'), 'utf8');
-const M0149B = fs.readFileSync(path.join(RAIZ, 'migracion', '0149b_smn_abierto_disparo.sql'), 'utf8');
+const M0151 = fs.readFileSync(path.join(RAIZ, 'migracion', '0151_smn_abierto_rol.sql'), 'utf8');
+const M0151B = fs.readFileSync(path.join(RAIZ, 'migracion', '0151b_smn_abierto_disparo.sql'), 'utf8');
 const P0147B = path.join(RAIZ, '..', 'sipan-alto-valle', 'migracion', '0147b_rol_colector_estaciones.sql');
 
 /** Los grants y las políticas de la 0147b, tal como están en el archivo (sin lo que es de psql: clave, \gexec). */
@@ -50,17 +50,17 @@ async function comoRol(pg, sql) {
   catch (e) { await pg.exec('reset role;'); return String(e.message); }
 }
 
-test('0149: con la 0147b sola, el rol NO puede escribir SMN_ABIERTO (control negativo de partida)', { skip: salto }, async () => {
+test('0151: con la 0147b sola, el rol NO puede escribir SMN_ABIERTO (control negativo de partida)', { skip: salto }, async () => {
   const pg = await nueva();
   assert.match(String(await comoRol(pg, `insert into estaciones (red, estacion_id) values ('SMN_ABIERTO', 'X')`)), /row-level security/);
   assert.match(String(await comoRol(pg, `insert into registro_procesos (proceso, ok) values ('smn_abierto', true)`)), /row-level security/);
   await pg.close();
 });
 
-test('0149: el rol escribe SMN_ABIERTO y anota smn_abierto; lo de antes sigue; otras redes y procesos, no', { skip: salto }, async () => {
+test('0151: el rol escribe SMN_ABIERTO y anota smn_abierto; lo de antes sigue; otras redes y procesos, no', { skip: salto }, async () => {
   const pg = await nueva();
-  await pg.exec(M0149);
-  await pg.exec(M0149);                                                           // idempotente
+  await pg.exec(M0151);
+  await pg.exec(M0151);                                                           // idempotente
   for (const t of ['estaciones', 'estaciones_obs']) {
     assert.equal(await comoRol(pg, `insert into ${t} (red, estacion_id${t === 'estaciones_obs' ? ', fecha' : ''}) values ('SMN_ABIERTO', 'X'${t === 'estaciones_obs' ? ", '2026-11-13'" : ''})`), true, t);
   }
@@ -79,15 +79,15 @@ test('0149: el rol escribe SMN_ABIERTO y anota smn_abierto; lo de antes sigue; o
   await pg.close();
 });
 
-test('0149: sin la 0147b se corta (no crea políticas a ciegas)', { skip: salto }, async () => {
+test('0151: sin la 0147b se corta (no crea políticas a ciegas)', { skip: salto }, async () => {
   const pg = await nueva({ con0147b: false });
-  await assert.rejects(pg.exec(M0149), /0147b/);
+  await assert.rejects(pg.exec(M0151), /0147b/);
   assert.equal((await pg.query(`select count(*)::int as n from pg_policies`)).rows[0].n, 0);
   await pg.close();
   /* a medias: sólo la de registro_procesos (faltan las de las redes) → también se corta, y no amplía nada */
   const pg2 = await nueva({ con0147b: false });
   await pg2.exec(`grant insert on registro_procesos to colector_estaciones; create policy colector_estaciones_sus_procesos on public.registro_procesos for insert to colector_estaciones with check (proceso in ('sipan_alto_valle'))`);
-  await assert.rejects(pg2.exec(M0149), /colector_estaciones_sus_redes/);
+  await assert.rejects(pg2.exec(M0151), /colector_estaciones_sus_redes/);
   assert.doesNotMatch((await pg2.query(`select with_check from pg_policies`)).rows[0].with_check, /smn_abierto/);
   await pg2.close();
 });
@@ -104,11 +104,11 @@ create function public.gh_colector_disparo(p_workflow text, p_inputs jsonb, p_et
 insert into public.colector_llaves values ('sipan', true, 'de la 0148');
 `;
 
-test('0149b: la llave nace APAGADA, dos jobs en UTC con smn-abierto.yml, y volver a aplicarla no prende la llave', { skip: salto }, async () => {
+test('0151b: la llave nace APAGADA, dos jobs en UTC con smn-abierto.yml, y volver a aplicarla no prende la llave', { skip: salto }, async () => {
   const { PGlite } = await import(pathToFileURL(path.join(DIR_PGLITE, 'dist', 'index.js')).href);
   const pg = new PGlite();
   await pg.exec(SHIM_0148);
-  await pg.exec(M0149B);
+  await pg.exec(M0151B);
   const jobs = (await pg.query(`select jobname, schedule, command from cron.job order by jobname`)).rows;
   assert.deepEqual(jobs.map((j) => [j.jobname, j.schedule]), [['smn-abierto-disparo', '17 13 * * *'], ['smn-abierto-disparo-tarde', '17 19 * * *']]);
   assert.equal((await pg.query(`select activa from colector_llaves where etiqueta = 'smn-abierto'`)).rows[0].activa, false);
@@ -119,7 +119,7 @@ test('0149b: la llave nace APAGADA, dos jobs en UTC con smn-abierto.yml, y volve
   for (const l of ll) for (const v of Object.values(l.inputs)) assert.equal(typeof v, 'string');   // la API quiere textos
   /* volver a aplicar con la llave PRENDIDA a mano: sigue prendida (no la apaga) y los jobs no se duplican */
   await pg.exec(`update colector_llaves set activa = true where etiqueta = 'smn-abierto'`);
-  await pg.exec(M0149B);
+  await pg.exec(M0151B);
   assert.equal((await pg.query(`select activa from colector_llaves where etiqueta = 'smn-abierto'`)).rows[0].activa, true);
   assert.equal((await pg.query(`select count(*)::int as n from cron.job`)).rows[0].n, 2);
   /* las llaves de la 0148 no se tocan */
@@ -127,17 +127,17 @@ test('0149b: la llave nace APAGADA, dos jobs en UTC con smn-abierto.yml, y volve
   await pg.close();
 });
 
-test('0149b · control negativo: sin la 0148 se corta antes de crear jobs', { skip: salto }, async () => {
+test('0151b · control negativo: sin la 0148 se corta antes de crear jobs', { skip: salto }, async () => {
   const { PGlite } = await import(pathToFileURL(path.join(DIR_PGLITE, 'dist', 'index.js')).href);
   const pg = new PGlite();
   await pg.exec(`create schema cron; create table cron.job (jobid bigserial primary key, jobname text, schedule text, command text);`);
-  await assert.rejects(pg.exec(M0149B), /0148/);
+  await assert.rejects(pg.exec(M0151B), /0148/);
   assert.equal((await pg.query(`select count(*)::int as n from cron.job`)).rows[0].n, 0);
   await pg.close();
 });
 
 test('las dos migraciones son aditivas: sin DROP, sin tocar grants ni la contraseña, sin tokens', () => {
-  for (const [n, s] of [['0149', M0149], ['0149b', M0149B]]) {
+  for (const [n, s] of [['0151', M0151], ['0151b', M0151B]]) {
     const sinComentarios = s.replace(/--[^\n]*/g, '');
     assert.doesNotMatch(sinComentarios, /\bdrop\b|\btruncate\b|\bdelete\b/i, n);
     assert.doesNotMatch(sinComentarios, /\bgrant\b|\brevoke\b|password|:'clave'/i, n);

@@ -2,7 +2,7 @@
 // Cada mutante tiene que hacer fallar al menos un test. Antes se corre la copia SIN romper (tiene que pasar entera).
 // Correr: node smn-abierto/test/control-negativo.mjs
 //   con SMN_FIXTURES (o la carpeta del cortex en pc-nanci), también los del fixture real;
-//   con HN_PGLITE, también los de las migraciones (0149 / 0149b contra PGlite).
+//   con HN_PGLITE, también los de las migraciones (0151 / 0151b contra PGlite).
 // La copia va a <repo>/.mutante/ (en .gitignore), con lib/releases.mjs y la 0147b de sipan-alto-valle al lado, porque
 // el colector y el test de PGlite los leen por ruta relativa.
 import fs from 'node:fs';
@@ -68,13 +68,13 @@ const MUTANTES = [
   // ── workflow y migraciones ──
   ['el workflow con schedule', 'smn-abierto.workflow.yml.txt', 'on:\n  workflow_dispatch:', "on:\n  schedule:\n    - cron: '17 13 * * *'\n  workflow_dispatch:"],
   ['el workflow real por defecto', 'smn-abierto.workflow.yml.txt', 'options: [seco, real]\n        default: seco', 'options: [seco, real]\n        default: real'],
-  ['0149: se pierde WEATHERLINK_PUB', 'migracion/0149_smn_abierto_rol.sql', "red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB', 'SMN_ABIERTO')", "red in ('INTA_SIPAN_AV', 'SMN_ABIERTO')", { pg: true }],
-  ['0149: sin el proceso smn_abierto', 'migracion/0149_smn_abierto_rol.sql', "'weatherlink_publico', 'smn_abierto'));", "'weatherlink_publico'));", { pg: true }],
-  ['0149: crea políticas aunque falte la 0147b', 'migracion/0149_smn_abierto_rol.sql', "      raise exception '0149: falta la política colector_estaciones_sus_redes en % (aplicar antes la 0147b)', t;\n", '      continue;\n', { pg: true }],
-  ['0149b: la llave nace prendida', 'migracion/0149b_smn_abierto_disparo.sql', "('smn-abierto', false,", "('smn-abierto', true,", { pg: true }],
-  ['0149b: volver a aplicarla pisa la llave', 'migracion/0149b_smn_abierto_disparo.sql', 'on conflict (etiqueta) do nothing;', 'on conflict (etiqueta) do update set activa = excluded.activa;', { pg: true }],
-  ['0149b: sin la guardia de la 0148', 'migracion/0149b_smn_abierto_disparo.sql', "    raise exception '0149b: falta la 0148", "    raise notice '0149b: falta la 0148", { pg: true }],
-  ['0149b: el segundo intento sin «ultimo»', 'migracion/0149b_smn_abierto_disparo.sql', `'{"modo":"real","ultimo":"si"}'`, `'{"modo":"real"}'`, { pg: true }],
+  ['0151: se pierde WEATHERLINK_PUB', 'migracion/0151_smn_abierto_rol.sql', "red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB', 'SMN_ABIERTO')", "red in ('INTA_SIPAN_AV', 'SMN_ABIERTO')", { pg: true }],
+  ['0151: sin el proceso smn_abierto', 'migracion/0151_smn_abierto_rol.sql', "'weatherlink_publico', 'smn_abierto'));", "'weatherlink_publico'));", { pg: true }],
+  ['0151: crea políticas aunque falte la 0147b', 'migracion/0151_smn_abierto_rol.sql', "      raise exception '0151: falta la política colector_estaciones_sus_redes en % (aplicar antes la 0147b)', t;\n", '      continue;\n', { pg: true }],
+  ['0151b: la llave nace prendida', 'migracion/0151b_smn_abierto_disparo.sql', "('smn-abierto', false,", "('smn-abierto', true,", { pg: true }],
+  ['0151b: volver a aplicarla pisa la llave', 'migracion/0151b_smn_abierto_disparo.sql', 'on conflict (etiqueta) do nothing;', 'on conflict (etiqueta) do update set activa = excluded.activa;', { pg: true }],
+  ['0151b: sin la guardia de la 0148', 'migracion/0151b_smn_abierto_disparo.sql', "    raise exception '0151b: falta la 0148", "    raise notice '0151b: falta la 0148", { pg: true }],
+  ['0151b: el segundo intento sin «ultimo»', 'migracion/0151b_smn_abierto_disparo.sql', `'{"modo":"real","ultimo":"si"}'`, `'{"modo":"real"}'`, { pg: true }],
 ];
 
 const DIR = path.join(REPO, '.mutante');
