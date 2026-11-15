@@ -94,6 +94,18 @@ Es una línea por novedad, con fecha UTC. Guarda las últimas 1000.
 - **Reintentos de bajada:** como mucho uno por archivo, a los 2 s. No hay bucles.
 - **Si falla R2,** la corrida queda en **rojo** en Actions. Si falla NOAA, queda en verde con la alerta anotada: es un problema externo y la corrida siguiente lo vuelve a intentar.
 
+## El derivado público para SATCHI · `satchi-mapas/rayos/` [_v1815 · la 262]
+
+Los rayos GLM son datos públicos de NOAA. Además de la caché privada, cada corrida copia un **derivado liviano** al depósito **público** de SATCHI (`satchi-mapas`, el de los mosaicos de OPERA), para que SATCHI cruce rayos contra focos sin llaves (camino «c» de local, canal 15/11 19:12).
+- **Qué:** `rayos/AAAA-MM-DD/HH.json` (hora UTC) con `v`, `hora`, `estado`, `satelite`, `faltantes`, `n` y `flashes` en columnas `t_ms, lat, lon, energia_fJ, calidad` (sin área ni datos de la corrida). Y `rayos/indice.json`: `{ v, actualizado, desde, hasta, horas: { 'AAAA-MM-DDTHHZ': 'completa' | 'incompleta' } }`.
+- **Una hora que no está en el índice es «sin dato» para esa hora, nunca «no hubo rayos».** Una incompleta lleva sus `faltantes`.
+- **Cuándo:** al final de cada corrida, para las últimas 48 h (`lib/publico.mjs · copiarAPublico`). Mira el índice, no la hora: si una copia falló, la corrida siguiente la hace. Idempotente.
+- **Llaves:** `R2_OPERA_CUENTA`, `R2_OPERA_ACCESS_KEY_ID`, `R2_OPERA_SECRET_ACCESS_KEY` (las de `opera-mosaico-diario`). **Sin ellas, la corrida sigue igual** y dice «sin las llaves R2_OPERA_*». Si falla la escritura en el público, la corrida queda en rojo (la privada ya quedó guardada).
+- **Caché:** la hora completa, 1 día; la incompleta, 15 min; el índice, 5 min.
+- **Relleno de una vez (lo que ya hay desde el 08/11/2026 01 UTC):** `copiar-publico.mjs`, con su workflow `rayos-publico-copia.workflow.yml.txt` (sólo a mano). No baja nada de NOAA.
+- **Lo lee:** hn-agro `netlify/functions/lib/rayos-vs-foco.mjs` (SATCHI, rayos contra focos), con la URL pública del depósito en `SATCHI_RAYOS_URL_BASE`.
+- **Tests:** `test/publico.test.mjs` (7) y su control negativo `node test/control-publico.mjs` (6 de 6).
+
 ## Workflow
 
 - **Dónde está:** `rayos-hora/rayos-hora.workflow.yml.txt`. Para activarlo hay que copiarlo a `.github/workflows/rayos-hora.yml`. Vino como `.txt` porque el token con el que se armó la rama no tiene el permiso «workflow».
