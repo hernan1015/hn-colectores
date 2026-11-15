@@ -1,0 +1,50 @@
+# HN AGRO · 257 · la zona de cada estación (agricola / pastizal / urbana / natural) por la cobertura del suelo,
+# con ESA WorldCover 2021 v200 (CC BY 4.0; Zanaga et al. 2022, doi:10.5281/zenodo.7254221). Ver zona-estaciones/PRENDER.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/zona-estaciones.yml (el token de la rama no tiene permiso
+# «workflow», igual que sipan-alto-valle). Lo prende y lo dispara local.
+# APAGADO POR DEFECTO: no corre nada si la VARIABLE del repo ZONA_ON no vale «si». Sin schedule: sólo a mano.
+# El registro de Actions es PÚBLICO: el script imprime sólo cantidades (nada de nombres, ids ni coordenadas).
+name: zona-estaciones
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = lee la base y WorldCover y cuenta, sin escribir · real = escribe metadatos.zona y zona_wc'
+        type: choice
+        options: [seco, real]
+        default: seco
+      todas:
+        description: 'recalcular TODAS (si no, sólo las nuevas, las movidas o las de otra regla)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: zona-estaciones
+  cancel-in-progress: false
+jobs:
+  clasificar:
+    if: ${{ vars.ZONA_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60            # ~1.200 estaciones ≈ 45 tiles × 2 s + 0,1 s por ventana ≈ 6 min; con todas las redes, ≈ 15 min
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            zona-estaciones
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (geotiff y postgres.js, versiones fijadas en package-lock) y tests (sin red ni base)
+        run: npm ci --prefix zona-estaciones --no-audit --no-fund && npm test --prefix zona-estaciones
+      - name: Clasificar
+        env:
+          ZONA_PG_URL: ${{ secrets.ZONA_PG_URL }}   # postgresql://clasificador_zona.<ref>:<clave>@<pooler>:6543/postgres (rol 0153; nunca se imprime)
+          MODO: ${{ inputs.modo }}
+          TODAS: ${{ inputs.todas }}
+        run: |
+          args=(--base)
+          [ "$MODO" = "real" ] && args+=(--real)
+          [ "$TODAS" = "true" ] && args+=(--todas)
+          node zona-estaciones/clasificar-zona.mjs "${args[@]}"

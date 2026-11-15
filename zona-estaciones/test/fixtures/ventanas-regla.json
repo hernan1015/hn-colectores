@@ -1,0 +1,18 @@
+{
+  "_nota": "Conteos de píxeles por clase de WorldCover en el círculo de 250 m (≈ 2.750 píxeles). Ventanas armadas a mano para probar la regla r1; no son estaciones reales.",
+  "casos": [
+    { "nombre": "lote de soja con galpón y camino", "conteos": { "40": 2450, "50": 180, "30": 120 }, "zona": "agricola" },
+    { "nombre": "patio en un pueblo", "conteos": { "50": 1500, "10": 700, "30": 300, "40": 250 }, "zona": "urbana" },
+    { "nombre": "borde del umbral: 30 % construido justo", "conteos": { "50": 300, "40": 700 }, "zona": "urbana" },
+    { "nombre": "29,9 % construido no es urbana", "conteos": { "50": 299, "40": 400, "30": 301 }, "zona": "agricola" },
+    { "nombre": "campo ganadero", "conteos": { "30": 2000, "40": 600, "10": 150 }, "zona": "pastizal" },
+    { "nombre": "bosque andino (Epuyén)", "conteos": { "10": 2200, "20": 400, "30": 150 }, "zona": "natural" },
+    { "nombre": "monte chaqueño con un desmonte", "conteos": { "10": 1500, "20": 300, "40": 900 }, "zona": "natural" },
+    { "nombre": "costa: agua + humedal + algo de cultivo", "conteos": { "80": 900, "90": 800, "40": 1000 }, "zona": "natural" },
+    { "nombre": "chacra de frutales que WorldCover ve como árboles", "conteos": { "10": 1400, "40": 1100, "50": 200 }, "zona": "natural" },
+    { "nombre": "empate cultivo-pastizal → agricola", "conteos": { "40": 1000, "30": 1000, "10": 500 }, "zona": "agricola" },
+    { "nombre": "empate pastizal-natural → pastizal", "conteos": { "30": 1000, "10": 1000 }, "zona": "pastizal" },
+    { "nombre": "sin dato (fuera de tiles)", "conteos": { "0": 2750 }, "zona": "sin_dato" },
+    { "nombre": "el 0 no cuenta en el porcentaje", "conteos": { "0": 2000, "40": 500, "50": 200 }, "zona": "agricola" }
+  ]
+}
