@@ -55,7 +55,9 @@ async function cargarEstado(cliente, rel, ahoraMs) {
   // uno solo se retrocedía a ayer o se arrancaba vacío, y con otro sano se seguía sin la pausa del ausente.
   const deRelease = async (r) => {
     if (!r) return null;
-    const listados = (await cliente.assets(r)).filter((a) => RE_ESTADO.test(a.name));
+    // 4.ª vuelta (n3-225-v3-1511, P2): el listado COMPLETO (`todos: true`), no sólo los `uploaded`. Un estado a medio
+    // subir (`starter`, o cualquier state que no sea `uploaded`) no lo baja leerVarios: así cae en `rotos` como el 404.
+    const listados = (await cliente.assets(r, { todos: true })).filter((a) => RE_ESTADO.test(a.name));
     const previos = await cliente.leerVarios(r, (n) => RE_ESTADO.test(n));
     if (!listados.length && !previos.length) return null;
     const leidos = [], rotos = [];

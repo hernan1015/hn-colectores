@@ -83,7 +83,8 @@ Si alguna vez se quiere un archivo público (la licencia lo permite, citando), a
   (`estado_nuevo`) queda sólo para cuando no hay ningún estado. Para destrabarlo, alguien tiene que mirar el asset
   roto y borrarlo a mano, sabiendo que la corrida siguiente arranca de cero.
   Cuenta como ilegible también un estado que aparece en el listado de la release pero cuya descarga falla (por
-  ejemplo, un 404 porque se borró entre el listado y la bajada).
+  ejemplo, un 404 porque se borró entre el listado y la bajada), y uno a medio subir (`starter`, o cualquier
+  `state` que no sea `uploaded`): puede ser el estado más nuevo, cortado en la subida.
 - **Un `<!DOCTYPE` o `<!ENTITY` en el índice es falla** (`indice_dtd`, la regla de la 222): no se lee el índice y no se
   pide ningún XML. El índice igual queda archivado en el sobre.
 - **Sin reintentos en bucle:** una URL cortada se reintenta **una sola vez**, en otra corrida y pasada la pausa. Después

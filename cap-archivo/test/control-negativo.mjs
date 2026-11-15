@@ -75,6 +75,10 @@ const MUTANTES = [
   ['3.ª P2 · sólo DOCTYPE (un <!ENTITY suelto pasa)', S, 'export const RE_DTD = /<!\\s*(?:DOCTYPE|ENTITY)/i;', 'export const RE_DTD = /<!\\s*DOCTYPE/i;'],
   ['3.ª P2 · DTD sensible a mayúsculas (<!doctype pasa)', S, 'export const RE_DTD = /<!\\s*(?:DOCTYPE|ENTITY)/i;', 'export const RE_DTD = /<!\\s*(?:DOCTYPE|ENTITY)/;'],
   ['3.ª P2 · el DTD no es falla (termina en verde)', F, "    if (lectura.dtd) avisos.push({ tipo: 'indice_dtd' });", '    if (lectura.dtd) {}'],
+  // 4.ª vuelta (n3-225-v3-1511): un estado a medio subir (starter) es ilegible
+  ['4.ª P2 · el listado del estado sólo con los uploaded (la 3.ª vuelta)', F, '    const listados = (await cliente.assets(r, { todos: true })).filter((a) => RE_ESTADO.test(a.name));', '    const listados = (await cliente.assets(r)).filter((a) => RE_ESTADO.test(a.name));'],
+  ['4.ª P2 · el cliente ignora `todos` (siempre filtra los uploaded)', 'lib/releases.mjs', "    return todos ? rel._assets.slice() : rel._assets.filter((a) => a.state === 'uploaded');", "    return rel._assets.filter((a) => a.state === 'uploaded');"],
+  ['4.ª P2 · el cliente pierde el state (todo cuenta como uploaded)', 'lib/releases.mjs', "state: a.state || 'uploaded', size: a.size", "state: 'uploaded', size: a.size"],
 ];
 
 function copia() {

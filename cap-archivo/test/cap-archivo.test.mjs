@@ -472,7 +472,7 @@ function githubFalso({ hoy = null, ayer = null } = {}) {
     m = /\/releases\/(\d+)\/assets\?per_page=100&page=(\d+)$/.exec(url);
     if (m) {
       const r = Object.values(rels).find((x) => x && x.id === +m[1]);
-      return res(200, m[2] === '1' && r ? r.assets.map((a) => ({ id: a.id, name: a.name, state: 'uploaded', size: 10 })) : []);
+      return res(200, m[2] === '1' && r ? r.assets.map((a) => ({ id: a.id, name: a.name, state: a.state || 'uploaded', size: 10 })) : []);
     }
     m = /\/releases\/assets\/(\d+)$/.exec(url);
     if (m) {
@@ -540,4 +540,43 @@ test('3.ª P2 · un <!DOCTYPE o <!ENTITY en el índice es FALLA y no se pide nin
   }
   // el índice real sigue igual (sin DTD)
   assert.equal(leerIndice(INDICE_1426).dtd, undefined);
+});
+
+// ── 4.ª vuelta (n3-225-v3-1511) ──
+test('4.ª P2 · un estado listado a medio subir (starter, o cualquier state ≠ uploaded) es ILEGIBLE: cero pedidos al SMN, en seco y en real', async () => {
+  const { clienteReleases } = await import('../../lib/releases.mjs');
+  const { empaquetarEstado, vacio } = await import('../lib/estado.mjs');
+  const ms = Date.parse('2026-11-15T12:00:00Z');
+  const sano = empaquetarEstado(vacio());
+  const starter = (id, name, state = 'starter') => ({ id, name, state, buf: sano });   // bajable o no: no está terminado
+  for (const [que, gh] of [
+    ['la reproducción de Codex: el único estado de hoy es starter (y ayer no hay release)', { hoy: { id: 1, assets: [starter(7, 'estado__20261115T110700.json.gz')] } }],
+    ['starter con otro estado sano en la misma release', { hoy: { id: 1, assets: [starter(7, 'estado__20261115T110700.json.gz'), { id: 8, name: 'estado__20261115T110000.json.gz', buf: sano }] } }],
+    ['starter hoy, con un estado sano ayer (no retrocede)', { hoy: { id: 1, assets: [starter(7, 'estado__20261115T110700.json.gz')] }, ayer: { id: 2, assets: [{ id: 8, name: 'estado__20261114T235000.json.gz', buf: sano }] } }],
+    ['sin release de hoy: el único estado de ayer es starter', { ayer: { id: 2, assets: [starter(9, 'estado__20261114T235000.json.gz')] } }],
+    ['otro state que devuelva GitHub (no uploaded)', { hoy: { id: 1, assets: [starter(7, 'estado__20261115T110700.json.gz', 'open')] } }],
+  ]) {
+    for (const seco of [true, false]) {
+      const g = githubFalso(gh);
+      const cliente = clienteReleases({ token: 'x', repo: 'dueno/repo', fetchFn: g.fetchFn });
+      const smn = smnFalso();   // el índice real del 14/11: sin el arreglo, en real eran 97 pedidos
+      const pedidor = crearPedidor({ fetchFn: smn.fetchFn, pausaMs: 0, dormir: async () => {}, ahora: () => ms });
+      const r = await correr({ cliente, pedidor, base: baseFalsa(), seco, ahora: () => ms });
+      const q = `${que} (${seco ? 'seco' : 'real'})`;
+      assert.equal(smn.pedidos.length, 0, q + ': ni el índice');
+      assert.ok(r.avisos.some((a) => a.tipo === 'estado_ilegible' && esFalla(a)), q + ': ' + JSON.stringify(r.avisos));
+      assert.ok(!r.avisos.some((a) => a.tipo === 'estado_nuevo'), q + ': no arranca vacío');
+      assert.equal(r.codigo, 2, q);
+      if (seco) assert.ok(!g.pedidos.some((p) => !p.startsWith('GET ')), q + ': en seco no se escribe nada en GitHub');
+      else assert.ok(!g.pedidos.some((p) => /\/assets\?name=|DELETE /.test(p)), q + ': ni sobre, ni estado, ni borrado');
+    }
+  }
+  // control: un SOBRE a medio subir (no es estado) no frena; con el estado sano sigue y pide sólo el índice, en seco
+  const g = githubFalso({ hoy: { id: 1, assets: [{ id: 8, name: 'estado__20261115T110000.json.gz', buf: sano }, starter(9, '20261115T110700Z.cap.json.gz')] } });
+  const smn = smnFalso({ indice: indiceCon([XG(1)]) });
+  const pedidor = crearPedidor({ fetchFn: smn.fetchFn, pausaMs: 0, dormir: async () => {}, ahora: () => ms });
+  const r = await correr({ cliente: clienteReleases({ token: 'x', repo: 'dueno/repo', fetchFn: g.fetchFn }), pedidor, seco: true, ahora: () => ms });
+  assert.deepEqual(smn.pedidos.map((p) => p.url), [INDICE_URL], 'en seco: sólo el índice');
+  assert.ok(!r.avisos.some((a) => a.tipo === 'estado_ilegible'), JSON.stringify(r.avisos));
+  assert.equal(r.codigo, 0);
 });
