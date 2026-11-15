@@ -1,0 +1,49 @@
+# HN AGRO · el parseo de las estaciones de USO INTERNO: R2 (lo que guardó la ronda) → estaciones / estaciones_obs.
+# Corre SOLO después de cada ronda de colector-estaciones-privadas (workflow_run) y a mano (workflow_dispatch, con
+# «horas» para levantar rondas atrasadas). NO le pide nada a ninguna fuente: lee R2 y escribe la base.
+# Llave: variable del repo ESTACIONES_PARSEO_ON = 'si'. Sin ella (por defecto), no corre nada.
+# Secretos que tiene que cargar local (este archivo no los crea):
+#   · R2_ACCOUNT_ID y R2_BUCKET (los mismos de la ronda);
+#   · R2_LECTURA_ACCESS_KEY_ID / R2_LECTURA_SECRET_ACCESS_KEY: un token de R2 SÓLO DE LECTURA sobre ese depósito;
+#   · ESTACIONES_PG_URL: postgresql://colector_estaciones.<ref>:<clave>@<pooler>:6543/postgres (el rol de la 0147b, con
+#     las redes de la 0152; puede ser el mismo valor que SIPAN_PG_URL).
+# El registro de Actions es PÚBLICO: el parseo imprime sólo cantidades.
+name: estaciones-parseo
+on:
+  workflow_run:
+    workflows: [colector-estaciones-privadas]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      horas: { description: 'rondas de las últimas N horas (1-72)', required: false, default: '3' }
+permissions:
+  contents: read
+concurrency:
+  group: estaciones-parseo
+  cancel-in-progress: false
+jobs:
+  parseo:
+    if: ${{ vars.ESTACIONES_PARSEO_ON == 'si' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            estaciones-privadas/parseo
+            sipan-alto-valle/lib
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (postgres 3.4.4, versión fija)
+        run: npm install --omit=dev --no-audit --no-fund --prefix estaciones-privadas/parseo
+      - name: Parseo
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_LECTURA_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_LECTURA_SECRET_ACCESS_KEY }}
+          ESTACIONES_PG_URL: ${{ secrets.ESTACIONES_PG_URL }}
+          HORAS: ${{ github.event.inputs.horas || '3' }}
+        run: node estaciones-privadas/parseo/parsear.mjs --horas "$HORAS"
