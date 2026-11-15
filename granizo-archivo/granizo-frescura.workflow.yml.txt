@@ -2,7 +2,8 @@
 # Va en .github/workflows/granizo-frescura.yml (copiarlo tal cual; .txt por el permiso `workflow`, como los otros).
 # Cada 20 min mira los releases granizo-<hoy> y granizo-<ayer> de hn-radar y manda UN mail si en los últimos 40 min:
 #   no se guardó ningún barrido ni hubo pedidos (parado) · sólo hubo scans repetidos (repite) · sólo fallas (fallando),
-#   o si no puede leer hn-radar (sin-lectura).
+#   o si no puede leer hn-radar (sin-lectura). Y (227) si en las últimas 6 h quedó un turno de 10 min sin barrido bueno
+#   entre dos guardados (huecos; un mail por hueco nuevo).
 # El mail: los MISMOS secretos que vigia-satchi y opera-frescura (SATCHI_SMTP_HOST/PORT/USER/PASS, FROM opcional,
 # SATCHI_VIGIA_DESTINO). No repite por episodio: la clave va a la caché de Actions sólo DESPUÉS de mandar el mail.
 # Prende con la MISMA variable que el archivo: GRANIZO_ARCHIVO_ON = si. A mano: seco (sin mail) o real.

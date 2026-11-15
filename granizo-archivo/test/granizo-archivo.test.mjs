@@ -11,7 +11,7 @@ import { pedirGranizo, clasificar, nombreBarrido, tagDe, horaAR, desempaquetar, 
 import { yaExiste } from '../../lib/releases.mjs';
 import { archivar } from '../lib/flujo.mjs';
 import { RE_INDICE, unirIndices } from '../lib/indice.mjs';
-import { evaluarFrescura, leerEstado, tagsAMirar, VENTANA_MIN } from '../lib/frescura.mjs';
+import { evaluarFrescura, leerEstado, tagsAMirar, VENTANA_MIN, huecosDe, HUECOS_VENTANA_MIN } from '../lib/frescura.mjs';
 import { evaluarAhora, ejecutarMandar } from '../vigia-frescura.mjs';
 
 const T0 = Date.parse('2026-11-13T22:23:05Z');          // 19:23 ART
@@ -297,7 +297,9 @@ test('vigía: REPITE si corre pero todo es el mismo scan; FALLANDO si lo nuevo e
   // O5: todo parcial (o parcial + falla) → «parciales»; con una buena → ok (control)
   const pa = evaluarFrescura({ ahoraMs: T0, barridos: [viejo, { name: '20261113T2210Z.parcial.json.gz', created_at: iso(T0 - 2 * 60000) }, { name: 'pedido-20261113T2220Z.falla.json.gz', created_at: iso(T0 - 1 * 60000) }], pedidos: ped });
   assert.deepEqual([pa.tipo, pa.avisar, pa.clave], ['parciales', true, 'granizo-archivo-parciales-tras-20261113T2130Z.buena.json.gz']);
-  assert.equal(evaluarFrescura({ ahoraMs: T0, barridos: [viejo, { name: '20261113T2210Z.parcial.json.gz', created_at: iso(T0 - 2 * 60000) }, { name: '20261113T2220Z.buena.json.gz', created_at: iso(T0 - 1 * 60000) }], pedidos: ped }).tipo, 'ok');
+  // [227] con una buena ya no es «parciales»; de 21:30 a 22:20 faltan 21:40-22:00 y 22:10 es parcial → «huecos» (no «ok» callado)
+  const conBuena = evaluarFrescura({ ahoraMs: T0, barridos: [viejo, { name: '20261113T2210Z.parcial.json.gz', created_at: iso(T0 - 2 * 60000) }, { name: '20261113T2220Z.buena.json.gz', created_at: iso(T0 - 1 * 60000) }], pedidos: ped });
+  assert.deepEqual([conBuena.tipo, conBuena.huecos.map((h) => h.turno_art + ' ' + h.tipo)], ['huecos', ['18:40 falta', '18:50 falta', '19:00 falta', '19:10 parcial']]);
 });
 
 test('vigía: a las 00:10 ART mira también el release de AYER; con el archivo real lee bien', async () => {
@@ -335,4 +337,50 @@ test('vigía: la marca para la caché queda SÓLO si el mail salió', async () =
   assert.equal(fs.readFileSync(path.join(d, 'm2', 'clave'), 'utf8').trim(), ev.clave);
   assert.equal((await ejecutarMandar({ avisar: false }, { enviar: async () => { throw new Error('no'); }, cfg: {} })).enviado, false);
   fs.rmSync(d, { recursive: true, force: true });
+});
+
+// ── [227] los HUECOS del archivo: el 14/11 faltaron las 02:50 y las 13:00 ART y la de las 13:20 llegó parcial ─────────
+// Los 84 nombres de la release granizo-2026-11-14 tal como quedaron (hn-cortex docs/satchi-granizo-2026-11/caso-2026-11-14/
+// datos/archivo147_14-11.json, 03:00Z a 17:10Z). created_at = scan + 7 min (la corrida de :07 del turno).
+const TURNOS_1411 = '0300 0310 0320 0330 0340 0350 0400 0410 0420 0430 0440 0450 0500 0510 0520 0530 0540 0600 0610 0620 0630 0640 0650 0700 0710 0720 0730 0740 0750 0800 0810 0820 0830 0840 0850 0900 0910 0920 0930 0940 0950 1000 1010 1020 1030 1040 1050 1100 1110 1120 1130 1140 1150 1200 1210 1220 1230 1240 1250 1300 1310 1320 1330 1340 1350 1400 1410 1420 1430 1440 1450 1500 1510 1520 1530 1540 1550 1610 1620p 1630 1640 1650 1700 1710'.split(' ');
+const archivo1411 = (hasta = '9999') => TURNOS_1411.filter((t) => t.slice(0, 4) <= hasta).map((t) => {
+  const hhmm = t.slice(0, 4), ms = Date.parse(`2026-11-14T${hhmm.slice(0, 2)}:${hhmm.slice(2)}:00Z`);
+  return { name: `20261114T${hhmm}Z.${t.endsWith('p') ? 'parcial' : 'buena'}.json.gz`, created_at: iso(ms + 7 * 60000) };
+});
+
+test('[227] vigía: HUECOS con el archivo real del 14/11 — 13:00 sin barrido y 13:20 parcial, aunque el resto ande', () => {
+  assert.equal(archivo1411().length, 84);
+  const v = evaluarFrescura({ ahoraMs: Date.parse('2026-11-14T17:20:00Z'), barridos: archivo1411(), pedidos: [] });
+  assert.deepEqual([v.tipo, v.avisar], ['huecos', true]);
+  assert.deepEqual(v.huecos.map((h) => [h.turno_art, h.tipo]), [['13:00', 'falta'], ['13:20', 'parcial']]);   // 02:50 ya quedó afuera de las 6 h
+  assert.equal(v.clave, 'granizo-archivo-hueco-20261114T1620');
+  assert.match(v.detalle, /13:00 ART \(sin barrido\), 13:20 ART \(sólo parcial\)/);
+  assert.equal(HUECOS_VENTANA_MIN, 360);
+});
+
+test('[227] vigía: a la mañana avisa el de las 02:50; la clave es la del hueco MÁS NUEVO (no repite, y un hueco nuevo sí avisa)', () => {
+  const m = evaluarFrescura({ ahoraMs: Date.parse('2026-11-14T06:30:00Z'), barridos: archivo1411('0620'), pedidos: [] });
+  assert.deepEqual([m.tipo, m.huecos.map((h) => h.turno_art), m.clave], ['huecos', ['02:50'], 'granizo-archivo-hueco-20261114T0550']);
+  // una hora después, mismo hueco → misma clave (la caché de Actions no deja mandar otro mail)
+  assert.equal(evaluarFrescura({ ahoraMs: Date.parse('2026-11-14T07:30:00Z'), barridos: archivo1411('0720'), pedidos: [] }).clave, m.clave);
+  // a las 16:20Z aparece el de las 13:00 ART → clave nueva
+  assert.equal(evaluarFrescura({ ahoraMs: Date.parse('2026-11-14T16:20:00Z'), barridos: archivo1411('1610'), pedidos: [] }).clave, 'granizo-archivo-hueco-20261114T1600');
+});
+
+test('[227] vigía: sin huecos → ok; lo que viene DESPUÉS del último guardado no es hueco (todavía puede llegar); los «pedido-» no cuentan', () => {
+  // 03:00Z a 05:40Z completos
+  assert.equal(evaluarFrescura({ ahoraMs: Date.parse('2026-11-14T05:50:00Z'), barridos: archivo1411('0540'), pedidos: [] }).tipo, 'ok');
+  // a las 06:05Z la de 05:50 todavía no está y la última es 05:40: no es hueco
+  assert.deepEqual(huecosDe({ ahoraMs: Date.parse('2026-11-14T06:05:00Z'), barridos: archivo1411('0540') }), []);
+  // una falla sin scan («pedido-…») ni tapa ni abre un hueco
+  const conPedido = archivo1411('0620').concat([{ name: 'pedido-20261114T0550Z.falla.json.gz', created_at: iso(Date.parse('2026-11-14T05:57:00Z')) }]);
+  assert.deepEqual(huecosDe({ ahoraMs: Date.parse('2026-11-14T06:30:00Z'), barridos: conPedido }).map((h) => h.turno_art), ['02:50']);
+  // la buena tapa a la parcial del MISMO scan (se guardan las dos con nombres distintos)
+  const ambas = archivo1411('1630').concat([{ name: '20261114T1620Z.buena.json.gz', created_at: iso(Date.parse('2026-11-14T16:37:00Z')) }]);
+  assert.deepEqual(huecosDe({ ahoraMs: Date.parse('2026-11-14T16:45:00Z'), barridos: ambas }).map((h) => h.turno_art), ['13:00']);
+});
+
+test('[227] vigía: los avisos más graves siguen primero (parado gana a huecos)', () => {
+  const v = evaluarFrescura({ ahoraMs: Date.parse('2026-11-14T18:30:00Z'), barridos: archivo1411(), pedidos: [] });
+  assert.equal(v.tipo, 'parado');
 });
