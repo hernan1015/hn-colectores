@@ -450,3 +450,94 @@ test('P2-10 · los comandos de activación van sin comillas escapadas (la clave 
     assert.equal(txt.includes('\\"'), false, n + ': ninguna \\" (pasaría las comillas como parte de la clave)');
   }
 });
+
+// ── 3.ª vuelta (n3-225-v2-1511) ──
+// P2 · un estado LISTADO cuya descarga da 404: con el cliente de releases REAL y un fetch completamente falso.
+function githubFalso({ hoy = null, ayer = null } = {}) {
+  // hoy/ayer: { id, assets: [{ id, name, buf | null (404) }] } o null (la release no existe: 404)
+  const pedidos = [];
+  const rels = { [tagDe(Date.parse('2026-11-15T12:00:00Z'))]: hoy, [tagDe(Date.parse('2026-11-14T12:00:00Z'))]: ayer };
+  const res = (status, cuerpo) => ({ status, ok: status >= 200 && status < 300, text: async () => (typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo)),
+    arrayBuffer: async () => (Buffer.isBuffer(cuerpo) ? cuerpo : Buffer.from(String(cuerpo))) });
+  const fetchFn = async (url, opts = {}) => {
+    pedidos.push(`${opts.method || 'GET'} ${url}`);
+    if ((opts.method || 'GET') === 'POST' && /\/releases$/.test(url)) {   // la release del día, nueva y vacía
+      const { tag_name } = JSON.parse(opts.body);
+      rels[tag_name] = { id: 100 + Object.keys(rels).length, assets: [] };
+      return res(201, { id: rels[tag_name].id, tag_name });
+    }
+    if ((opts.method || 'GET') !== 'GET') return res(500, 'no se escribe nada en este test');
+    let m = /\/releases\/tags\/([^/?]+)$/.exec(url);
+    if (m) { const r = rels[decodeURIComponent(m[1])]; return r ? res(200, { id: r.id, tag_name: decodeURIComponent(m[1]) }) : res(404, '{}'); }
+    m = /\/releases\/(\d+)\/assets\?per_page=100&page=(\d+)$/.exec(url);
+    if (m) {
+      const r = Object.values(rels).find((x) => x && x.id === +m[1]);
+      return res(200, m[2] === '1' && r ? r.assets.map((a) => ({ id: a.id, name: a.name, state: 'uploaded', size: 10 })) : []);
+    }
+    m = /\/releases\/assets\/(\d+)$/.exec(url);
+    if (m) {
+      const a = Object.values(rels).flatMap((x) => (x ? x.assets : [])).find((x) => x.id === +m[1]);
+      return a && a.buf ? res(200, a.buf) : res(404, 'Not Found');
+    }
+    return res(404, '{}');
+  };
+  return { fetchFn, pedidos };
+}
+
+test('3.ª P2 · un estado listado cuya descarga da 404 es ILEGIBLE: cero pedidos al SMN, en seco y en real (cliente real, fetch falso)', async () => {
+  const { clienteReleases } = await import('../../lib/releases.mjs');
+  const { empaquetarEstado, vacio } = await import('../lib/estado.mjs');
+  const ms = Date.parse('2026-11-15T12:00:00Z');
+  const sano = empaquetarEstado(vacio());
+  for (const [que, gh] of [
+    ['la reproducción de Codex: el único estado de hoy da 404 (y ayer no hay release)', { hoy: { id: 1, assets: [{ id: 7, name: 'estado__20261115T115000.json.gz', buf: null }] } }],
+    ['hay otro estado sano en la misma release', { hoy: { id: 1, assets: [{ id: 7, name: 'estado__20261115T115000.json.gz', buf: null }, { id: 8, name: 'estado__20261115T114000.json.gz', buf: sano }] } }],
+    ['sin release de hoy: el estado de ayer da 404 (no salta a anteayer ni arranca vacío)', { ayer: { id: 2, assets: [{ id: 9, name: 'estado__20261114T235000.json.gz', buf: null }] } }],
+  ]) {
+    for (const seco of [true, false]) {
+      const g = githubFalso(gh);
+      const cliente = clienteReleases({ token: 'x', repo: 'dueno/repo', fetchFn: g.fetchFn });
+      const smn = smnFalso();
+      const pedidor = crearPedidor({ fetchFn: smn.fetchFn, pausaMs: 0, dormir: async () => {}, ahora: () => ms });
+      const base = baseFalsa();
+      const r = await correr({ cliente, pedidor, base, seco, ahora: () => ms });
+      const q = `${que} (${seco ? 'seco' : 'real'})`;
+      assert.equal(smn.pedidos.length, 0, q + ': ni el índice');
+      assert.ok(r.avisos.some((a) => a.tipo === 'estado_ilegible' && esFalla(a)), q + ': ' + JSON.stringify(r.avisos));
+      assert.ok(!r.avisos.some((a) => a.tipo === 'estado_nuevo'), q + ': no arranca vacío');
+      assert.equal(r.codigo, 2, q);
+      if (seco) assert.ok(!g.pedidos.some((p) => !p.startsWith('GET ')), q + ': en seco no se escribe nada en GitHub');
+      else assert.ok(!g.pedidos.some((p) => /\/assets\?name=|DELETE /.test(p)), q + ': ni sobre, ni estado, ni borrado');
+    }
+  }
+  // control: el mismo cliente real con el estado sano solo SÍ sigue (la descarga ausente es lo que frena)
+  const g = githubFalso({ hoy: { id: 1, assets: [{ id: 8, name: 'estado__20261115T114000.json.gz', buf: sano }] } });
+  const smn = smnFalso({ indice: indiceCon([XG(1)]) });
+  const pedidor = crearPedidor({ fetchFn: smn.fetchFn, pausaMs: 0, dormir: async () => {}, ahora: () => ms });
+  const r = await correr({ cliente: clienteReleases({ token: 'x', repo: 'dueno/repo', fetchFn: g.fetchFn }), pedidor, seco: true, ahora: () => ms });
+  assert.deepEqual(smn.pedidos.map((p) => p.url), [INDICE_URL], 'en seco: sólo el índice');
+  assert.ok(!r.avisos.some((a) => a.tipo === 'estado_ilegible'));
+});
+
+test('3.ª P2 · un <!DOCTYPE o <!ENTITY en el índice es FALLA y no se pide ningún XML (la entidad sin usar ya no fabrica un ítem)', async () => {
+  const x = 'https://ssl.smn.gob.ar/feeds/CAP/xml_generados/x.xml';
+  const codex = `<!DOCTYPE rss [<!ENTITY unused "> <rss><channel><item><link>${x}</link></item></channel></rss>">]><rss><channel></channel></rss>`;
+  const l = leerIndice(codex);
+  assert.equal(l.dtd, true); assert.equal(l.items, 0); assert.deepEqual(l.enlaces, []);
+  for (const [que, t] of [
+    ['la reproducción de Codex', codex],
+    ['DOCTYPE simple delante de un índice bueno', '<?xml version="1.0"?>\n<!DOCTYPE rss>\n' + indiceCon([XG(1)]).replace(/^<\?xml[^>]*>\n/, '')],
+    ['ENTITY suelta adentro del canal', indiceCon([XG(1)]).replace('<channel>', '<channel><!ENTITY e "x">')],
+    ['doctype en minúsculas', indiceCon([XG(1)]).replace('<rss', '<!doctype rss><rss')],
+  ]) {
+    const smn = smnFalso({ indice: t }), alm = almacenFalso();
+    const r = await corrida({ smn, alm });
+    assert.deepEqual(smn.pedidos.map((p) => p.url), [INDICE_URL], que + ': sólo el índice, ningún XML');
+    assert.ok(r.avisos.some((a) => a.tipo === 'indice_dtd' && esFalla(a)), que);
+    assert.equal(r.codigo, 2, que); assert.equal(r.resumen.indice.items, 0, que); assert.equal(r.resumen.xml.pedidos, 0, que);
+    const [{ s }] = sobres(alm);
+    assert.equal(s.xml.length, 0, que + ': el sobre no archiva XML');
+  }
+  // el índice real sigue igual (sin DTD)
+  assert.equal(leerIndice(INDICE_1426).dtd, undefined);
+});

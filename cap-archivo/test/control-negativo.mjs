@@ -68,6 +68,13 @@ const MUTANTES = [
   ['P2-9 · el cuerpo de error del índice no se guarda', F, '  if (ri.http !== 200 && ri.buf) Object.assign(sobre.indice, cuerpoDe(ri.buf));\n', ''],
   ['P2-9 · el cuerpo de error de un XML no se guarda', F, '        if (r.http !== 200 && r.buf) Object.assign(x, cuerpoDe(r.buf));   // el cuerpo de error, si llegó\n', ''],
   ['P2-10 · comillas escapadas en PRENDER', 'cap-archivo/PRENDER.md', 'VERIF=$(CLAVE="$CLAVE" node', 'VERIF=$(CLAVE=\\"$CLAVE\\" node'],
+  // 3.ª vuelta (n3-225-v2-1511): uno por cada arreglo
+  ['3.ª P2 · un estado listado cuya descarga da 404 se ignora (la 2.ª vuelta)', F, '    for (const a of listados) if (!bajados.has(a.name)) rotos.push(a.name);   // listado pero no bajado: ilegible\n', ''],
+  ['3.ª P2 · sin bajar ninguno, la release cuenta como «sin estado» (retrocede o arranca vacío)', F, '    if (!listados.length && !previos.length) return null;', '    if (!previos.length) return null;'],
+  ['3.ª P2 · el DOCTYPE no frena la lectura del índice (la 2.ª vuelta)', S, "  if (RE_DTD.test(t0)) return { items: 0, abiertos: 0, entero, enlaces: [], por_carpeta: {}, fuera: {}, raros: 0, dtd: true };\n", ''],
+  ['3.ª P2 · sólo DOCTYPE (un <!ENTITY suelto pasa)', S, 'export const RE_DTD = /<!\\s*(?:DOCTYPE|ENTITY)/i;', 'export const RE_DTD = /<!\\s*DOCTYPE/i;'],
+  ['3.ª P2 · DTD sensible a mayúsculas (<!doctype pasa)', S, 'export const RE_DTD = /<!\\s*(?:DOCTYPE|ENTITY)/i;', 'export const RE_DTD = /<!\\s*(?:DOCTYPE|ENTITY)/;'],
+  ['3.ª P2 · el DTD no es falla (termina en verde)', F, "    if (lectura.dtd) avisos.push({ tipo: 'indice_dtd' });", '    if (lectura.dtd) {}'],
 ];
 
 function copia() {

@@ -124,6 +124,7 @@ export const sinComentariosNiCdata = (t) =>
   t.replace(/<!\[CDATA\[([\s\S]*?)\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!DOCTYPE[^>]*>/g, (_, cd) => (cd != null ? escXml(cd) : ''));
 
 const ITEM = 'rss>channel>item', LINK = 'rss>channel>item>link';
+export const RE_DTD = /<!\s*(?:DOCTYPE|ENTITY)/i;
 const RE_TAG = /<(\/?)([A-Za-z_][\w.:-]*)(?:\s(?:[^>"']|"[^"]*"|'[^']*')*?)?(\/?)>/g;
 
 /**
@@ -140,6 +141,9 @@ const RE_TAG = /<(\/?)([A-Za-z_][\w.:-]*)(?:\s(?:[^>"']|"[^"]*"|'[^']*')*?)?(\/?
 export function leerIndice(texto) {
   const t0 = String(texto == null ? '' : texto);
   const entero = /<\/channel>\s*<\/rss>\s*$/.test(t0);
+  // 3.ª vuelta (n3-225-v2-1511, P2; la regla de la 222): CUALQUIER <!DOCTYPE o <!ENTITY en el índice es falla y no se
+  // lee ni se pide nada. Una declaración de entidad sin usar podía fabricar un <item> pedible.
+  if (RE_DTD.test(t0)) return { items: 0, abiertos: 0, entero, enlaces: [], por_carpeta: {}, fuera: {}, raros: 0, dtd: true };
   const t = sinComentariosNiCdata(t0);
   const abiertos = (t.match(/<item[\s>/]/g) || []).length;
   const vistos = new Set(), enlaces = [], fuera = {}, porCarpeta = {};

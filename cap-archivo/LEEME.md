@@ -82,6 +82,10 @@ Si alguna vez se quiere un archivo público (la licencia lo permite, citando), a
   y no se retrocede al estado de un día anterior. Ese estado puede tener una pausa vigente. Arrancar de cero
   (`estado_nuevo`) queda sólo para cuando no hay ningún estado. Para destrabarlo, alguien tiene que mirar el asset
   roto y borrarlo a mano, sabiendo que la corrida siguiente arranca de cero.
+  Cuenta como ilegible también un estado que aparece en el listado de la release pero cuya descarga falla (por
+  ejemplo, un 404 porque se borró entre el listado y la bajada).
+- **Un `<!DOCTYPE` o `<!ENTITY` en el índice es falla** (`indice_dtd`, la regla de la 222): no se lee el índice y no se
+  pide ningún XML. El índice igual queda archivado en el sobre.
 - **Sin reintentos en bucle:** una URL cortada se reintenta **una sola vez**, en otra corrida y pasada la pausa. Después
   queda como final. Un 404 es final de entrada.
 
@@ -98,6 +102,7 @@ Si alguna vez se quiere un archivo público (la licencia lo permite, citando), a
 | `estado_ilegible` | **falla** | hay un estado que no se pudo leer: no se le pidió nada al SMN |
 | `xml_redirige` | **falla** | un XML contestó un 3xx: no se siguió y no se vuelve a pedir |
 | `indice_http` · `indice_no_rss` · `indice_cortado` | **falla** | el índice no llegó, no es RSS o vino cortado |
+| `indice_dtd` | **falla** | el índice trae un `<!DOCTYPE` o un `<!ENTITY`: no se pidió ningún XML |
 | `carpeta_nueva` · `enlace_raro` | **falla** | la lista blanca: algo que no se siguió |
 | `sin_registro` · `registro_no_anotado` | **falla** | `registro_procesos` no quedó anotado (los datos sí se guardaron) |
 

@@ -50,11 +50,17 @@ export const desempaquetar = (buf) => JSON.parse(zlib.gunzipSync(buf).toString('
  *  un día anterior): ese estado puede tener una pausa vigente o los intentos de una URL, y arrancar sin él sería
  *  pedirle al SMN lo que nos pidió que no le pidiéramos. Arrancar vacío queda sólo para cuando no hay ningún estado. */
 async function cargarEstado(cliente, rel, ahoraMs) {
+  // 3.ª vuelta (n3-225-v2-1511, P2): lo que cuenta es el LISTADO, no lo que se pudo bajar. leerVarios descarta una
+  // descarga que da 404 (el asset se borró entre el listado y la bajada): ese estado también es ilegible. Si no, con
+  // uno solo se retrocedía a ayer o se arrancaba vacío, y con otro sano se seguía sin la pausa del ausente.
   const deRelease = async (r) => {
     if (!r) return null;
+    const listados = (await cliente.assets(r)).filter((a) => RE_ESTADO.test(a.name));
     const previos = await cliente.leerVarios(r, (n) => RE_ESTADO.test(n));
-    if (!previos.length) return null;
+    if (!listados.length && !previos.length) return null;
     const leidos = [], rotos = [];
+    const bajados = new Set(previos.map((p) => p.asset.name));
+    for (const a of listados) if (!bajados.has(a.name)) rotos.push(a.name);   // listado pero no bajado: ilegible
     for (const p of previos) { try { leidos.push(leerEstado(p.buf)); } catch { rotos.push(p.asset.name); } }
     return { estado: leidos.length ? unirEstados(leidos) : null, assets: previos.map((p) => p.asset), rotos };
   };
@@ -155,10 +161,12 @@ export async function correr({ cliente, pedidor, base = null, seco = false, ahor
     else sobre.indice.igual_a = estado.indice.asset;
     lectura = leerIndice(texto);
     Object.assign(res.indice, { items: lectura.items, enlaces: lectura.enlaces.length, por_carpeta: lectura.por_carpeta, fuera: lectura.fuera, raros: lectura.raros });
-    if (!/<rss[\s>]/.test(texto) || !/<channel[\s>]/.test(texto)) avisos.push({ tipo: 'indice_no_rss' });
+    if (lectura.dtd) avisos.push({ tipo: 'indice_dtd' });   // falla: no se pide ningún XML (ver abajo)
+    else if (!/<rss[\s>]/.test(texto) || !/<channel[\s>]/.test(texto)) avisos.push({ tipo: 'indice_no_rss' });
     else if (!lectura.entero || lectura.abiertos !== lectura.items) avisos.push({ tipo: 'indice_cortado', abiertos: lectura.abiertos, items: lectura.items });
     for (const [carpeta, n] of Object.entries(lectura.fuera)) avisos.push({ tipo: 'carpeta_nueva', carpeta: carpeta.slice(0, 40), n });
     if (lectura.raros) avisos.push({ tipo: 'enlace_raro', n: lectura.raros });
+    if (lectura.dtd) lectura = null;   // con DTD no se lee nada del índice: ningún XML
   }
 
   // 3. los XML nuevos
