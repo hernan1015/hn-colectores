@@ -75,6 +75,9 @@ function ventana(lecturas, desdeExcl, hastaIncl) {
   return lecturas.filter((r) => { const t = ms(r.local); return t > a && t <= b; });
 }
 
+/** Cuántas lecturas traían temperatura y el control la invalidó (fuera de rango, pico o trabada). */
+const invalidadas = (rs) => rs.filter((r) => r.v.temp != null && r.ok.temp == null).length;
+
 /** El día D. `controladas` = salida de controlar(). */
 export function resumenDia(controladas, fecha) {
   const rs = ventana(controladas, fecha + 'T00:00', sumarDias(fecha, 1) + 'T00:00');
@@ -84,6 +87,7 @@ export function resumenDia(controladas, fecha) {
     tmin_c: t.length ? Math.min(...t) : null,
     tmax_c: t.length ? Math.max(...t) : null,
     marcadas: rs.filter((r) => r.marcas.length).length,
+    temp_invalidadas: invalidadas(rs),
     completo: t.length === ESPERADAS_DIA,
   };
 }
@@ -96,6 +100,7 @@ export function resumenNoche(controladas, fecha) {
   return {
     fecha, desde: sumarDias(fecha, -1) + 'T18:00', hasta: fecha + 'T09:00',
     registros_validos: rs.filter((r) => r.ok.temp != null).length, registros_esperados: ESPERADAS_NOCHE,
+    temp_invalidadas: invalidadas(rs),
     tmin_noche_c: min ? min.ok.temp : null,
     tmin_noche_local: min ? min.local : null,
     tmin_noche_en: min ? new Date(ms(min.local) + 3 * 3600e3).toISOString() : null,   // la misma, en UTC

@@ -279,6 +279,14 @@ function baseFalsa(est = new Map()) {
       }
       return { ok, errores };
     },
+    /* como la de verdad (lib/base.mjs): ultimo_archivo para las del archivo y sin carga_pendiente para todas */
+    async cerrarCarga(fecha, ids) {
+      s.orden.push('cierre ' + fecha);
+      for (const f of s.est.values()) {
+        const { carga_pendiente, ...m } = f.metadatos || {};
+        f.metadatos = ids.includes(f.estacion_id) ? { ...m, ultimo_archivo: fecha } : m;
+      }
+    },
     async registrar(proceso, ok, resumen) { s.registro.push({ proceso, ok, resumen }); },
   };
 }
@@ -321,4 +329,102 @@ test('corrida real: con un 403 se corta, avisa smn_corto y no escribe datos', as
   assert.equal(r.avisos[0].tipo, 'smn_corto');
   assert.equal(base.s.obs.size, 0);
   assert.equal(base.s.registro[0].ok, false);
+});
+
+// ───────────── 10 · 2.ª vuelta de Codex (n3-139-1511) ─────────────
+const D0 = '2026-11-12';
+/* D0: de 01 a 12 h entre 15,1 y 16,2 °C; de 13 a 23 h, 7 °C (11 horas: todavía no es «trabada») */
+const diaD0 = () => dia(D0, 'A', (h) => (h >= 13 ? 7 : 15 + h / 10));
+/* F: la de medianoche (que cierra el día D0) también 7 °C → 12 horas seguidas = trabada; el resto distinto */
+const diaF = (t00 = 7) => dia(F, 'A', (h) => (h === 0 ? t00 : 12 + h / 10));
+
+test('Codex §1: 11 h a 7 °C + la de medianoche del archivo siguiente → las 12 se invalidan y el resumen viejo NO sobrevive', () => {
+  const x0 = procesarArchivo({ buf: zipDelDia(D0, diaD0()), ahoraMs: AHORA - 864e5 });
+  const v0 = x0.filasObs.find((f) => f.fecha === D0);
+  assert.deepEqual([v0.tmin_c, v0.registros_validos], [7, 23]);                 // con el archivo de D0 solo: 11 h no es trabada
+  const x1 = procesarArchivo({ buf: zipOk(diaF()), ahoraMs: AHORA, viejas: x0.filasObs, estado: new Map([['A', x0.estaciones[0].meta]]) });
+  assert.equal(x1.marcas.temp_trabada, 12);
+  const d = x1.filasObs.find((f) => f.fecha === D0);
+  assert.equal(d.tmin_c, 15.1);                                                  // la reproducción de Codex: 15,1 °C …
+  assert.equal(d.registros_validos, 12);                                         // … y 12 válidos (no 7 °C y 23)
+  assert.equal(d.tmax_c, 16.2);
+  assert.equal(Object.keys(d.crudo.marcas).length, 12);                          // las marcas son las de ahora
+  assert.ok(Object.values(d.crudo.marcas).every((m) => m.includes('temp_trabada')));
+  assert.equal(d.crudo.dia.registros_validos, 12);
+  assert.equal(Object.keys(d.crudo.temp_horaria).length, 24);                    // el crudo sigue como vino (con las 7 °C)
+  /* la noche que termina el 13 (D0 19 h … F 9 h): las trabadas (19–23 y 00) tampoco entran */
+  const n = x1.filasObs.find((f) => f.fecha === F);
+  assert.equal(n.noche_registros, 9);
+  assert.ok(n.tmin_noche_c > 7);
+  /* control negativo: si la de medianoche es 8 °C no hay trabada, y el día queda completo con la mínima de 7 °C */
+  const x2 = procesarArchivo({ buf: zipOk(diaF(8)), ahoraMs: AHORA, viejas: x0.filasObs, estado: new Map([['A', x0.estaciones[0].meta]]) });
+  const d2 = x2.filasObs.find((f) => f.fecha === D0);
+  assert.deepEqual([d2.tmin_c, d2.registros_validos, Object.keys(d2.crudo.marcas).length], [7, 24, 0]);
+});
+test('Codex §1: un resumen guardado SIN lecturas (opaco) no sobrevive si ahora se invalida una temperatura de su ventana', () => {
+  const opaco = { estacion_id: 'A', fecha: F, tmin_c: -30, tmax_c: 30, registros_validos: 24, registros_esperados: 24, noche_registros: 15, noche_esperados: 15, tmin_noche_c: -30, crudo: { marcas: { viejo: ['x'] } } };
+  const filas = dia(F, 'A').slice(0, 8); filas[3].v.temp = 99.9;                // una fuera de rango en el día y en la noche
+  const z = procesarArchivo({ buf: zipOk(filas), ahoraMs: AHORA, viejas: [opaco] }).filasObs.find((f) => f.fecha === F);
+  assert.deepEqual([z.tmin_c, z.registros_validos, z.noche_registros], [10.5, 6, 7]);
+  assert.equal(z.crudo.marcas.viejo, undefined);
+  /* control negativo: sin nada invalidado, el opaco más completo se conserva (como antes) */
+  const y = procesarArchivo({ buf: zipOk(dia(F, 'A').slice(0, 8)), ahoraMs: AHORA, viejas: [opaco] }).filasObs.find((f) => f.fecha === F);
+  assert.deepEqual([y.tmin_c, y.registros_validos, y.tmin_noche_c, y.noche_registros], [-30, 24, -30, 15]);
+});
+
+test('Codex §2: una carga que falló al guardar las observaciones NO queda como completada: la siguiente pide y carga', async () => {
+  let n = 0;
+  const fetchFn = async () => { n++; return resp(200, zipOk([...dia(F, 'A'), ...dia(F, 'B')])); };
+  const base = baseFalsa();
+  const g0 = base.guardarObs;
+  base.guardarObs = async (filas) => ({ ok: 0, errores: filas.map((f) => `${f.estacion_id} ${f.fecha}: estaciones_obs: 23514 (CHECK)`) });
+  const r1 = await correr({ seco: false, base, fetchFn, ahoraMs: AHORA, log: () => {} });
+  assert.equal(base.s.obs.size, 0);                                              // la reproducción: cero observaciones …
+  assert.ok(r1.errores.length > 0);
+  assert.equal(r1.resumen.carga, 'pendiente');
+  for (const e of base.s.est.values()) { assert.equal(e.metadatos.ultimo_archivo, undefined); assert.equal(e.metadatos.carga_pendiente, F); }
+  assert.ok(!base.s.orden.some((o) => o.startsWith('cierre')));
+  base.guardarObs = g0;
+  const r2 = await correr({ seco: false, base, fetchFn, ahoraMs: AHORA, log: () => {} });
+  assert.notEqual(r2.resumen.estado, 'ya_cargado');                              // … y el segundo intento NO es «ya_cargado»
+  assert.equal(r2.resumen.pedidos, 1);
+  assert.equal(r2.resumen.estado, 'ok');
+  assert.equal(r2.resumen.carga, 'cerrada');
+  assert.equal(r2.errores.length, 0);
+  assert.equal(base.s.obs.size, 4);
+  assert.ok(base.s.orden.lastIndexOf('obs B') < base.s.orden.indexOf('cierre ' + F));   // el cierre, DESPUÉS de los datos
+  for (const e of base.s.est.values()) { assert.equal(e.metadatos.ultimo_archivo, F); assert.equal(e.metadatos.carga_pendiente, undefined); }
+  /* control negativo: con la carga cerrada, la tercera corrida ya no pide nada */
+  const r3 = await correr({ seco: false, base, fetchFn, ahoraMs: AHORA, log: () => {} });
+  assert.equal(r3.resumen.estado, 'ya_cargado');
+  assert.equal(n, 2);
+});
+test('Codex §2: a medias (una estación falla) o con el cierre caído, queda pendiente aunque otra estación ya tenga el archivo', async () => {
+  let n = 0;
+  const fetchFn = async () => { n++; return resp(200, zipOk([...dia(F, 'A'), ...dia(F, 'B')])); };
+  /* B falla: no se cierra; A sigue con el archivo de antes */
+  const base = baseFalsa(new Map([['A', { ultimo_archivo: '2026-11-12' }]]));
+  const g0 = base.guardarObs;
+  base.guardarObs = async (filas) => { const r = await g0(filas.filter((f) => f.estacion_id !== 'B')); return { ok: r.ok, errores: [...r.errores, 'B: estaciones_obs: 23514 (CHECK)'] }; };
+  await correr({ seco: false, base, fetchFn, ahoraMs: AHORA, log: () => {} });
+  assert.equal(base.s.est.get('A').metadatos.ultimo_archivo, '2026-11-12');
+  base.guardarObs = g0;
+  base.s.est.get('A').metadatos.ultimo_archivo = F;                               // aunque UNA estación diga F …
+  const r = await correr({ seco: false, base, fetchFn, ahoraMs: AHORA, log: () => {} });
+  assert.equal(r.resumen.estado, 'ok');                                           // … la pendiente de B hace pedir otra vez
+  assert.equal(n, 2);
+  /* el cierre que falla también deja la carga pendiente (y es un error) */
+  const b2 = baseFalsa();
+  b2.cerrarCarga = async () => { throw new Error('cerrar la carga: 42501 (sin permiso (RLS o grant))'); };
+  const r2 = await correr({ seco: false, base: b2, fetchFn, ahoraMs: AHORA, log: () => {} });
+  assert.equal(r2.resumen.carga, 'pendiente');
+  assert.match(r2.errores.join(), /cerrar la carga/);
+  assert.equal(b2.s.est.get('A').metadatos.carga_pendiente, F);
+  /* control negativo: sin errores el cierre se hace una sola vez y limpia también la pendiente de una ausente */
+  const b3 = baseFalsa(new Map([['VIEJA', { ultimo_registro: '2026-11-12T10:00', carga_pendiente: '2026-11-12' }]]));
+  const r3 = await correr({ seco: false, base: b3, fetchFn, ahoraMs: AHORA, log: () => {} });
+  assert.equal(r3.resumen.carga, 'cerrada');
+  assert.equal(b3.s.est.get('VIEJA').metadatos.carga_pendiente, undefined);
+  assert.equal(b3.s.est.get('VIEJA').metadatos.ultimo_archivo, undefined);       // no vino en el archivo
+  assert.equal(b3.s.orden.filter((o) => o.startsWith('cierre')).length, 1);
 });

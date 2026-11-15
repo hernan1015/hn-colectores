@@ -87,3 +87,20 @@ test('la URL y la clave NUNCA salen en un error (driver de verdad contra un puer
   assert.ok(sucio.message.includes(CLAVE));
   assert.equal(errorLimpio(sucio, 'x').message, 'x: 23514 (CHECK)');
 });
+
+test('cerrarCarga: UNA sentencia, filtrada por SMN_ABIERTO, con la fecha y las estaciones; el error sale limpio', async () => {
+  const f = sqlFalso();
+  const b = await crearBase({ url: URL_OK, conectar: f.conectar });
+  await b.cerrarCarga('2026-11-13', ['A', 'B']);
+  const c = f.s.consultas.slice(1);
+  assert.equal(c.length, 1);
+  assert.match(c[0].texto, /^update estaciones set metadatos = case/);
+  assert.match(c[0].texto, /metadatos - 'carga_pendiente'/);
+  assert.ok(c[0].vals.includes('SMN_ABIERTO'));
+  assert.ok(c[0].vals.includes('2026-11-13'));
+  assert.ok(c[0].vals.some((v) => Array.isArray(v) && v.join() === 'A,B'));
+  /* control negativo: si la base falla, el error no trae el mensaje del driver */
+  const sucio = Object.assign(new Error(`update falló en ${URL_OK}`), { code: '42501' });
+  const b2 = await crearBase({ url: URL_OK, conectar: sqlFalso({ fallar: sucio }).conectar });
+  await assert.rejects(b2.cerrarCarga('2026-11-13', ['A']), (e) => e.message === 'cerrar la carga: 42501 (sin permiso (RLS o grant))');
+});

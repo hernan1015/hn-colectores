@@ -143,6 +143,15 @@ export async function crearBase({ url, conectar = (u, o) => postgres(u, o), host
       }
       return { ok, errores };
     },
+    /** [SMN] El cierre de la carga del archivo `fecha`, en UNA sentencia (atómica): las estaciones del archivo pasan a
+     *  ultimo_archivo = fecha y TODAS las de la red pierden carga_pendiente. Se llama sólo después de guardar las
+     *  observaciones sin errores (smn.mjs); hasta entonces la carga queda pendiente y la corrida siguiente la repite. */
+    async cerrarCarga(fecha, ids) {
+      await q('cerrar la carga', () => sql`update estaciones set metadatos = case
+          when estacion_id = any(${ids}::text[]) then (metadatos - 'carga_pendiente') || jsonb_build_object('ultimo_archivo', ${fecha}::text)
+          else metadatos - 'carga_pendiente' end
+        where red = ${RED} and (estacion_id = any(${ids}::text[]) or jsonb_exists(metadatos, 'carga_pendiente'))`);
+    },
     async registrar(proceso, ok, resumen) {
       let txt = JSON.stringify(resumen);
       if (txt.length > 60000) { resumen = { recortado: true, largo: txt.length, avisos: resumen.avisos }; txt = JSON.stringify(resumen); }

@@ -23,7 +23,7 @@
 
 ### 2 · Aplicar la 0151 (el rol)
 - Con el editor SQL o el MCP: no lleva variables de psql. Necesita la 0147b aplicada; si no está, se corta sola.
-- **Sólo amplía** las dos políticas de la 0147b: suma la red `SMN_ABIERTO` y el proceso `smn_abierto`. Las redes y procesos de antes quedan igual. No toca grants, atributos ni la contraseña.
+- **Sólo amplía** las políticas de la 0147b que el colector usa: suma la red `SMN_ABIERTO` en `estaciones` y `estaciones_obs` y el proceso `smn_abierto`. `pronostico_helada_medicion` **no se toca** (permiso mínimo: el SMN no la usa). Las redes y procesos de antes quedan igual. No toca grants, atributos ni la contraseña.
 - Verificar: `select tablename, qual, with_check from pg_policies where policyname like 'colector_estaciones_sus_%' order by 1;`
 
 ### 3 · Mergear el PR e instalar el workflow (hace falta el permiso `workflow`)
@@ -52,12 +52,12 @@ $GH workflow run colector-smn-abierto -R hernan1015/hn-colectores -f modo=real
 ```
 - **Verde:** quedaron filas guardadas. **Rojo (código 2):** hay avisos o errores. Mirar `registro_procesos` (`resumen->'errores_detalle'`). La primera corrida real deja aceptado el formato (`metadatos.formato_firma`).
 ```sql
-select estacion_id, nombre, activa, metadatos->>'mostrar', metadatos->>'licencia', metadatos->>'ultimo_archivo' from estaciones where red = 'SMN_ABIERTO' order by 1;
+select estacion_id, nombre, activa, metadatos->>'mostrar', metadatos->>'licencia', metadatos->>'ultimo_archivo', metadatos->>'carga_pendiente' from estaciones where red = 'SMN_ABIERTO' order by 1;
 select estacion_id, fecha, tmin_c, tmax_c, registros_validos, tmin_noche_c, noche_registros, muestreo_min, lluvia_mm
   from estaciones_obs where red = 'SMN_ABIERTO' order by fecha desc, estacion_id limit 40;    -- lluvia_mm SIEMPRE null
 select creado_at, ok, resumen->'avisos', resumen->>'estado' from registro_procesos where proceso = 'smn_abierto' order by creado_at desc limit 3;
 ```
-- **Una segunda corrida real el mismo día** tiene que decir `estado: "ya_cargado"` y `pedidos: 0`.
+- **Una segunda corrida real el mismo día** tiene que decir `estado: "ya_cargado"` y `pedidos: 0`, salvo que la primera haya quedado con `carga: "pendiente"` (algún error al guardar): entonces la segunda vuelve a pedir y a cargar el archivo. `ultimo_archivo` se escribe sólo al cerrar la carga, con todo guardado; mientras `carga_pendiente` siga en alguna estación, la carga no cuenta como hecha.
 - **La copia del ZIP:** `$GH release view smn-<fecha del archivo> -R hernan1015/hn-radar` (1 asset `datohorario__….zip`).
 
 ### 6 · El disparo: la 0151b y la llave

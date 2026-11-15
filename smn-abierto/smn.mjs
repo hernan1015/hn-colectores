@@ -106,11 +106,21 @@ export function firmaPrevia(estado) {
 /** Las lecturas guardadas de una fila (crudo.temp_horaria) → lecturas con sólo la temperatura. */
 const deFila = (fila) => Object.entries((fila && fila.crudo && fila.crudo.temp_horaria) || {}).map(([local, temp]) => ({ local, v: { temp } }));
 
-/** La fila de estaciones_obs para D: lo nuevo junto con lo guardado; por parte, gana lo más completo. */
+/** ¿La fila guardada trae sus lecturas (crudo.temp_horaria)? Entonces ya están dentro de `controladas`. */
+const conLecturas = (fila) => !!(fila && fila.crudo && fila.crudo.temp_horaria && Object.keys(fila.crudo.temp_horaria).length);
+
+/** La fila de estaciones_obs para D: lo nuevo junto con lo guardado.
+ *  EL CONTROL MANDA SOBRE EL CONJUNTO FINAL (Codex n3-139-1511 §1): las lecturas guardadas (crudo.temp_horaria) se
+ *  vuelven a controlar junto con las nuevas, así que si la fila guardada trae sus lecturas, gana SIEMPRE el resumen
+ *  recalculado, aunque tenga menos registros válidos (el control posterior invalidó algunos: 11 h a 7 °C + la de
+ *  medianoche del archivo siguiente = 12 h trabadas). Un resumen guardado SIN lecturas (opaco: no se puede volver a
+ *  controlar) sólo se conserva si es más completo Y ninguna temperatura de su ventana quedó invalidada ahora: un dato
+ *  invalidado nunca sobrevive, venga de donde venga. */
 export function filaObs({ id, fecha, controladas, firma, archivo, viejo = null }) {
   const dia = resumenDia(controladas, fecha), noche = resumenNoche(controladas, fecha);
-  const usarDia = !viejo || dia.registros_validos >= (viejo.registros_validos ?? -1);
-  const usarNoche = !viejo || noche.registros_validos >= (viejo.noche_registros ?? -1);
+  const opaco = !!viejo && !conLecturas(viejo);
+  const usarDia = !opaco || dia.temp_invalidadas > 0 || dia.registros_validos >= (viejo.registros_validos ?? -1);
+  const usarNoche = !opaco || noche.temp_invalidadas > 0 || noche.registros_validos >= (viejo.noche_registros ?? -1);
   const vc = (viejo && viejo.crudo) || {};
   const enDia = controladas.filter((r) => diaDe(r.local) === fecha);
   return {
@@ -199,7 +209,7 @@ export function procesarArchivo({ buf, nombreDescarga = null, estado = new Map()
     const st = estadoDe({ ultimoLocal: ultimoReg, metaPrevia, ahoraMs });
     if (st.cambio) avisos.push({ tipo: st.cambio, id, dias: Math.round(st.horas / 24), ultimo_registro: ultimoReg });
     else if (st.estado === 'activa' && st.horas != null && st.horas > QUIETA_H) avisos.push({ tipo: 'estacion_quieta', id, horas: Math.round(st.horas), ultimo_registro: ultimoReg });
-    estaciones.push({ id, nombre, estado: st.estado, meta: { ...metaPrevia, formato_firma: p.firma, ultimo_registro: ultimoReg, ultimo_archivo: F, ultima_lectura: new Date(ahoraMs).toISOString(), ...metaDeEstado(st, metaPrevia, ahoraMs) } });
+    estaciones.push({ id, nombre, estado: st.estado, meta: { ...metaPrevia, formato_firma: p.firma, ultimo_registro: ultimoReg, carga_pendiente: F, ultima_lectura: new Date(ahoraMs).toISOString(), ...metaDeEstado(st, metaPrevia, ahoraMs) } });
   }
   /* las del catálogo que NO vinieron en el archivo: el estado según lo guardado */
   const ausentes = [];
@@ -245,10 +255,15 @@ async function correrInterno({ seco = true, ultimo = false, aceptar = null, arch
     return { resumen, avisos, errores };
   };
 
-  /* LA FRECUENCIA: si el archivo de AYER ya está cargado, no se pide nada (el SMN lo publica una vez por día) */
+  /* LA FRECUENCIA: si el archivo de AYER ya está cargado, no se pide nada (el SMN lo publica una vez por día).
+     «Cargado» = ultimo_archivo, que se escribe SÓLO al cerrar la carga (después de guardar todas las observaciones sin
+     errores, ver cerrarCarga). Mientras alguna estación tenga carga_pendiente, la carga anterior quedó a medias: se
+     vuelve a pedir y a cargar (es idempotente: dedup y upsert). Codex n3-139-1511 §2. */
   const ayer = sumarDias(hoyLocal(ahoraMs), -1);
   const cargado = [...estado.values()].map((m) => m.ultimo_archivo).filter(Boolean).sort().at(-1) || null;
-  if (!archivo && cargado && cargado >= ayer) return fin({ estado: 'ya_cargado', ultimo_archivo: cargado });
+  const pendiente = [...estado.values()].map((m) => m.carga_pendiente).filter(Boolean).sort().at(-1) || null;
+  if (!archivo && cargado && cargado >= ayer && !pendiente) return fin({ estado: 'ya_cargado', ultimo_archivo: cargado });
+  if (pendiente) resumen.carga_anterior = 'pendiente ' + pendiente;
 
   let buf, nombreDescarga = null;
   if (archivo) buf = archivo;
@@ -282,6 +297,13 @@ async function correrInterno({ seco = true, ultimo = false, aceptar = null, arch
   const inactivas = new Set(x.estaciones.filter((e) => e.estado === 'inactiva').map((e) => e.id));
   const g = await base.guardarObs(x.filasObs.filter((f) => guardadas.has(f.estacion_id) && !inactivas.has(f.estacion_id)));
   out.filas_guardadas = g.ok; errores.push(...g.errores);
+  /* EL CIERRE: ultimo_archivo = F (y sin carga_pendiente) recién ahora, con TODAS las estaciones y observaciones
+     escritas sin un solo error, en UNA sentencia (atómica). Con cualquier error la carga queda pendiente y la corrida
+     siguiente la repite entera. */
+  if (errores.length === 0) {
+    try { await base.cerrarCarga(x.fecha, x.estaciones.map((e) => e.id)); out.carga = 'cerrada'; }
+    catch (err) { errores.push(`cerrar la carga: ${String(err && err.message).slice(0, 80)}`); out.carga = 'pendiente'; }
+  } else out.carga = 'pendiente';
   if (almacen) {
     try { await almacen.guardarZip(x.fecha, buf); out.copia_zip = 'ok'; }
     catch (err) { errores.push(`copia del zip: ${String(err && err.message).slice(0, 80)}`); }

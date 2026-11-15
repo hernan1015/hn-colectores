@@ -75,7 +75,12 @@ test('0151: el rol escribe SMN_ABIERTO y anota smn_abierto; lo de antes sigue; o
   assert.match(String(await comoRol(pg, `delete from estaciones where red = 'SMN_ABIERTO'`)), /permission denied/);
   const pol = (await pg.query(`select tablename, coalesce(qual, '') || ' ' || coalesce(with_check, '') as t from pg_policies where policyname like 'colector_estaciones_sus_%'`)).rows;
   assert.equal(pol.length, 4);
-  for (const r of pol.filter((r) => r.tablename !== 'registro_procesos')) assert.match(r.t, /SMN_ABIERTO/);
+  for (const r of pol.filter((r) => r.tablename === 'estaciones' || r.tablename === 'estaciones_obs')) assert.match(r.t, /SMN_ABIERTO/);
+  /* PERMISO MÍNIMO (Codex n3-139-1511 §3): pronostico_helada_medicion queda como en la 0147b (el SMN no la usa) */
+  assert.doesNotMatch(pol.find((r) => r.tablename === 'pronostico_helada_medicion').t, /SMN_ABIERTO/);
+  assert.match(String(await comoRol(pg, `insert into pronostico_helada_medicion (red, estacion_id) values ('SMN_ABIERTO', 'X')`)), /row-level security/);
+  /* control negativo: la de la 0147b sigue andando en esa tabla */
+  assert.equal(await comoRol(pg, `insert into pronostico_helada_medicion (red, estacion_id) values ('INTA_SIPAN_AV', '10')`), true);
   await pg.close();
 });
 
@@ -145,4 +150,41 @@ test('las dos migraciones son aditivas: sin DROP, sin tocar grants ni la contras
   }
   /* control negativo: el detector encuentra un DROP si lo hubiera */
   assert.match('drop table x;', /\bdrop\b/i);
+});
+
+/** postgres.js → PGlite, sólo lo que usa cerrarCarga (plantilla con parámetros), con SET ROLE colector_estaciones. */
+function conectarPglite(pg) {
+  const sql = async (partes, ...vals) => {
+    const texto = partes.reduce((a, p, i) => a + '$' + i + p);
+    if (/current_user/.test(texto)) return [{ u: 'colector_estaciones', s: 'colector_estaciones' }];   // PGlite: una sola sesión
+    await pg.exec('set role colector_estaciones');
+    try { return (await pg.query(texto, vals)).rows; } finally { await pg.exec('reset role'); }
+  };
+  sql.end = async () => {};
+  return () => sql;
+}
+test('cerrarCarga (la sentencia de lib/base.mjs) como colector_estaciones con la 0151: cierra el archivo y limpia la pendiente', { skip: salto }, async () => {
+  const pg = await nueva();
+  await pg.exec(M0151);
+  await pg.exec(`insert into estaciones values
+    ('SMN_ABIERTO', 'A', '{"carga_pendiente":"2026-11-13","ultimo_archivo":"2026-11-12","mostrar":true}'),
+    ('SMN_ABIERTO', 'VIEJA', '{"carga_pendiente":"2026-11-12"}'),
+    ('SMN_ABIERTO', 'QUIETA', '{"ultimo_archivo":"2026-11-01"}'),
+    ('INTA_SIPAN_AV', 'A', '{"carga_pendiente":"x"}')`);
+  const { crearBase } = await import(pathToFileURL(path.join(RAIZ, 'lib', 'base.mjs')).href);
+  const b = await crearBase({ url: 'postgresql://colector_estaciones.x:clave@127.0.0.1:5432/postgres', hostPermitido: () => true, conectar: conectarPglite(pg) });
+  await b.cerrarCarga('2026-11-13', ['A']);
+  const m = Object.fromEntries((await pg.query(`select red || ' ' || estacion_id as k, metadatos from estaciones`)).rows.map((r) => [r.k, r.metadatos]));
+  assert.deepEqual(m['SMN_ABIERTO A'], { ultimo_archivo: '2026-11-13', mostrar: true });
+  assert.deepEqual(m['SMN_ABIERTO VIEJA'], {});
+  assert.deepEqual(m['SMN_ABIERTO QUIETA'], { ultimo_archivo: '2026-11-01' });
+  /* control negativo: otra red no se toca */
+  assert.deepEqual(m['INTA_SIPAN_AV A'], { carga_pendiente: 'x' });
+  /* y sin la 0151 el rol no ve ni cambia la red SMN_ABIERTO: el cierre no toca nada */
+  const pg2 = await nueva();
+  await pg2.exec(`insert into estaciones values ('SMN_ABIERTO', 'A', '{"carga_pendiente":"2026-11-13"}')`);
+  const b2 = await crearBase({ url: 'postgresql://colector_estaciones.x:clave@127.0.0.1:5432/postgres', hostPermitido: () => true, conectar: conectarPglite(pg2) });
+  await b2.cerrarCarga('2026-11-13', ['A']);
+  assert.deepEqual((await pg2.query(`select metadatos from estaciones`)).rows[0].metadatos, { carga_pendiente: '2026-11-13' });
+  await pg.close(); await pg2.close();
 });

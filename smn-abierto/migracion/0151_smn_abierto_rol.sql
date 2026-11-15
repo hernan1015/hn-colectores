@@ -8,8 +8,10 @@
 --   El archivo vive en hn-colectores (smn-abierto/migracion/); local lo copia a hn-agro/migrations/.
 --
 -- ADITIVA: no crea tablas ni columnas (el SMN usa estaciones / estaciones_obs con las columnas de la 0110 y la 0147).
--- Sólo AMPLÍA las dos políticas de la 0147b: suma la red 'SMN_ABIERTO' y el proceso 'smn_abierto'. Las redes y los
--- procesos que ya estaban quedan IGUAL. No cambia grants ni atributos del rol ni la contraseña: se aplica con el editor
+-- Sólo AMPLÍA las políticas de la 0147b que el colector usa: suma la red 'SMN_ABIERTO' en estaciones y estaciones_obs
+-- y el proceso 'smn_abierto' en registro_procesos. Las redes y los procesos que ya estaban quedan IGUAL.
+-- PERMISO MÍNIMO (Codex n3-139-1511 §3): pronostico_helada_medicion NO se toca (el colector del SMN no la usa; su
+-- política sigue con las redes de la 0147b). No cambia grants ni atributos del rol ni la contraseña: se aplica con el editor
 -- SQL o el MCP (no lleva variables de psql).
 --
 -- MOSTRAR (139b): la red SMN_ABIERTO es Dato Abierto del SMN, CC BY 2.5 AR (política de datos del SMN, §4.A). El
@@ -28,7 +30,7 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'colector_estaciones') then
     raise exception '0151: falta el rol colector_estaciones (aplicar antes la 0147b)';
   end if;
-  foreach t in array array['estaciones', 'estaciones_obs', 'pronostico_helada_medicion'] loop
+  foreach t in array array['estaciones', 'estaciones_obs'] loop
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = t and policyname = 'colector_estaciones_sus_redes') then
       raise exception '0151: falta la política colector_estaciones_sus_redes en % (aplicar antes la 0147b)', t;
     end if;
@@ -43,7 +45,7 @@ end $$;
 
 -- Verificación (a mano, después de aplicar):
 --   select tablename, qual, with_check from pg_policies where policyname like 'colector_estaciones_sus_%' order by 1;
---     → las tres de redes con 'SMN_ABIERTO' y las otras dos; registro_procesos con 'smn_abierto' y los otros tres.
+--     → estaciones y estaciones_obs con 'SMN_ABIERTO' y las otras dos; pronostico_helada_medicion SIN 'SMN_ABIERTO'; registro_procesos con 'smn_abierto' y los otros tres.
 --   Con la URL del colector (SIPAN_PG_URL, el mismo rol):
 --   insert into estaciones (red, estacion_id) values ('SMN_ABIERTO', 'PRUEBA_NO_VA');   -- INSERT 0 1 (borrarla después
 --     con el usuario de administración: delete from estaciones where red = 'SMN_ABIERTO' and estacion_id = 'PRUEBA_NO_VA';)
@@ -53,5 +55,4 @@ end $$;
 -- ROLLBACK (comentado a propósito): volver a las listas de la 0147b.
 -- alter policy colector_estaciones_sus_redes on public.estaciones using (red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB')) with check (red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB'));
 -- alter policy colector_estaciones_sus_redes on public.estaciones_obs using (red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB')) with check (red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB'));
--- alter policy colector_estaciones_sus_redes on public.pronostico_helada_medicion using (red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB')) with check (red in ('INTA_SIPAN_AV', 'WEATHERLINK_PUB'));
 -- alter policy colector_estaciones_sus_procesos on public.registro_procesos with check (proceso in ('sipan_alto_valle', 'sipan_medicion_heladas', 'weatherlink_publico'));
