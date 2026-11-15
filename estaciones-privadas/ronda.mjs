@@ -146,8 +146,13 @@ async function redes() {
   }
 }
 
+// Una ronda por hora UTC: si esta hora ya se hizo (otra corrida de la cadena o el cron de respaldo), no se repite.
+const kHecha = `${PREF}_rondas/${ahora.toISOString().slice(0, 13)}.json`;
+if (await r2.leer(kHecha)) { console.log(JSON.stringify({ ya_hecha: ahora.toISOString().slice(0, 13) })); process.exit(0); }
+await r2.escribir(kHecha, JSON.stringify({ empezo: ahora.toISOString() }));
 await weathercloud();
 await redes();
 await weatherlink();
 resumen.minutos = Math.round((Date.now() - t0) / 60000);
+await r2.escribir(kHecha, JSON.stringify({ empezo: ahora.toISOString(), resumen }));
 console.log(JSON.stringify(resumen));

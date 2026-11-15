@@ -1,13 +1,17 @@
-# HN AGRO · estaciones privadas (WeatherLink + Weathercloud), una ronda por hora, a R2. USO INTERNO.
-# Autorizado por el maker el 15/11/2026. Ver estaciones-privadas/ronda.mjs (reglas: de a poco, sin disfrazarse).
-# Apagado de emergencia: variable del repo ESTACIONES_PRIVADAS_ON distinta de 'si'.
+# HN AGRO · estaciones privadas e internas, una ronda por hora, a R2. USO INTERNO. Ver estaciones-privadas/ronda.mjs.
+# El cron de GitHub no es confiable (el de las 17:11Z del 15/11 no salió): el job hace una ronda a cada hora en punto
+# (minuto 11) durante ~5 h y antes de terminar se relanza a sí mismo (workflow_dispatch con GITHUB_TOKEN, que sí dispara).
+# El cron queda como respaldo: si la cadena se corta, la retoma; si hay una corrida viva, la nueva espera (concurrency)
+# y al arrancar ve que la hora ya está hecha (marca en R2) y no repite la ronda.
+# Apagado de emergencia: variable del repo ESTACIONES_PRIVADAS_ON distinta de 'si' (corta también la cadena).
 name: colector-estaciones-privadas
 on:
   schedule:
-    - cron: '11 * * * *'
+    - cron: '11 */2 * * *'
   workflow_dispatch:
 permissions:
   contents: read
+  actions: write
 concurrency:
   group: colector-estaciones-privadas
   cancel-in-progress: false
@@ -15,7 +19,7 @@ jobs:
   ronda:
     if: ${{ vars.ESTACIONES_PRIVADAS_ON == 'si' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 58
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,10 +30,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Ronda
+      - name: Rondas (una por hora, ~5 h)
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: node estaciones-privadas/ronda.mjs
+        run: |
+          fin=$(( $(date +%s) + 5*3600 ))
+          while [ $(date +%s) -lt $fin ]; do
+            node estaciones-privadas/ronda.mjs || echo "ronda con error (sigue la cadena)"
+            ahora=$(date +%s); prox=$(( (ahora/3600 + 1)*3600 + 11*60 ))
+            [ $prox -ge $fin ] && break
+            sleep $(( prox - ahora ))
+          done
+      - name: Relanzar la cadena
+        if: ${{ always() && vars.ESTACIONES_PRIVADAS_ON == 'si' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run colector-estaciones-privadas -R "$GITHUB_REPOSITORY"
