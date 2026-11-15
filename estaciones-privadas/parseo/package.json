@@ -1,0 +1,15 @@
+{
+  "name": "hn-parseo-estaciones-privadas",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · el parseo de las estaciones internas (crudo de R2 de ronda.mjs → estaciones_obs), un módulo por fuente. USO INTERNO",
+  "scripts": {
+    "parseo": "node parseo.mjs",
+    "test": "node --test test/convertir.test.mjs test/fuentes.test.mjs test/dia.test.mjs test/parseo.test.mjs test/guardado-pglite.test.mjs test/estatico.test.mjs",
+    "mutantes": "node test/control-negativo.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "postgres": "3.4.4"
+  }
+}

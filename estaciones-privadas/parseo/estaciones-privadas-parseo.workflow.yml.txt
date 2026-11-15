@@ -1,0 +1,61 @@
+# HN AGRO · el PARSEO de las estaciones internas (R2 → estaciones_obs), DESPUÉS de cada ronda. USO INTERNO.
+# Ver estaciones-privadas/parseo/PRENDER.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/estaciones-privadas-parseo.yml (la rama se armó sin el
+# permiso «workflow»). Lo instala local.
+# LA LLAVE: variable del repo ESTACIONES_PARSEO_ON = 'si'. Sin ella (por defecto) NO corre nada, ni después de la ronda.
+# Corre solo cuando TERMINA bien una ronda de colector-estaciones-privadas (workflow_run), siempre en REAL; a mano,
+# por defecto en SECO.
+# SÓLO LEE R2 (token de Object Read) y escribe en la base con el rol colector_estaciones. No le pide nada a ninguna
+# fuente. El registro de Actions es PÚBLICO: el script imprime sólo cantidades.
+name: parseo-estaciones-privadas
+on:
+  workflow_run:
+    workflows: [colector-estaciones-privadas]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = lee R2 y arma, sin base · real = guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+      fuentes:
+        description: 'vacío = todas · o p. ej. weatherlink,weathercloud'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: parseo-estaciones-privadas
+  cancel-in-progress: false
+jobs:
+  parseo:
+    if: ${{ vars.ESTACIONES_PARSEO_ON == 'si' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            estaciones-privadas
+            sipan-alto-valle/lib
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (postgres.js, fijada en package-lock) y tests (sin red ni base)
+        run: npm ci --prefix estaciones-privadas/parseo --no-audit --no-fund && npm test --prefix estaciones-privadas/parseo
+      - name: Parseo
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          PARSEO_R2_ACCESS_KEY_ID: ${{ secrets.PARSEO_R2_ACCESS_KEY_ID }}          # token de R2 SÓLO LECTURA (nuevo)
+          PARSEO_R2_SECRET_ACCESS_KEY: ${{ secrets.PARSEO_R2_SECRET_ACCESS_KEY }}
+          PARSEO_PG_URL: ${{ secrets.SIPAN_PG_URL }}                              # el MISMO rol colector_estaciones
+          MODO: ${{ github.event_name == 'workflow_run' && 'real' || inputs.modo }}
+          FUENTES: ${{ inputs.fuentes }}
+        run: |
+          args=()
+          [ "$MODO" = "real" ] && args+=(--real)
+          [ -n "$FUENTES" ] && args+=(--fuentes "$FUENTES")
+          node estaciones-privadas/parseo/parseo.mjs "${args[@]}"
