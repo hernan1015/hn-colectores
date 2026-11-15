@@ -1,13 +1,13 @@
 // HN AGRO · parseo · módulo de Weathercloud público → red WEATHERCLOUD_PUB. USO INTERNO (mostrar = false).
-// Lee SÓLO R2 (lo que guardó ronda.mjs: { leido, devices: [arrays] }, ya sólo Argentina). Las variables vienen en
+// Lee SÓLO R2: lo que guardó ronda.mjs (<día>/<HHMM>.json: { leido, devices: [arrays] }, ya sólo Argentina) y el LOTE
+// de la notebook (<día>/local.jsonl.gz, formato de colector-wc.mjs: ver formato.mjs · LOTE_WC). Las variables vienen en
 // DÉCIMAS. ⚠ Mientras formato.WEATHERCLOUD.verificado sea false NO se guarda nada: sólo se cuenta (ver formato.mjs).
+// La edad: la misma regla de 2 h de WeatherLink (cfg.maxEdadH), por la misma razón (consolas de particulares).
 import { num, instante, arreglarNombre, controlar, kmhAms, r2d, dir } from '../lib/convertir.mjs';
-import { WEATHERCLOUD } from '../formato.mjs';
+import { localDe } from '../lib/hora.mjs';
+import { WEATHERCLOUD, LOTE_WC } from '../formato.mjs';
 
-export const fuente = 'weathercloud';
-export const red = 'WEATHERCLOUD_PUB';
-export const muestreo_min = 60;     // un pedido por hora (ronda.mjs)
-const PREF = 'estaciones-internas/weathercloud/';
+export const RED = 'WEATHERCLOUD_PUB';
 const META = { permiso: 'interno', mostrar: false, fuente: 'Weathercloud público (mapa), vía ronda.mjs',
   terminos: 'Weathercloud ToS 13/9/2021 prohíbe robots y scraping; bajada autorizada por el maker el 15/11/2026, uso interno' };
 const VARS = ['temp_c', 'hum_pct', 'viento_ms', 'racha_ms', 'viento_dir_gr', 'presion_hpa', 'lluvia_dia_mm'];
@@ -42,35 +42,61 @@ export function leerDevice(dev, leido, formato = WEATHERCLOUD) {
   return { id, nombre, lat, lon, enLinea, lectura };
 }
 
-export async function leer({ r2, dias, formato = WEATHERCLOUD }) {
-  const cuentas = { archivos: 0, devices: 0, en_linea: 0, lecturas: 0, descartadas: {}, verificado: formato.verificado };
-  const lecturas = []; const est = new Map(); let ultimoArchivo = null;
-  for (const dia of dias) {
-    for (const k of await r2.listar(`${PREF}${dia}/`)) {
-      if (!/\/\d{4}\.json$/.test(k)) continue;
-      cuentas.archivos++;
-      let o;
-      try { o = JSON.parse((await r2.leer(k))?.toString('utf8') || ''); } catch { cuentas.descartadas.no_es_json = (cuentas.descartadas.no_es_json || 0) + 1; continue; }
-      const leido = instante(o && o.leido);
-      const devs = Array.isArray(o && o.devices) ? o.devices : [];
-      if (!ultimoArchivo || k > ultimoArchivo.k) ultimoArchivo = { k, ids: new Set() };
+const primera = (o, claves) => { for (const k of claves) if (o[k] != null) return o[k]; return undefined; };
+/** El texto de una clave → objetos { leido, devices }. El lote (jsonl.gz) trae un renglón por pasada o por device. */
+export function abrir(texto, clave, forma = LOTE_WC) {
+  if (!/\.jsonl\.gz$/.test(clave)) return [JSON.parse(texto)];
+  const porLeido = new Map(); let rotos = 0;
+  for (const linea of String(texto).split(/\r?\n/)) {
+    if (!linea.trim()) continue;
+    let o;
+    try { o = JSON.parse(linea); } catch { rotos++; continue; }
+    const leido = o && typeof o === 'object' && !Array.isArray(o) ? primera(o, forma.leido) : undefined;
+    const devs = leido == null ? null : Array.isArray(primera(o, forma.devices)) ? primera(o, forma.devices)
+      : Array.isArray(primera(o, forma.device)) ? [primera(o, forma.device)] : null;
+    if (!devs) { rotos++; continue; }
+    const k = String(leido);
+    if (!porLeido.has(k)) porLeido.set(k, { leido, devices: [] });
+    porLeido.get(k).devices.push(...devs);
+  }
+  const out = [...porLeido.values()];
+  if (rotos) out.push({ leido: null, devices: [], rotos });
+  return out;
+}
+
+/** Arma el módulo con un formato (el de formato.mjs, o uno de prueba en los tests). */
+export function crear(formato = WEATHERCLOUD) {
+  return {
+    id: 'weathercloud', nombre: 'Weathercloud público', proceso: 'estaciones_privadas_parseo',
+    /* un pedido por hora (ronda.mjs): muestreados; la lluvia, el acumulado del día de la consola */
+    redes: { [RED]: { pasoMin: 60, extremos: 'muestreados', lluvia: 'acumulado_consola', eto: false, fuente: 'Weathercloud público, vía ronda.mjs',
+      url: null, maxEdadH: 2, ultima: true } },
+    lote: /\/local[^/]*\.jsonl\.gz$/,
+    abrir,
+    leer(obj) {
+      const leido = instante(obj && obj.leido);
+      const devs = Array.isArray(obj && obj.devices) ? obj.devices : [];
+      const cuentas = { devices: 0, en_linea: 0, verificado: formato.verificado, descartadas: {} };
+      if (obj?.rotos) cuentas.descartadas.lote_sin_forma = obj.rotos;
+      const estaciones = []; const lecturas = []; const ids = new Set();
       for (const dev of devs) {
         cuentas.devices++;
-        if (Array.isArray(dev) && dev[WEATHERCLOUD.posiciones.estado] === formato.en_linea) cuentas.en_linea++;
+        if (Array.isArray(dev) && dev[formato.posiciones.estado] === formato.en_linea) cuentas.en_linea++;
         if (!formato.verificado) continue;                     // ⚠ sin verificar: sólo se cuenta
         const d = leerDevice(dev, leido, formato);
         if (!d) { cuentas.descartadas.sin_id = (cuentas.descartadas.sin_id || 0) + 1; continue; }
-        if (ultimoArchivo.k === k) ultimoArchivo.ids.add(d.id);
-        est.set(d.id, d);
-        if (d.lectura) lecturas.push(d.lectura);
+        ids.add(d.id);
+        estaciones.push({ estacion_id: d.id, nombre: d.nombre, lat: d.lat, lon: d.lon, fuente_ubicacion: 'mapa de Weathercloud',
+          precision_ubicacion: 'declarada por el dueño', activa: true, metadatos: { ...META } });
+        const l = d.lectura;
+        if (l) lecturas.push({ id: l.id, local: localDe(l.instante), instante: new Date(l.instante).toISOString(), leido, edad_s: null, marcas: l.marcas,
+          v: { temp: l.temp_c, hum: l.hum_pct, lluvia_acum: l.lluvia_dia_mm,
+            x: { viento_ms: l.viento_ms, racha_ms: l.racha_ms, viento_dir_gr: l.viento_dir_gr, presion_hpa: l.presion_hpa } } });
       }
-    }
-  }
-  cuentas.lecturas = lecturas.length;
-  const estaciones = [...est.values()].sort((a, b) => a.id.localeCompare(b.id)).map((d) => ({
-    red, estacion_id: d.id, nombre: d.nombre, lat: d.lat, lon: d.lon, fuente_ubicacion: 'mapa de Weathercloud',
-    precision_ubicacion: 'declarada por el dueño', activa: true, metadatos: { ...META } }));
-  const presentes = formato.verificado && ultimoArchivo && ultimoArchivo.ids.size >= 100 ? [...ultimoArchivo.ids] : null;
-  return { estaciones, lecturas, cuentas, claves_descartadas: {}, presentes,
-    avisos: formato.verificado ? [] : ['weathercloud_formato_sin_verificar: no se guarda nada hasta completar formato.mjs'] };
+      return [{ red: RED, estaciones, lecturas, problemas: 0, cuentas, presentes: ids.size >= 100 ? [...ids] : null,
+        avisos: formato.verificado ? [] : ['weathercloud_formato_sin_verificar: no se guarda nada hasta completar formato.mjs'] }];
+    },
+  };
 }
+
+export default crear();

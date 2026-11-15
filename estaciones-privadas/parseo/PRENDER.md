@@ -1,42 +1,44 @@
-# PRENDER el parseo de las estaciones internas (138b: WeatherLink y Weathercloud) · la lista para local
+# PRENDER el parseo de las estaciones internas (las 9 fuentes, un solo job) · la lista para local
 
 **Lo hace local.** Ningún valor secreto va en este archivo ni en el repo. `gh` es `$GH`.
 
 ## Qué es
-- **Un solo job,** `parseo-estaciones-privadas`, para todas las fuentes, con un módulo por fuente (`fuentes/`).
+- **Un solo job,** `parseo-estaciones-privadas`, para las 9 fuentes, con un módulo por fuente (`fuentes/`).
+  - **138b:** WeatherLink (`WEATHERLINK_PUB`) y Weathercloud (`WEATHERCLOUD_PUB`).
+  - **139:** SIGA (`SIGA_RT`), EEAOC, Mendoza (`DACC_MZA`), San Luis (`REM_SL`), BCP (`BCP_RT`), Entre Ríos (`ER_HIDRAULICA`) e INA (`INA_METEO` e `INA_ALERTA`).
   - **Corre solo** cuando termina bien una ronda de `colector-estaciones-privadas` (`workflow_run`), en REAL.
   - **A mano** corre en SECO por defecto.
   - **Detrás de la llave** `ESTACIONES_PARSEO_ON = 'si'` (variable del repo). Sin la llave no corre nada.
-- **Sólo LEE R2** (lo que dejó `ronda.mjs`) y escribe en la base con el rol `colector_estaciones`. **No le pide nada a ninguna fuente.**
-- **Es idempotente:** cada corrida vuelve a armar ayer y hoy (ARG) desde todo el crudo de esos días.
-  - Deduplica por (estación, instante).
-  - Lo guardado sólo se reemplaza por algo igual o más completo.
-- **Las redes son `WEATHERLINK_PUB` y `WEATHERCLOUD_PUB`,** con `metadatos.mostrar = false`.
-  - **WeatherLink:** °F → °C, mph → m/s, in → mm, inHg → hPa, y los nombres sin el doble encoding.
-  - **Weathercloud:** las décimas.
-  - **Las dos:** `muestreo_min = 60`, porque la ronda pasa una vez por hora.
-- **El log público** sólo trae cantidades, y los nombres de las claves que no se entendieron.
+- **Sólo LEE R2** (lo que dejó `ronda.mjs`, y el lote de la notebook del 15/11) y escribe en la base con el rol `colector_estaciones`. **No le pide nada a ninguna fuente.**
+- **Una sola capa de guardado** (`lib/base.mjs` + `lib/diario.mjs`):
+  - **idempotente:** cada fila une lo guardado con lo nuevo, deduplica por (estación, instante) y lleva una firma; sin cambios, no se escribe;
+  - **nunca pisa un día más completo,** porque lo guardado entra en la unión;
+  - **la última lectura** (WL y WC) nunca retrocede;
+  - **`metadatos`:** se une con lo de otros (la `zona` de la 257 queda) y `mostrar = false` lo fuerza el SQL.
+- **La edad, una regla por red** (`maxEdadH`), contra el `leido` de la ronda que trajo la lectura:
+  - 12 h por defecto;
+  - 2 h en WeatherLink y Weathercloud;
+  - 240 h en Entre Ríos, porque la consola sube un archivo de una semana.
+- **La ventana:** las rondas de las últimas 6 h (`--horas`, hasta 72). Para días enteros, `--desde AAAA-MM-DD`.
+- **El log público** es una sola línea con cantidades, y los nombres de las claves que no se entendieron.
 
-## ⚠ Antes de prender: el formato (no lo pude ver)
-Desde pc-nanci no hay ninguna muestra del crudo, y no se hizo ningún pedido, ni a R2. Lo verificado y lo supuesto está en `formato.mjs`.
-- **WeatherLink:** las claves del detalle son supuestas (`temperature`, `humidity`, `windSpeed`, `barometer`, `rainDay`, `lastTimestamp`, `ageInSeconds`, `stationName`).
-  - **Si no coinciden,** la corrida en seco lo muestra en `claves_descartadas` (sólo los nombres) y no se guarda nada mal: se descarta contado.
-  - Se corrigen en `formato.mjs` (`WEATHERLINK.campos`).
-- **Weathercloud:** de los arrays sólo están verificados `[2]` lat, `[3]` lon y `[4]` estado (de `ronda.mjs`). Por eso nace con **`verificado: false` y no guarda NADA**.
-  - **Mirá un device** de `estaciones-internas/weathercloud/<día>/<HHMM>.json` y completá `posiciones`: `id`, `nombre`, y la posición de cada variable.
-  - **Confirmá la escala:** décimas = `0.1`. El viento, en km/h o m/s.
-  - **Poné `verificado: true`.** O pasame un device y lo hago yo.
+## ⚠ Antes de prender: el formato
+- **WeatherLink:** las claves del detalle son supuestas (`formato.mjs` · `WEATHERLINK.campos`). Si no coinciden, el seco lo muestra en `claves_descartadas` (sólo los nombres) y no se guarda nada mal.
+- **Weathercloud:** nace con **`verificado: false` y no guarda NADA.** Completá `posiciones` y la escala, y poné `verificado: true`. O pasame un device y lo hago yo.
+- **SIGA:** el formato de la `_AUTOMATICA` está sin verificar. Si no es un arreglo de estaciones, se rechaza entero.
+- **El lote de la notebook** (`<fuente>/2026-11-15/local.jsonl.gz`): el formato de `colector-wl.mjs` y `colector-wc.mjs` no lo vi. Se aceptan las formas de `LOTE_WL` y `LOTE_WC` (`formato.mjs`), y lo demás se descarta contado (`lote_sin_forma`).
 
-## 1 · La migración 0152 (el rol)
-- **Confirmá que el número siga libre.** 0149 es de la 196-2, 0150 de la 176 y 0151/0151b de la 139 SMN.
-- **Aplicala DESPUÉS de la 0151:** las dos fijan la lista entera de redes. Esta ya incluye `SMN_ABIERTO`. Si la 0151 va después, volvé a correr esta.
-- **Cómo:** copiá `migracion/0152_parseo_estaciones_privadas_rol_PROPUESTA.sql` a `hn-agro/migrations/` y aplicala con el editor SQL o el MCP, como postgres.
+## 1 · La migración 0152 (una sola)
+- **`migracion/0152_parseo_estaciones_unificada_PROPUESTA.sql`.** Es la única: la de la 138b ya no existe.
+- **Confirmá el número.** 0149 es de la 196-2, 0150 de la 176, 0151/0151b de la 139 SMN y 0153 de la 257, que no toca estas políticas.
+- **Aplicala DESPUÉS de la 0151:** las dos fijan la lista entera de redes. Ésta ya incluye `SMN_ABIERTO`. Si la 0151 va después, saca las internas: volvé a correr ésta, que es idempotente.
+- **Cómo:** copiala a `hn-agro/migrations/` y aplicala con el editor SQL o el MCP, como postgres.
 - **Verificar:**
   ```sql
   select tablename, qual, with_check from pg_policies where policyname like 'colector_estaciones_sus_%' order by 1;
   ```
-  - Cuatro tablas con `WEATHERCLOUD_PUB`, incluida `estaciones_ultima_lectura`.
-  - `registro_procesos` con `estaciones_privadas_parseo`.
+  - las cuatro tablas de redes con las 12 redes, incluida `estaciones_ultima_lectura`;
+  - `registro_procesos` con los 12 procesos.
 
 ## 2 · Los secretos (los creás vos; yo no toco ninguno)
 | Secreto | Qué es | ¿Existe? |
@@ -53,32 +55,40 @@ git commit -m "ci(parseo): instala el parseo de las estaciones internas (apagado
 ```
 
 ## 4 · La primera corrida, a mano y en SECO
-- Con la llave prendida sólo para probar, o con `workflow_dispatch` y la llave en `si`:
+- Con la llave en `si` y `workflow_dispatch`:
   ```bash
   $GH variable set ESTACIONES_PARSEO_ON -R hernan1015/hn-colectores --body si
   $GH workflow run parseo-estaciones-privadas -R hernan1015/hn-colectores -f modo=seco
   ```
-- **Qué mirar en el renglón JSON:**
-  - `weatherlink.lecturas` ≈ estaciones × rondas del día;
-  - `descartadas` y `claves_descartadas`: si se llevan casi todo, son las claves (paso «Antes»);
-  - `weathercloud.devices` ≈ 561 × rondas, y `lecturas` 0 hasta que se verifique.
+- **Qué mirar en el renglón JSON**, por fuente:
+  - `rondas`, `lecturas` y `filas_escritas`: en seco, las filas que armaría;
+  - `descartadas` y `cuentas.descartadas`;
+  - `claves_descartadas`: si se llevan casi todo, son las claves (ver «Antes de prender»);
+  - `weathercloud.cuentas.devices` ≈ 561 × rondas, y `lecturas` en 0 hasta que se verifique.
 - **Ojo:** con la llave en `si`, la próxima ronda dispara el parseo **en REAL**. Si el seco no da bien, volvé a poner la llave en `no` antes de los :11.
 
-## 5 · Real
+## 5 · Real, y el lote de la notebook
 - Desde que la llave está en `si`, corre solo después de cada ronda. A mano: `-f modo=real`.
+- **El lote del 15/11, una vez:** `-f modo=real -f desde=2026-11-15`. Es idempotente con lo que bajó la nube: el mismo instante no se duplica.
+- **Después,** borrá `.github/workflows/estaciones-importar-local.yml` y `estaciones-privadas/importar-local.mjs`, que eran de una sola vez.
 - **Verificar:**
   ```sql
-  select red, count(*) from estaciones where red in ('WEATHERLINK_PUB', 'WEATHERCLOUD_PUB') group by 1;
+  select red, count(*) from estaciones where metadatos->>'uso' = 'interno' group by 1 order by 1;
   select red, estacion_id, fecha, tmin_c, tmax_c, registros_validos, registros_esperados, tmin_noche_c, noche_registros, muestreo_min, lluvia_mm
-    from estaciones_obs where red in ('WEATHERLINK_PUB', 'WEATHERCLOUD_PUB') order by fecha desc, red, estacion_id limit 40;
-  select creado_at, ok, resumen from registro_procesos where proceso = 'estaciones_privadas_parseo' order by id desc limit 5;
+    from estaciones_obs where red in ('WEATHERLINK_PUB', 'EEAOC', 'INA_ALERTA') order by fecha desc, red, estacion_id limit 40;
+  select proceso, creado_at, ok, resumen from registro_procesos where proceso in ('estaciones_privadas_parseo', 'interna_eeaoc') order by id desc limit 5;
   ```
 
 ## Apagar
 - `$GH variable set ESTACIONES_PARSEO_ON -R hernan1015/hn-colectores --body no`. Lo guardado queda.
 
-## Sumar una fuente (la 139: SIGA, EEAOC, DACC, REM, BCP, INA, Entre Ríos)
-1. Un archivo en `fuentes/<fuente>.mjs` con la forma de `fuentes/index.mjs`, más su línea en `FUENTES`.
-2. La red, en `REDES` de `lib/guardar.mjs`.
-3. Una migración que repita la de la 0152 con la lista ENTERA de redes: las cuatro de hoy más las nuevas.
-4. **Lo común ya está:** `lib/convertir.mjs` (conversiones, encoding, rangos), `lib/dia.mjs` (el día, la noche, el dedup y combinar) y `lib/guardar.mjs` (estaciones, estaciones_obs, la última lectura y registro_procesos).
+## Sumar una fuente
+1. **El módulo:** un archivo en `fuentes/<fuente>.mjs` con la forma que describe `fuentes/index.mjs`, y su línea en `FUENTES`.
+2. **La red:** en `REDES` de `lib/base.mjs`, con su `maxEdadH` en la configuración de la red.
+3. **La migración:** una que repita la 0152 con la lista ENTERA de redes y procesos.
+4. **Lo común ya está:**
+   - `lib/diario.mjs`: el día, la noche, los imposibles, la unión y la firma;
+   - `lib/base.mjs`: el guardado;
+   - `lib/hora.mjs`: la hora argentina;
+   - `lib/crudo.mjs`: las partes de una ronda;
+   - `lib/convertir.mjs`: unidades y encoding.

@@ -1,6 +1,9 @@
-// HN AGRO · parseo de estaciones internas · conversiones y limpieza COMUNES a todas las fuentes.
+// HN AGRO · parseo de estaciones internas · conversiones, números con unidad, rumbos, instantes y encoding de nombres
+// (lo usan WeatherLink y Weathercloud). Los rangos de temperatura y humedad salen de lib/diario.mjs · LIMITES: una sola
+// regla de imposibles para las 9 fuentes. El día local y sumar días están en lib/hora.mjs.
 // (Puerto a JS de las funciones probadas de la propuesta 0152 en la nube, que quedó como referencia: rama
 //  feat/138b-weatherlink-publico de hn-radar.)
+import { LIMITES } from './diario.mjs';
 
 export const r2d = (x, d = 2) => (x == null || !Number.isFinite(x) ? null : Math.round(x * 10 ** d) / 10 ** d);
 export const fAc = (x) => r2d(((x - 32) * 5) / 9);
@@ -87,10 +90,12 @@ export function arreglarNombre(t) {
 }
 
 /** Los rangos posibles: fuera de ellos, null + marca. */
-/*  (los mismos de los CHECK de la 0110/0147 para lo que va a estaciones_obs / estaciones_ultima_lectura) */
+/*  temperatura y humedad: la regla de imposibles de lib/diario.mjs (local 15/11: HR 0 o 255, 50 °C o más); lo demás, los
+    CHECK de la 0147 para estaciones_ultima_lectura. */
+const dentro = ([a, b]) => (x) => x >= a && x <= b;
 export const RANGOS = {
-  temp_c: (x) => x > -40 && x < 60,
-  hum_pct: (x) => x >= 0 && x <= 100,
+  temp_c: dentro(LIMITES.temp),
+  hum_pct: dentro(LIMITES.hum),
   viento_ms: (x) => x >= 0 && x < 100,
   racha_ms: (x) => x >= 0 && x < 100,
   viento_dir_gr: (x) => x >= 0 && x <= 360,
@@ -104,11 +109,3 @@ export function controlar(l) {
   }
   return l;
 }
-
-/** Día local de Argentina (UTC−3, sin horario de verano) y minutos desde su 00:00. */
-export function local(ms) {
-  const d = new Date(ms - 3 * 3600e3);
-  const fecha = d.toISOString().slice(0, 10);
-  return { fecha, min: d.getUTCHours() * 60 + d.getUTCMinutes(), seg: d.getUTCSeconds() };
-}
-export const sumarDias = (fecha, n) => new Date(Date.parse(fecha + 'T00:00:00Z') + n * 86400e3).toISOString().slice(0, 10);

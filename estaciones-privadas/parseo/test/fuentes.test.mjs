@@ -2,9 +2,23 @@
 // ronda.mjs. Sin red.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import zlib from 'node:zlib';
 import * as WL from '../fuentes/weatherlink.mjs';
 import * as WC from '../fuentes/weathercloud.mjs';
+import { clavesVentana, juntar, soloLectura } from '../parseo.mjs';
 import { carpeta, rondaWL, indiceWL, rondaWC, detalleWL, WC_PRUEBA, devWC } from './fixtures.mjs';
+
+/** Lo que hace el job con una fuente, sin la base: las claves de la ventana, abrir, el contexto y juntar. */
+async function leerFuente(mod, r2, ahora, horas = 6) {
+  const ro = soloLectura(r2);
+  const objs = [];
+  for (const k of await clavesVentana(ro, mod, ahora, horas)) {
+    const b = await ro.leer(k);
+    objs.push(...(mod.abrir ? mod.abrir((/\.gz$/.test(k) ? zlib.gunzipSync(b) : b).toString('utf8'), k) : [JSON.parse(b.toString())]));
+  }
+  const ctx = mod.contexto ? await mod.contexto({ r2: ro, dias: ['2026-11-14', '2026-11-15'] }) : null;
+  return juntar(mod, objs, ctx);
+}
 
 const T = Date.parse('2026-11-15T15:00:00Z');
 const leidoMs = T + 60e3;
@@ -45,24 +59,27 @@ test('WL: leer de R2 (índice + rondas): estaciones con coordenadas del índice,
   await rondaWL(r2, T, [{ id: '501', d: detalleWL({ t: '2026-11-15T14:58:00Z', nombre: 'Chacra 03 Ã±' }) }, { id: '503', d: { raro: 1, lastTimestamp: 1794754680 } }]);
   await r2.escribir('estaciones-internas/weatherlink/2026-11-15/1600.jsonl', 'no json\n{"sin":"id"}\n');
   await r2.escribir('estaciones-internas/weatherlink/2026-11-15/notas.txt', 'x');
-  const r = await WL.leer({ r2, dias: ['2026-11-14', '2026-11-15'] });
-  assert.equal(r.cuentas.archivos, 2); assert.equal(r.cuentas.renglones, 4); assert.equal(r.cuentas.lecturas, 1);
+  const j = await leerFuente(WL.default, r2, T + 61 * 60e3);
+  assert.equal(j.rondas, 2, 'notas.txt no es una ronda');
+  const r = j.porRed.get('WEATHERLINK_PUB');
+  assert.equal(r.cuentas.renglones, 4); assert.equal(r.lecturas.length, 1);
   assert.deepEqual(r.cuentas.descartadas, { sin_variables: 1, no_es_json: 1, sin_id: 1 });
-  assert.deepEqual(r.claves_descartadas.sin_variables, ['lastTimestamp', 'raro']);
-  const e = Object.fromEntries(r.estaciones.map((x) => [x.estacion_id, x]));
+  assert.deepEqual(r.claves.sin_variables, ['lastTimestamp', 'raro']);
+  const e = Object.fromEntries([...r.estaciones.values()].map((x) => [x.estacion_id, x]));
   assert.equal(e['501'].nombre, 'Chacra 03 ñ'); assert.equal(e['501'].lat, -39.03); assert.equal(e['501'].activa, true);
   assert.equal(e['502'].activa, false);
-  for (const x of r.estaciones) { assert.equal(x.metadatos.mostrar, false); assert.equal(x.metadatos.permiso, 'interno'); assert.equal(x.red, 'WEATHERLINK_PUB'); }
+  for (const x of r.estaciones.values()) { assert.equal(x.metadatos.mostrar, false); assert.equal(x.metadatos.permiso, 'interno'); }
   assert.equal(r.presentes, null, 'con < 100 en el índice no se marca ninguna ausente');
+  assert.deepEqual([r.lecturas[0].local, r.lecturas[0].v.temp], ['2026-11-15T11:58', 10]);
 });
 
 test('WC SIN verificar (como nace): no guarda nada, sólo cuenta', async () => {
   const { r2 } = carpeta();
   await rondaWC(r2, T, [devWC('c1'), devWC('c2', { estado: 1 })]);
-  const r = await WC.leer({ r2, dias: ['2026-11-15'] });
+  const r = (await leerFuente(WC.default, r2, T + 60e3)).porRed.get('WEATHERCLOUD_PUB');
   assert.equal(r.cuentas.devices, 2); assert.equal(r.cuentas.en_linea, 1); assert.equal(r.cuentas.verificado, false);
-  assert.equal(r.lecturas.length, 0); assert.equal(r.estaciones.length, 0); assert.equal(r.presentes, null);
-  assert.match(r.avisos[0], /sin_verificar/);
+  assert.equal(r.lecturas.length, 0); assert.equal(r.estaciones.size, 0); assert.equal(r.presentes, null);
+  assert.match([...r.avisos][0], /sin_verificar/);
 });
 
 test('WC verificado (posiciones de prueba): décimas, km/h → m/s, sólo en línea, instante = la lectura del archivo', async () => {
@@ -74,7 +91,7 @@ test('WC verificado (posiciones de prueba): décimas, km/h → m/s, sólo en lí
   assert.equal(WC.leerDevice(['../x', 'n', 1, 2, 2], T, WC_PRUEBA), null);
   const { r2 } = carpeta();
   await rondaWC(r2, T, [devWC('c1'), devWC('c2', { estado: 1 })]);
-  const r = await WC.leer({ r2, dias: ['2026-11-15'], formato: WC_PRUEBA });
-  assert.equal(r.lecturas.length, 1); assert.equal(r.estaciones.length, 2);
-  assert.equal(r.estaciones[0].red, 'WEATHERCLOUD_PUB'); assert.equal(r.estaciones[0].metadatos.mostrar, false);
+  const r = (await leerFuente(WC.crear(WC_PRUEBA), r2, T + 60e3)).porRed.get('WEATHERCLOUD_PUB');
+  assert.equal(r.lecturas.length, 1); assert.equal(r.estaciones.size, 2);
+  assert.equal(r.lecturas[0].v.temp, 21.5); assert.equal(r.estaciones.get('c1').metadatos.mostrar, false);
 });

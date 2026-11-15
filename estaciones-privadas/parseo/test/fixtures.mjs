@@ -54,3 +54,24 @@ export const WC_PRUEBA = {
 };
 export const devWC = (id, { t = 215, hum = 40, kmh10 = 360, lluvia10 = 12, estado = 2, nombre = 'CÃ³rdoba Centro', lat = -31.4, lon = -64.2 } = {}) =>
   [id, nombre, lat, lon, estado, t, hum, kmh10, lluvia10];
+
+/* ── los LOTES de la notebook (local.jsonl.gz): SINTÉTICOS, con las formas que acepta formato.mjs (LOTE_WL / LOTE_WC).
+   ⚠ El formato real de colector-wl.mjs / colector-wc.mjs no lo vi: estas son las formas supuestas. */
+import zlib from 'node:zlib';
+/** El lote de WeatherLink: un renglón por lectura, { id, leido, d } (o con otras claves de LOTE_WL). */
+export async function loteWL(r2, dia, renglones) {
+  await r2.escribir(`estaciones-internas/weatherlink/${dia}/local.jsonl.gz`, zlib.gzipSync(renglones.map((o) => JSON.stringify(o)).join('\n') + '\n'));
+}
+/** El lote de Weathercloud: un renglón por pasada { leido, devices } o por device { leido, d: [...] }. */
+export async function loteWC(r2, dia, renglones) {
+  await r2.escribir(`estaciones-internas/weathercloud/${dia}/local.jsonl.gz`, zlib.gzipSync(renglones.map((o) => JSON.stringify(o)).join('\n') + '\n'));
+}
+
+/** Las políticas de la 0147b (el archivo REAL del repo), sin la parte del rol, para PGlite. */
+export function politicas0147b() {
+  const t = fs.readFileSync(path.join(REPO, 'sipan-alto-valle', 'migracion', '0147b_rol_colector_estaciones.sql'), 'utf8').replace(/\r\n/g, '\n');
+  const a = t.indexOf('grant usage on schema public to colector_estaciones;');
+  const b = t.indexOf('-- (Una política «for all» no da DELETE');
+  if (!(a > 0 && b > a)) throw new Error('la 0147b cambió');
+  return t.slice(a, b) + '\nalter table public.registro_procesos enable row level security;\n';
+}

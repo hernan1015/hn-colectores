@@ -3,12 +3,15 @@
 --                  el rol colector_estaciones (0147b) escribe también SIGA_RT, EEAOC, DACC_MZA, REM_SL, ER_HIDRAULICA,
 --                  INA_METEO, INA_ALERTA y BCP_RT (139) y WEATHERCLOUD_PUB (138b), con sus procesos, y la última
 --                  lectura (estaciones_ultima_lectura, 138b).                                          [15/11/2026]
---   ⚠ REEMPLAZA a 0152_parseo_estaciones_privadas_rol_PROPUESTA.sql de la 138b (misma lógica para su parte, copiada
---   de ahí): se aplica UNA sola 0152, ésta.
+--   Es la ÚNICA 0152 del parseo unificado (rama feat/parseo-estaciones, que reemplaza a los PR #11 y #12): la que
+--   proponía la 138b (0152_parseo_estaciones_privadas_rol_PROPUESTA.sql) ya no existe; su parte está acá, igual.
+--   El job (estaciones-privadas/parseo/parseo.mjs) escribe las 10 redes de lib/base.mjs · REDES, que son éstas menos
+--   las de otros colectores (INTA_SIPAN_AV, SMN_ABIERTO); un test lo compara.
 -- ════════════════════════════════════════════════════════════════════════════
 -- ⚠ PROPUESTA · NO APLICADA. La aplica local, DESPUÉS de la 0147b (ya aplicada) y DESPUÉS de la 0151 (SMN_ABIERTO).
---   El número: 0150 es de la 176 y 0151 de la 139 SMN; ninguna rama de hn-agro, hn-colectores ni hn-radar tiene una
---   0152 (git ls-tree de todas las ramas, 15/11). Local confirma el número antes de aplicar.
+--   El número: 0150 es de la 176 y 0151 de la 139 SMN; ninguna rama de hn-agro, hn-colectores ni hn-radar tiene otra
+--   0152 (git ls-tree de todas las ramas, 15/11). La 0153 de la 257 (zona) va después y NO toca estas políticas (crea
+--   su propio rol clasificador_zona con funciones). Local confirma el número antes de aplicar.
 --   El archivo vive en hn-colectores (estaciones-privadas/parseo/migracion/); local lo copia a hn-agro/migrations/.
 --   ⚠ ORDEN: esta lista INCLUYE la de la 0151. Si se aplicara la 0151 DESPUÉS de ésta, la 0151 sacaría las 8 internas
 --   (fija la lista sin ellas). Aplicar 0151 y después 0152; si la 0151 ya está, ésta sola alcanza.

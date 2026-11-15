@@ -1,4 +1,4 @@
-// node --test estaciones-privadas/parseo/test/parseo.test.mjs
+// node --test estaciones-privadas/parseo/test/internas.test.mjs · las 7 fuentes de la 139 (antes test/parseo.test.mjs de su rama)
 // El parseo de R2 → estaciones_obs con fixtures en el FORMATO REAL que guarda ronda.mjs ({ leido, partes: { nombre:
 // { status, tipo, cuerpo } } }, el cuerpo como lo deja r.text()). Las respuestas son las reales del 15/11 (un pedido
 // manual por fuente); SIGA y la temperatura/humedad del INA son SINTÉTICAS (ver LISTO-139-internas.md). NINGÚN pedido
@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { correr, instanteDeClave, juntar, FUENTES } from '../parsear.mjs';
+import { correr, instanteDeClave, juntar } from '../parseo.mjs';
+import { FUENTES } from '../fuentes/index.mjs';
 import { almacenCarpeta } from '../../../sipan-alto-valle/lib/almacen.mjs';
 import { ejecutorPglite } from '../lib/base.mjs';
 import { numero, controlar, filaDia, filasEstacion } from '../lib/diario.mjs';
@@ -126,14 +127,14 @@ test('imposibles: HR 0 o 255, 50 °C; un 0 de lluvia medido sigue 0 y el faltant
 test('en seco: no se conecta a ninguna base, y el log imprime SÓLO cantidades (el registro de Actions es público)', { skip: sinFix }, async () => {
   const lineas = [];
   let conecto = false;
-  const r = await correr({ almacen: almacenCarpeta(R2), ahora: AHORA, seco: true, conectar: () => { conecto = true; }, log: (x) => lineas.push(x) });
+  const r = await correr({ r2: almacenCarpeta(R2), ahora: AHORA, conectar: () => { conecto = true; }, log: (x) => lineas.push(x) });
   assert.equal(conecto, false); assert.equal(r.ok, true);
-  assert.ok(r.total.eeaoc.filas_escritas > 20 && r.total.ina.filas_escritas > 0 && r.total.bcp.filas_escritas > 20);
+  assert.ok(r.fuentes.eeaoc.filas_escritas > 20 && r.fuentes.ina.filas_escritas > 0 && r.fuentes.bcp.filas_escritas > 20);
   const log = lineas.join('\n');
   for (const x of ['Grumbein', 'Bajastine', 'parana', '-38.75', '2115', 'Agua Amarga']) assert.ok(!log.includes(x), 'el log trae ' + x);
   /* control negativo: fuera de la ventana de horas no lee nada */
-  const r2 = await correr({ almacen: almacenCarpeta(R2), ahora: AHORA + 10 * 3600e3, seco: true, log: nada });
-  assert.equal(r2.total.eeaoc.rondas, 0);
+  const r2 = await correr({ r2: almacenCarpeta(R2), ahora: AHORA + 10 * 3600e3, log: nada });
+  assert.equal(r2.fuentes.eeaoc.rondas, 0);
 });
 
 /* ── contra PGlite ── */
@@ -160,15 +161,15 @@ test('guardado (PGlite, 0110 + 0147): las 8 redes pasan los CHECK, mostrar=false
   const pg = await pgNueva();
   const ej = ejecutorPglite(pg);
   await pg.exec(`insert into estaciones (red, estacion_id, metadatos) values ('DACC_MZA', '5', '{"mostrar": true, "nota": "vieja"}')`);
-  const r = await correr({ almacen: almacenCarpeta(R2), ejecutor: ej, ahora: AHORA, log: nada });
-  assert.equal(r.ok, true, JSON.stringify(r.total));
+  const r = await correr({ r2: almacenCarpeta(R2), ejecutor: ej, ahora: AHORA, log: nada });
+  assert.equal(r.ok, true, JSON.stringify(r.fuentes));
   const foto = async () => (await pg.query(`select red, count(*)::int n, md5(string_agg(estacion_id || fecha || coalesce(tmin_c::text,'') || coalesce(lluvia_mm::text,'') || (crudo->>'firma'), ',' order by estacion_id, fecha)) h
     from estaciones_obs group by red order by red`)).rows;
   const antes = await foto();
   assert.deepEqual(antes.map((x) => x.red), REDES);
   /* idempotente: la misma corrida otra vez no escribe nada */
-  const r2 = await correr({ almacen: almacenCarpeta(R2), ejecutor: ej, ahora: AHORA + 60e3, log: nada });
-  assert.ok(Object.values(r2.total).every((t) => t.filas_escritas === 0 && t.estaciones_nuevas === 0), JSON.stringify(r2.total));
+  const r2 = await correr({ r2: almacenCarpeta(R2), ejecutor: ej, ahora: AHORA + 60e3, log: nada });
+  assert.ok(Object.values(r2.fuentes).every((t) => t.filas_escritas === 0 && t.estaciones_nuevas === 0), JSON.stringify(r2.fuentes));
   assert.deepEqual(await foto(), antes);
   const m = (await pg.query(`select count(*) filter (where (metadatos->>'mostrar')::boolean is distinct from false)::int abiertas from estaciones`)).rows[0];
   assert.equal(m.abiertas, 0);
@@ -176,7 +177,7 @@ test('guardado (PGlite, 0110 + 0147): las 8 redes pasan los CHECK, mostrar=false
   assert.equal(vieja.mostrar, false); assert.equal(vieja.nota, 'vieja');
   const ina = (await pg.query(`select hora_corte::text h, horas_validas v from estaciones_obs where red = 'INA_ALERTA' limit 1`)).rows[0];
   assert.deepEqual(ina, { h: '09:00:00', v: 24 });
-  assert.equal((await pg.query(`select count(*)::int n from registro_procesos`)).rows[0].n, 14, 'un renglón por fuente y corrida');
+  assert.equal((await pg.query(`select count(*)::int n from registro_procesos`)).rows[0].n, 14, 'un renglón por fuente con rondas y corrida (las 7 de la 139; WL y WC no tienen fixtures acá)');
   await pg.close();
 });
 

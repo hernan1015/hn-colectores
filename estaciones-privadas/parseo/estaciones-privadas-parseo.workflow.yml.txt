@@ -1,4 +1,5 @@
 # HN AGRO · el PARSEO de las estaciones internas (R2 → estaciones_obs), DESPUÉS de cada ronda. USO INTERNO.
+# UN SOLO JOB para las 9 fuentes (WeatherLink, Weathercloud, SIGA, EEAOC, Mendoza, San Luis, BCP, Entre Ríos e INA).
 # Ver estaciones-privadas/parseo/PRENDER.md.
 # PARA INSTALARLO: copiar este archivo a .github/workflows/estaciones-privadas-parseo.yml (la rama se armó sin el
 # permiso «workflow»). Lo instala local.
@@ -20,7 +21,11 @@ on:
         options: [seco, real]
         default: seco
       fuentes:
-        description: 'vacío = todas · o p. ej. weatherlink,weathercloud'
+        description: 'vacío = todas · o p. ej. weatherlink,eeaoc'
+        required: false
+        default: ''
+      desde:
+        description: 'vacío = las últimas 6 h · o AAAA-MM-DD para levantar días enteros (p. ej. el lote de la notebook del 2026-11-15)'
         required: false
         default: ''
 permissions:
@@ -39,6 +44,7 @@ jobs:
           sparse-checkout: |
             estaciones-privadas
             sipan-alto-valle/lib
+            sipan-alto-valle/migracion
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -54,8 +60,10 @@ jobs:
           PARSEO_PG_URL: ${{ secrets.SIPAN_PG_URL }}                              # el MISMO rol colector_estaciones
           MODO: ${{ github.event_name == 'workflow_run' && 'real' || inputs.modo }}
           FUENTES: ${{ inputs.fuentes }}
+          DESDE: ${{ inputs.desde }}
         run: |
           args=()
           [ "$MODO" = "real" ] && args+=(--real)
           [ -n "$FUENTES" ] && args+=(--fuentes "$FUENTES")
+          [ -n "$DESDE" ] && args+=(--desde "$DESDE")
           node estaciones-privadas/parseo/parseo.mjs "${args[@]}"

@@ -8,6 +8,11 @@
 //   Weathercloud  estaciones-internas/weathercloud/<día ARG>/<HHMM UTC>.json  { leido: ISO, devices: [ [ … ], … ] }
 //                   (ya sólo AR); cada device es un ARRAY: [2] = lat, [3] = lon, [4] = estado (2 = en línea).
 //
+//   Los LOTES de la notebook (15/11, antes de la ronda en la nube; los subió estaciones-importar-local):
+//     estaciones-internas/{weatherlink,weathercloud}/2026-11-15/local.jsonl.gz   gzip + jsonl, una lectura por renglón,
+//     con el formato de colector-wl.mjs / colector-wc.mjs de local (OTRO que el de ronda.mjs). ⚠ Ese formato NO lo vi:
+//     se aceptan las formas de LOTE_WL / LOTE_WC (abajo) y lo demás se descarta CONTADO. Local manda una muestra chica.
+//
 // ⚠ Lo NO VERIFICADO (desde pc-nanci no hay ninguna muestra del crudo y no se hizo ningún pedido, ni a R2):
 //   · las CLAVES del detalle de WeatherLink. Las de abajo son las supuestas; si no están, la lectura cuenta como
 //     'formato' y no se guarda (no se inventa nada). Las unidades: °F, mph, in e inHg (lo dijo local el 13/11).
@@ -29,7 +34,7 @@ export const WEATHERLINK = {
     presion_hpa:   { claves: ['barometer', 'pressure', 'bar', 'barometricPressure'], unidad: 'inHg' },
     lluvia_dia_mm: { claves: ['rainDay', 'dailyRain', 'rainDaily', 'rain'], unidad: 'in' },
   },
-  edad_max_s: 7200,           // una lectura con ageInSeconds > 2 h no cuenta (138b)
+  // la edad máxima NO va acá: es la de la red (fuentes/weatherlink.mjs · MAX_EDAD_H = 2), la misma regla que aplica el job
 };
 
 export const WEATHERCLOUD = {
@@ -46,4 +51,17 @@ export const WEATHERCLOUD = {
   // la unidad DESPUÉS de la escala: el viento en m/s (como estaciones_ultima_lectura) o en km/h
   unidad: { viento_ms: 'ms', racha_ms: 'ms' },
   en_linea: 2,                // estado = 2: en línea (ronda.mjs). Las que no están en línea no aportan lecturas.
+};
+
+// Los LOTES de la notebook (local.jsonl.gz). ⚠ SUPUESTO: las claves de abajo son las que se aceptan; si un renglón no
+// las trae, se descarta contado (`lote_sin_forma`). Ninguna clave se adivina más allá de esta lista.
+export const LOTE_WL = {
+  id: ['id', 'stationId', 'station_id', 'lsid'],
+  leido: ['leido', 'ts', 'fecha', 't'],
+  detalle: ['d', 'data', 'detalle'],      // si no está, el renglón ENTERO (sin id ni leido) es el detalle
+};
+export const LOTE_WC = {
+  leido: ['leido', 'ts', 'fecha', 't'],
+  devices: ['devices'],                   // un renglón por pasada: { leido, devices: [[…], …] } (como ronda.mjs)
+  device: ['d', 'device', 'dev'],         // o un renglón por device: { leido, d: [ … ] }
 };

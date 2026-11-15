@@ -1,17 +1,25 @@
-// HN AGRO · estaciones-privadas/parseo · el GUARDADO en estaciones / estaciones_obs (hn-agro 0110 + 0147) y el renglón de
-// registro_procesos (0075), por Postgres directo con el rol `colector_estaciones` (0147b: sin BYPASSRLS, sin DELETE).
+// HN AGRO · estaciones-privadas/parseo · LA ÚNICA CAPA DE GUARDADO de las 9 fuentes: estaciones, estaciones_obs
+// (hn-agro 0110 + 0147), estaciones_ultima_lectura (0147) y el renglón de registro_procesos (0075), por Postgres directo
+// con el rol `colector_estaciones` (0147b + 0152: sin BYPASSRLS, sin DELETE).
+// (Unificada el 15/11: es la base de la 139 más lo que traía de más la 138b: la última lectura que nunca retrocede,
+//  las inactivas, la lista cerrada de redes y el `metadatos` que se une sin perder lo de otros.)
 //
 // Escrito sobre un «ejecutor» mínimo: { query(texto, parametros) → filas }. Así el MISMO SQL corre:
 //   · en producción con postgres.js (`sql.unsafe`, pooler en modo transacción: prepare false, 1 conexión);
-//   · en los tests contra PGlite (un Postgres de verdad, en memoria), con las migraciones reales 0110 + 0147.
+//   · en los tests contra PGlite (un Postgres de verdad, en memoria), con las migraciones reales, también COMO el rol.
 // Las defensas de la conexión son las del SIPAN y el SMN (hn-colectores sipan-alto-valle/lib/base.mjs): el usuario de la
 // URL tiene que ser colector_estaciones, el host el pooler de Supabase, current_user y session_user los dos el rol, y
 // ningún error del driver sale tal cual (puede traer host, usuario o la URL).
+// Un secreto: PARSEO_PG_URL = postgresql://colector_estaciones.<ref>:<clave>@<host-del-pooler>:6543/postgres (el mismo
+// valor de SIPAN_PG_URL).
 //
 // INTERNO: toda estación se guarda con metadatos.mostrar = false y uso = 'interno', aunque la fuente o lo ya guardado
 // digan otra cosa (lo fuerza el SQL, no sólo el código). Idempotente: upsert por clave; sin DELETE.
 export const ROL = 'colector_estaciones';
 export const HOST_POOLER = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.pooler\.supabase\.com$/;
+/** Las redes que este job puede escribir: las de la política de la 0152, menos las de otros colectores. */
+export const REDES = Object.freeze(['WEATHERLINK_PUB', 'WEATHERCLOUD_PUB', 'SIGA_RT', 'EEAOC', 'DACC_MZA', 'REM_SL', 'BCP_RT',
+  'ER_HIDRAULICA', 'INA_METEO', 'INA_ALERTA']);
 
 export function usuarioDeUrl(url) {
   try {
@@ -38,8 +46,8 @@ export function errorLimpio(e, que = 'base') {
 }
 
 /** Conecta con postgres.js y devuelve un ejecutor. `conectar` se inyecta en los tests (nunca hay red). */
-export async function conectarPg({ url, conectar = null, hostPermitido = (h) => HOST_POOLER.test(h), app = 'colector-estaciones' }) {
-  if (!url) throw new Error('falta la URL de la base');
+export async function conectarPg({ url, conectar = null, hostPermitido = (h) => HOST_POOLER.test(h), app = 'parseo-estaciones' }) {
+  if (!url) throw new Error('falta la URL de la base (PARSEO_PG_URL)');
   const usuario = usuarioDeUrl(url);
   if (!usuario || !(usuario === ROL || usuario.startsWith(ROL + '.'))) throw new Error(`la URL tiene que ser del usuario ${ROL} (o ${ROL}.<ref>): no se usa otro`);
   const host = hostDeUrl(url);
@@ -53,27 +61,36 @@ export async function conectarPg({ url, conectar = null, hostPermitido = (h) => 
   try { r = (await sql.unsafe('select current_user as u, session_user as s'))[0] || {}; }
   catch (e) { await cerrar(); throw errorLimpio(e, 'conectar'); }
   if (r.u !== ROL || r.s !== ROL) { await cerrar(); throw new Error(`la conexión entró como otro usuario (no ${ROL}): se aborta`); }
-  return { query: (texto, params = []) => sql.unsafe(texto, params), cerrar };
+  return { query: async (texto, params = []) => { try { return await sql.unsafe(texto, params); } catch (e) { throw errorLimpio(e, 'base'); } }, cerrar };
 }
 
-/** Un ejecutor sobre PGlite (tests). */
-export const ejecutorPglite = (pg) => ({ query: async (texto, params = []) => (await pg.query(texto, params)).rows, cerrar: async () => {} });
+/** Un ejecutor sobre PGlite (tests). Con `rol`, cada consulta corre COMO ese rol (RLS y grants de verdad). */
+export const ejecutorPglite = (pg, { rol = null } = {}) => ({
+  query: async (texto, params = []) => {
+    if (!rol) return (await pg.query(texto, params)).rows;
+    await pg.exec(`set role ${rol}`);
+    try { return (await pg.query(texto, params)).rows; } finally { await pg.exec('reset role'); }
+  },
+  cerrar: async () => {},
+});
 
 const NUM = ['tmin_c', 'tmax_c', 'lluvia_mm', 'eto_mm', 'tmin_noche_c', 'lat', 'lon'];
 const tipos = (f) => { const o = { ...f }; for (const k of NUM) if (o[k] != null) o[k] = Number(o[k]); return o; };
 
 /**
- * Las operaciones de guardado de UNA red. `red` es fija: ninguna operación toca otra red.
+ * Las operaciones de guardado de UNA red. `red` es fija y tiene que estar en REDES: ninguna operación toca otra red.
+ * Los errores que devuelve son CÓDIGOS (sin ids ni valores).
  */
 export function crearGuardado(ej, red) {
-  if (!/^[A-Z][A-Z0-9_]{2,31}$/.test(red)) throw new Error('red inválida');
+  if (!REDES.includes(red)) throw new Error(`red no permitida: ${red}`);
   const q = async (que, texto, params) => { try { return await ej.query(texto, params); } catch (e) { throw errorLimpio(e, que); } };
   return {
     red,
     async estaciones() {
       return (await q('leer estaciones', 'select estacion_id, nombre, lat::text as lat, lon::text as lon, activa, metadatos from estaciones where red = $1', [red])).map(tipos);
     },
-    /** Alta / actualización del catálogo. metadatos se MEZCLA con lo guardado y mostrar queda false siempre. */
+    /** Alta / actualización del catálogo. metadatos se UNE con lo guardado (lo de otros, p. ej. la zona de la 254/257,
+     *  queda; las marcas de inactiva se sacan si vuelve) y mostrar queda false siempre. El nombre no se borra. */
     async guardarEstaciones(filas) {
       let ok = 0; const errores = [];
       for (const f of filas) {
@@ -87,13 +104,20 @@ export function crearGuardado(ej, red) {
                provincia = coalesce(excluded.provincia, estaciones.provincia), lat = coalesce(excluded.lat, estaciones.lat),
                lon = coalesce(excluded.lon, estaciones.lon), precision_ubicacion = coalesce(excluded.precision_ubicacion, estaciones.precision_ubicacion),
                fuente_ubicacion = coalesce(excluded.fuente_ubicacion, estaciones.fuente_ubicacion), activa = excluded.activa,
-               metadatos = (estaciones.metadatos || excluded.metadatos || '{"mostrar": false, "uso": "interno"}'::jsonb), actualizado_en = now()`,
+               metadatos = ((estaciones.metadatos - 'inactiva_desde' - 'motivo_inactiva') || excluded.metadatos || '{"mostrar": false, "uso": "interno"}'::jsonb), actualizado_en = now()`,
             [red, String(f.estacion_id), f.nombre ?? null, f.partido ?? null, f.provincia ?? null, f.lat ?? null, f.lon ?? null,
               f.precision_ubicacion ?? 'declarada por la red', f.fuente_ubicacion ?? null, f.activa !== false, JSON.stringify(meta)]);
           ok++;
-        } catch (e) { errores.push(`${f.estacion_id}: ${errorLimpio(e, 'estaciones').message}`); }
+        } catch (e) { errores.push(errorLimpio(e, 'estaciones').message); }
       }
       return { ok, errores };
+    },
+    /** Las conocidas que NO están en `presentes` (el índice entero de la fuente): inactivas, sin borrar nada. */
+    async inactivas(presentes, dia) {
+      const r = await q('inactivas', `update estaciones set activa = false, actualizado_en = now(),
+                           metadatos = metadatos || jsonb_build_object('inactiva_desde', $3::text, 'motivo_inactiva', 'fuera_del_crudo')
+                          where red = $1 and activa and not (estacion_id = any($2::text[])) returning estacion_id`, [red, presentes, dia]);
+      return r.length;
     },
     /** Las filas guardadas de la red para esas fechas (con el crudo: de ahí salen las lecturas para unir). */
     async obsFechas(fechas) {
@@ -106,6 +130,7 @@ export function crearGuardado(ej, red) {
     async guardarObs(filas) {
       let ok = 0; const errores = [];
       for (const f of filas) {
+        if (f.red != null && f.red !== red) throw new Error('fila de otra red');
         try {
           await ej.query(
             `insert into estaciones_obs (red, estacion_id, fecha, hora_corte, lluvia_mm, horas_validas, tmin_c, tmax_c, leido_en, url, crudo,
@@ -124,9 +149,26 @@ export function crearGuardado(ej, red) {
               f.noche_registros ?? null, f.noche_esperados ?? null, f.registros_validos ?? null, f.registros_esperados ?? null,
               f.muestreo_min ?? null, f.lluvia_origen ?? null]);
           ok++;
-        } catch (e) { errores.push(`${f.estacion_id} ${f.fecha}: ${errorLimpio(e, 'estaciones_obs').message}`); }
+        } catch (e) { errores.push(errorLimpio(e, 'estaciones_obs').message); }
       }
       return { ok, errores };
+    },
+    /** La última lectura por estación (estaciones_ultima_lectura): NUNCA retrocede. `filas` = salida de ultimaFila(). */
+    async ultimas(filas, fuente) {
+      for (const l of filas) {
+        await q('estaciones_ultima_lectura', `insert into estaciones_ultima_lectura as u (red, estacion_id, instante, leido_en, edad_s, temp_c, hum_pct, viento_ms, racha_ms,
+                   viento_dir_gr, presion_hpa, lluvia_dia_mm, marcas, crudo)
+                 values ($1, $2, $3::timestamptz, now(), $4, $5, $6, $7, $8, $9, $10, $11, $12::text[], $13::jsonb)
+                 on conflict (red, estacion_id) do update set instante = excluded.instante, leido_en = excluded.leido_en, edad_s = excluded.edad_s,
+                   temp_c = excluded.temp_c, hum_pct = excluded.hum_pct, viento_ms = excluded.viento_ms, racha_ms = excluded.racha_ms,
+                   viento_dir_gr = excluded.viento_dir_gr, presion_hpa = excluded.presion_hpa, lluvia_dia_mm = excluded.lluvia_dia_mm,
+                   marcas = excluded.marcas, crudo = excluded.crudo
+                 where excluded.instante > u.instante`,
+          [red, String(l.id), l.instante, l.edad_s ?? null, l.temp_c ?? null, l.hum_pct ?? null, l.viento_ms ?? null,
+            l.racha_ms ?? null, l.viento_dir_gr ?? null, l.presion_hpa ?? null, l.lluvia_dia_mm ?? null, l.marcas || [],
+            JSON.stringify({ fuente, desde: 'R2', uso: 'interno' })]);
+      }
+      return filas.length;
     },
     async registrar(proceso, ok, resumen) {
       let txt = JSON.stringify(resumen);

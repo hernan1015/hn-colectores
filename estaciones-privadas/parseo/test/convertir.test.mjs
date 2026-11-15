@@ -1,7 +1,8 @@
 // node --test test/convertir.test.mjs · conversiones, números, rumbos, instantes, encoding de los nombres y rangos.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fAc, mphAms, kmhAms, inAmm, inhgAhpa, num, unidadEnValor, dir, instante, arreglarNombre, controlar, local, sumarDias } from '../lib/convertir.mjs';
+import { fAc, mphAms, kmhAms, inAmm, inhgAhpa, num, unidadEnValor, dir, instante, arreglarNombre, controlar } from '../lib/convertir.mjs';
+import { localDe, sumarDias } from '../lib/hora.mjs';
 
 test('conversiones: °F→°C, mph→m/s, km/h→m/s, in→mm, inHg→hPa (y el control negativo)', () => {
   assert.equal(fAc(32), 0); assert.equal(fAc(212), 100); assert.equal(fAc(-40), -40); assert.equal(fAc(28.4), -2);
@@ -40,16 +41,18 @@ test('encoding: arregla la doble (y triple) codificación y no toca lo que ya es
   assert.equal(arreglarNombre(null), null);
 });
 
-test('rangos: lo imposible queda null y marcado; lo posible, igual', () => {
+test('rangos: lo imposible queda null y marcado (la regla de lib/diario.mjs: HR 0, 50 °C); lo posible, igual', () => {
   const l = controlar({ temp_c: 200, hum_pct: 140, viento_ms: -3, presion_hpa: 700, lluvia_dia_mm: 12, viento_dir_gr: 360, marcas: [] });
   assert.deepEqual([l.temp_c, l.hum_pct, l.viento_ms, l.presion_hpa, l.lluvia_dia_mm, l.viento_dir_gr], [null, null, null, null, 12, 360]);
   assert.deepEqual(l.marcas.sort(), ['hum_pct_fuera_de_rango', 'presion_hpa_fuera_de_rango', 'temp_c_fuera_de_rango', 'viento_ms_fuera_de_rango']);
   assert.equal(controlar({ temp_c: -39.9, marcas: [] }).temp_c, -39.9);
   assert.equal(controlar({ temp_c: -40, marcas: [] }).temp_c, null);
+  assert.equal(controlar({ temp_c: 50, hum_pct: 0, marcas: [] }).temp_c, null); assert.equal(controlar({ hum_pct: 0, marcas: [] }).hum_pct, null);
+  assert.equal(controlar({ temp_c: 49.9, hum_pct: 1, marcas: [] }).hum_pct, 1);
 });
 
-test('el día local (UTC−3) y sumar días', () => {
-  assert.deepEqual(local(Date.parse('2026-11-16T02:30:00Z')), { fecha: '2026-11-15', min: 23 * 60 + 30, seg: 0 });
-  assert.equal(local(Date.parse('2026-11-16T03:00:00Z')).fecha, '2026-11-16');
+test('el día local (UTC−3, lib/hora.mjs, el mismo para las 9 fuentes) y sumar días', () => {
+  assert.equal(localDe(Date.parse('2026-11-16T02:30:00Z')), '2026-11-15T23:30');
+  assert.equal(localDe(Date.parse('2026-11-16T03:00:00Z')).slice(0, 10), '2026-11-16');
   assert.equal(sumarDias('2026-12-31', 1), '2027-01-01'); assert.equal(sumarDias('2026-03-01', -1), '2026-02-28');
 });
