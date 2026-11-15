@@ -1,0 +1,15 @@
+{
+  "name": "hn-medicion-app",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · 260 · la medición diaria del clima de la app (Open-Meteo best_match) contra las estaciones: mínima nocturna, máxima y HR media. USO INTERNO",
+  "scripts": {
+    "medir": "node medir-app.mjs",
+    "test": "node --test test/estacion.test.mjs test/openmeteo.test.mjs test/metricas.test.mjs test/job.test.mjs test/base.test.mjs test/pglite.test.mjs test/estatico.test.mjs",
+    "mutantes": "node test/control-negativo.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "postgres": "3.4.4"
+  }
+}

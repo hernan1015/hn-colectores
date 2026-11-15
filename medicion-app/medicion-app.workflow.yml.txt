@@ -1,0 +1,62 @@
+# HN AGRO · 260 · la MEDICIÓN DIARIA de la app contra las estaciones: la mínima nocturna (18 a 09), la máxima y la HR
+# media de cada estación contra Open-Meteo best_match en el mismo punto (lo que muestra la app). USO INTERNO.
+# El criterio está sellado antes de medir: hn-cortex docs/mejora-continua/260-medicion/SELLO.json (regla m1).
+# Ver medicion-app/PRENDER.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/medicion-app.yml (la rama se armó sin el permiso
+# «workflow»). Lo instala local.
+# APAGADO POR DEFECTO: no corre nada si la VARIABLE del repo MEDICION_APP_ON no vale «si», ni a la hora del cron.
+# El cron: 13:00 UTC = 10:00 ARG, sobre la víspera (el parseo ya cerró la noche que terminó a las 09:00).
+# Pide a Open-Meteo en lotes de 50 coordenadas, de a un pedido, con 30 s de pausa (~1.500 llamadas por día, el 15 % del
+# límite gratuito). El registro de Actions es PÚBLICO: el script imprime UNA línea de cantidades; los resultados van a
+# la base (medicion_app_estacion y registro_procesos).
+name: medicion-app
+on:
+  schedule:
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = lee la base y Open-Meteo y cuenta, sin escribir · real = guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+      fecha:
+        description: 'vacío = la víspera (hora ARG) · o AAAA-MM-DD (no más de ~3 meses atrás)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: medicion-app
+  cancel-in-progress: false
+jobs:
+  medir:
+    if: ${{ vars.MEDICION_APP_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40            # ~1.500 estaciones = 30 pedidos × 30 s ≈ 15 min; con reintentos, menos de 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            medicion-app
+            estaciones-privadas/parseo/lib
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (postgres.js, fijada en package-lock) y tests (sin red ni base)
+        run: npm ci --prefix medicion-app --no-audit --no-fund && npm test --prefix medicion-app
+      - name: Medir
+        env:
+          MEDICION_PG_URL: ${{ secrets.MEDICION_PG_URL }}   # postgresql://medicion_app.<ref>:<clave>@<pooler>:6543/postgres (rol 0154; nunca se imprime)
+          MEDICION_PG_CA: ${{ secrets.MEDICION_PG_CA }}     # la CA de Supabase en PEM (prod-ca-2021.crt): sin ella no conecta
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          FECHA: ${{ inputs.fecha }}
+        run: |
+          args=()
+          [ "$MODO" = "real" ] && args+=(--real)
+          if [ -n "$FECHA" ]; then
+            [[ "$FECHA" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "fecha inválida"; exit 1; }
+            args+=(--fecha "$FECHA")
+          fi
+          node medicion-app/medir-app.mjs "${args[@]}"
