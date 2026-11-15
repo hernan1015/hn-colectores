@@ -1,0 +1,102 @@
+# HN AGRO · 226 · GRANIZO β · FASE B (P2: «ALTURA + salto de rayos»). MEDICIÓN: nada se conecta a la app ni a ningún aviso.
+# Manda hn-cortex docs/satchi-granizo-2026-11/226-beta/SELLO-B.json (sha256 20e8fee1…, empujado ANTES de bajar nada).
+# PARA INSTALARLO: copiar este archivo a .github/workflows/granizo-beta-fase-b.yml (viene como .txt porque el token de
+# pc-nanci no tiene el permiso «workflow», igual que cap-archivo e imerg-pendientes). Lo instala y lo dispara local.
+# APAGADO POR DEFECTO: aun a mano, el job corre sólo si la VARIABLE del repo GRANIZO_BETA_B_ON vale «si». Sin schedule.
+# UN CASO POR CORRIDA (un episodio de la 19) y UNO POR VEZ en todo el repo (concurrency). Seco por defecto: lista S3 y
+# arma el plan, sin bajar ningún archivo. Real: ~24-97 instantes, ~0,5-2,2 GB bajados de S3 (público), de a 4 pedidos,
+# en memoria: lo crudo no queda en el disco. Queda un artefacto chico (las métricas por celda y por instante), 90 días.
+# Secretos: SÓLO HN_AGRO_LECTURA (ya existe: lectura de hn-agro) para sacar la lib del granizo en 148a59b4, que el
+# script verifica por sha256. El registro de Actions es PÚBLICO: se imprimen cantidades, nunca la lib ni el token.
+name: granizo-beta-fase-b
+on:
+  workflow_dispatch:
+    inputs:
+      caso:
+        description: 'episodio de la 19 (AAAA-MM-DD; ver granizo-beta-fase-b/LEEME.md)'
+        type: string
+        required: true
+      modo:
+        description: 'seco = sólo los listados de S3 y el plan · real = mide'
+        type: choice
+        options: [seco, real]
+        default: seco
+      parte:
+        description: 'i/n para partir un caso largo (1/1 = entero)'
+        type: string
+        default: '1/1'
+      desde:
+        description: 'opcional: seguir desde este instante (ISO UTC, lo dice una corrida cortada)'
+        type: string
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: granizo-beta-fase-b
+  cancel-in-progress: false
+jobs:
+  medir:
+    if: ${{ vars.GRANIZO_BETA_B_ON == 'si' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350          # < 6 h; el script corta limpio a las 5 h 30 (y antes, si estima > 5 h)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: granizo-beta-fase-b
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: hernan1015/hn-agro
+          ref: 148a59b48c6a8e25d917c26ff21ff82bb229e469
+          token: ${{ secrets.HN_AGRO_LECTURA }}
+          persist-credentials: false   # el token no queda en .git/config
+          path: granizo-beta-fase-b/_app
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            netlify/functions/lib/granizo-vivo.mjs
+            netlify/functions/lib/goes-focos.mjs
+            netlify/functions/lib/goes-rayos.mjs
+            netlify/functions/lib/localidades-granizo.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (h5wasm 0.10.3, el de hn-agro) y tests (sin red, con S3 falso)
+        run: npm ci --prefix granizo-beta-fase-b --no-audit --no-fund && npm test --prefix granizo-beta-fase-b
+      - name: Disco antes
+        run: df -h / "$RUNNER_TEMP" | tail -n +1
+      - name: Medir el caso
+        env:
+          CASO: ${{ inputs.caso }}
+          MODO: ${{ inputs.modo }}
+          PARTE: ${{ inputs.parte }}
+          DESDE: ${{ inputs.desde }}
+        run: |
+          set -euo pipefail
+          [[ "$CASO" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "caso inválido"; exit 2; }
+          [[ "$PARTE" =~ ^[0-9]{1,2}/[0-9]{1,2}$ ]] || { echo "parte inválida"; exit 2; }
+          ARGS=(--caso "$CASO" --parte "$PARTE" --salida "$RUNNER_TEMP/gbf")
+          if [ -n "$DESDE" ]; then ARGS+=(--desde "$DESDE"); fi
+          if [ "$MODO" != "real" ]; then ARGS+=(--seco); fi
+          node granizo-beta-fase-b/medir-caso.mjs "${ARGS[@]}"
+      - name: Disco después (lo crudo no queda)
+        if: always()
+        run: |
+          df -h / "$RUNNER_TEMP" | tail -n +1
+          du -sh "$RUNNER_TEMP/gbf" 2>/dev/null || true
+          ls -la /tmp/hn-goes 2>/dev/null | wc -l || true
+      - name: Nombre del artefacto
+        if: always()
+        id: nombre
+        env:
+          CASO: ${{ inputs.caso }}
+          PARTE: ${{ inputs.parte }}
+          MODO: ${{ inputs.modo }}
+        run: echo "n=granizo-beta-fase-b-${CASO}-p${PARTE/\//de}-${MODO}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+      - name: Subir las métricas (sin nada crudo)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.nombre.outputs.n }}
+          path: ${{ runner.temp }}/gbf/
+          retention-days: 90
+          if-no-files-found: warn
