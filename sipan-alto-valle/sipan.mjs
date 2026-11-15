@@ -234,10 +234,11 @@ async function correrInterno({ seco = true, ids = null, barrer = false, aceptar 
     if (pb.cortado) avisos.push({ tipo: 'sipan_corto', motivo: 'barrido: ' + pb.cortado, pedidos: pb.pedidos });
   }
 
-  /* que ninguna de las pedidas esté al día (todas quietas, o ninguna se pudo leer) ya no es «una estación quieta»: no
-     entra ningún dato nuevo de la red, y eso sí es falla */
+  /* en la corrida COMPLETA (la del schedule: sin --ids ni --archivo), que ninguna esté al día (todas quietas, o ninguna
+     se pudo leer) ya no es «una estación quieta»: no entra ningún dato nuevo de la red, y eso sí es falla. Una corrida
+     a mano de una sola estación no la dispara. */
   const alDia = Object.values(porEstacion).filter((v) => typeof v === 'object' && v.horas_desde_ultimo <= QUIETA_H).length;
-  if (lista.length && alDia === 0) avisos.push({ tipo: 'ninguna_al_dia', estaciones: lista.length });
+  if (!ids && lista.length && alDia === 0) avisos.push({ tipo: 'ninguna_al_dia', estaciones: lista.length });
   const fallas = avisos.filter(esFalla).length;
 
   const resumen = { modo: seco ? 'seco' : 'real', pedidos: pedidor.pedidos, pedidos_barrido: pb ? pb.pedidos : 0, estaciones: porEstacion, filas_obs: filasObs, crudos_dias: crudosDias, crudos: almacen ? almacen.tipo : 'sin destino (sólo el resumen diario)', errores: errores.length, fallas, avisos, barrido };

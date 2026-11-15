@@ -11,7 +11,7 @@ const MUTANTES = [
   ['salida: la quieta vuelve a dar exit 2', 'sipan.mjs', "new Set(['estacion_quieta', 'estacion_inactiva', 'estacion_revivio'])", 'new Set([])'],
   ['salida: una falla ya no da exit 2', 'sipan.mjs', 'return avisos.some(esFalla) || errores.length ? 2 : 0;', 'return 0;'],
   ['salida: filas sin guardar no dan exit 2', 'sipan.mjs', 'return avisos.some(esFalla) || errores.length ? 2 : 0;', 'return avisos.some(esFalla) ? 2 : 0;'],
-  ['salida: ninguna al día no se detecta', 'sipan.mjs', 'if (lista.length && alDia === 0)', 'if (false)'],
+  ['salida: ninguna al día no se detecta', 'sipan.mjs', 'if (!ids && lista.length && alDia === 0)', 'if (false)'],
   ['salida: registro ok=false con sólo quietas', 'sipan.mjs', 'fallas === 0 && errores.length === 0,', 'avisos.length === 0 && errores.length === 0,'],
   ['salida: la CLI sale con 2 ante cualquier aviso', 'sipan.mjs', 'process.exitCode = codigoSalida(r);', 'process.exitCode = r.avisos.length || r.errores.length ? 2 : 0;'],
   ['salida: la quieta no se muestra como ::warning::', 'sipan.mjs', "if (est.length) console.log(", 'if (false) console.log('],

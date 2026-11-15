@@ -19,7 +19,7 @@ const H = 3600e3;
 const local = (ms) => { const d = new Date(ms - 3 * H); d.setUTCMinutes(Math.floor(d.getUTCMinutes() / 10) * 10, 0, 0); return d.toISOString().slice(0, 16); };
 const ahora = Date.now();
 const FRESCA = armar(serie(local(ahora - 8 * H), local(ahora - 1 * H)));          // al día (último dato hace ~1 h)
-const QUIETA = armar(serie(local(ahora - 80 * 24 * H), local(ahora - 79 * 24 * H))); // como la 10: hace meses
+const QUIETA = armar(serie(local(ahora - 6 * 24 * H), local(ahora - 5 * 24 * H)));   // quieta hace 5 días (< 30: sigue activa también con el PR #4)
 const BASURA = 'esto no es un downld02\r\nni tiene columnas\r\n';
 
 function cli(archivos) {
@@ -46,12 +46,19 @@ test('salida: una falla real sigue dando 2 aunque también haya quietas (formato
   assert.match(r.salida, /::warning::SIPAN \(aviso, no falla\): estacion_quieta 10/);
 });
 
-test('salida: si NINGUNA estación está al día (todas quietas) es falla: 2', () => {
-  const r = cli({ 10: QUIETA, 40: QUIETA, 45: QUIETA });
-  assert.equal(r.codigo, 2, r.salida);
-  assert.match(r.salida, /::error::SIPAN: ninguna_al_dia/);
+test('salida: en la corrida completa, si NINGUNA estación está al día (todas quietas) es falla', async () => {
+  const { correr, codigoSalida } = await import('../sipan.mjs');
+  const { ESTACIONES } = await import('../lib/estaciones.mjs');
+  const todas = (txt) => Object.fromEntries(ESTACIONES.map((e) => [e.id, txt]));
+  const r = await correr({ seco: true, archivos: todas(QUIETA), log: () => {}, ahoraMs: ahora });
+  assert.ok(r.avisos.some((a) => a.tipo === 'ninguna_al_dia'));
+  assert.equal(codigoSalida(r), 2);
   /* control: con una sola al día, ya no */
-  assert.equal(cli({ 10: QUIETA, 40: QUIETA, 45: FRESCA }).codigo, 0);
+  const r2 = await correr({ seco: true, archivos: { ...todas(QUIETA), 40: FRESCA }, log: () => {}, ahoraMs: ahora });
+  assert.ok(!r2.avisos.some((a) => a.tipo === 'ninguna_al_dia'));
+  assert.equal(codigoSalida(r2), 0);
+  /* y una corrida a mano de UNA estación quieta (--archivo / --ids) no la dispara */
+  assert.equal(cli({ 10: QUIETA }).codigo, 0);
 });
 
 test('salida: todo al día, sin avisos → 0 y sin ::warning::', () => {

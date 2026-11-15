@@ -25,7 +25,7 @@
 - **Si el formato cambió, no se carga nada.** Eso pasa con un encabezado que no se entiende, si faltan columnas obligatorias, si las filas no cuadran, si las unidades no son métricas o si la firma difiere de la guardada en `estaciones.metadatos.formato_firma`. Queda en `registro_procesos` con `ok=false`, la corrida sale con código 2 y Actions avisa.
   - Para aceptar un formato nuevo, una vez revisado: Run workflow con `aceptar_formato: id=firma`.
 - **Una estación sin registros nuevos en más de 24 h da aviso.** Es un aviso de ESTADO: queda en `registro_procesos` (en `resumen->'avisos'`, con `ok=true` si no hubo fallas) y como `::warning::` en Actions, pero **no pone la corrida en rojo**. Lo mismo vale para `estacion_inactiva` y `estacion_revivio`.
-- **Lo que sí da rojo (código 2):** formato cambiado o que no se entiende, una estación que no responde, el SIPAN cortado (403, 429, 5xx o sin conexión), filas que no se guardaron y **ninguna estación al día** (todas las pedidas quietas o sin leer). Un tipo de aviso nuevo cuenta como falla hasta que se lo sume a `AVISOS_DE_ESTADO`.
+- **Lo que sí da rojo (código 2):** formato cambiado o que no se entiende, una estación que no responde, el SIPAN cortado (403, 429, 5xx o sin conexión), filas que no se guardaron y, en la corrida completa del schedule (sin `--ids` ni `--archivo`), **ninguna estación al día** (todas quietas o sin leer). Un tipo de aviso nuevo cuenta como falla hasta que se lo sume a `AVISOS_DE_ESTADO`.
 
 ## La hora
 El reloj de las estaciones está en **hora de Argentina (UTC−3)**. Se comprobó con la radiación de los fixtures: el sol sale a las 6:30-7:00 y el máximo cae a las 13:40-14:50.
