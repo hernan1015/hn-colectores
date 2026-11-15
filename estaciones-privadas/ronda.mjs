@@ -1,4 +1,4 @@
-// HN AGRO · estaciones privadas (WeatherLink y Weathercloud), una ronda por hora. USO INTERNO.
+// HN AGRO · estaciones privadas e internas (WeatherLink, Weathercloud, SIGA, EEAOC, Mendoza, San Luis, BCP), una ronda por hora. USO INTERNO.
 // Autorizado por el maker el 15/11/2026, sabiendo que los términos de Davis y de Weathercloud prohíben los robots
 // (ver hn-cortex docs/mejora-continua/PASO0-139-fuentes.md). El mail pidiendo permiso a Davis lo manda el maker.
 // Reglas del maker: de a poco y sin disfrazarse. 1 pedido cada 4 s, tandas de 2 min con 30 s de pausa. UA honesto.
@@ -94,7 +94,42 @@ async function weatherlink() {
   resumen.weatherlink = { activas: activas.length, leidas: ok, con_error: err, corte, cortes_seguidos: seguidos };
 }
 
+// ── Redes provinciales e institucionales (USO INTERNO, autorizadas por el maker el 15/11): se guarda la respuesta
+// CRUDA de su página o servicio público (uno o dos pedidos por red, con pausa); el parseo lo hace la 139.
+const REDES = [
+  { id: 'siga', pedidos: async () => {
+      const cfg = await (await fetch('https://siga.inta.gob.ar/js/urlserver.js', { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(60000) })).text();
+      const m = cfg.match(/^\s*var URL_MYSQL_ESTACION_AUTOMATICA\s*=\s*'([^']+)'/m);
+      if (!m) throw new Error('sin URL en urlserver.js');
+      return [['estaciones', 'https://siga.inta.gob.ar/' + m[1]]];
+    } },
+  { id: 'eeaoc', pedidos: async () => [['datos', 'https://agromet.eeaoc.gob.ar/services/datos-online.php'], ['estaciones', 'https://agromet.eeaoc.gob.ar/services/estaciones.php']] },
+  { id: 'mendoza', pedidos: async () => [['instantaneas', 'https://agrometeo.mendoza.gov.ar/api/todas_instantaneas.json']] },
+  { id: 'sanluis', pedidos: async () => [['mapa', 'https://clima.sanluis.gob.ar/InfoEstaciones.aspx']] },
+  { id: 'bcp', pedidos: async () => [['mapa', 'https://info.bcp.org.ar/Estaciones/MapaG_NvoBCP.asp']] },
+];
+async function redes() {
+  for (const red of REDES) {
+    if (await frenada(red.id)) { resumen[red.id] = 'FRENADA'; continue; }
+    try {
+      const lista = await red.pedidos();
+      const partes = {}; let corte = false;
+      for (const [nombre, url] of lista) {
+        const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(90000) });
+        if (r.status === 403 || r.status === 429 || r.status >= 500) { corte = true; break; }
+        partes[nombre] = { status: r.status, tipo: r.headers.get('content-type'), cuerpo: await r.text() };
+        await dormir(PASO_MS);
+      }
+      if (Object.keys(partes).length) await r2.escribir(`${PREF}${red.id}/${dia}/${hora}.json`, JSON.stringify({ leido: ahora.toISOString(), partes }));
+      await marcaCorte(red.id, corte);
+      resumen[red.id] = corte ? 'corte' : Object.fromEntries(Object.entries(partes).map(([k, v]) => [k, `${v.status} · ${Math.round(v.cuerpo.length / 1024)} KB`]));
+    } catch (e) { resumen[red.id] = 'error'; }
+    await dormir(PASO_MS);
+  }
+}
+
 await weathercloud();
+await redes();
 await weatherlink();
 resumen.minutos = Math.round((Date.now() - t0) / 60000);
 console.log(JSON.stringify(resumen));
