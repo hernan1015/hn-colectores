@@ -1,0 +1,17 @@
+{
+  "name": "hn-colector-imerg-pendientes",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · relleno de IMERG-Final por celda (las celdas pendientes de la app), de a una por vez",
+  "scripts": {
+    "rellenar": "node imerg-pendientes.mjs",
+    "test": "node --test test/imerg-pendientes.test.mjs test/pg-real.test.mjs test/prender.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "postgres": "3.4.4",
+    "yaml": "2.8.1"
+  }
+}

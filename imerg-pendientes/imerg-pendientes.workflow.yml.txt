@@ -1,0 +1,53 @@
+# HN AGRO · relleno de IMERG-Final de las celdas pendientes de la app (232). Ver imerg-pendientes/imerg-pendientes.mjs.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/imerg-pendientes.yml (el token con el que se armó la rama no
+# tiene permiso «workflow», igual que sipan, rayos-hora y opera-mosaico). Lo prende local.
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo IMERG_PENDIENTES_ON vale «si». A mano: seco.
+# Reemplaza al relleno por repository_dispatch de hn-agro (privado: ~27 min de Actions por celda y se cortaba a las 2 h).
+# ⚠ PRENDER SÓLO CON `bash imerg-pendientes/prender.sh` (LISTO-232, paso 5): el imerg-backfill.yml de hn-agro SIN repository_dispatch (paso 4). Si
+#   hn-agro sigue despachando, su lazy recupera a las 3 h la fila de un fallo del colector y la NASA recibe el pedido
+#   antes de las 6 h (P1.1 de Codex, n3-232-1411). Si alguna vez se vuelve a poner, apagar esto primero.
+# Cada corrida toma UNA celda por vez (la base no deja dos tomas vivas), como mucho 2, y la NASA de a poco. Si GitHub
+# la corta, la base retiene la celda (8 h, grabado al tomarla) y una corrida posterior la retoma: no hay que disparar nada.
+# Los límites (2 tomas por hora, espera de 180 min sobre la reserva de la app, 8 h ante un fallo) están en la base.
+# El registro de Actions es PÚBLICO: el script imprime sólo cantidades; nada de celdas, claves ni direcciones.
+name: colector-imerg-pendientes
+on:
+  schedule:
+    - cron: '17 * * * *'           # cada hora; sin celdas pendientes termina en segundos
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = sólo cuenta las celdas para tomar · real = toma, baja y guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+      tope:
+        description: 'celdas por corrida (1 o 2)'
+        type: choice
+        options: ['1', '2']
+        default: '1'
+permissions:
+  contents: read
+concurrency:
+  group: colector-imerg-pendientes
+  cancel-in-progress: false
+jobs:
+  rellenar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.IMERG_PENDIENTES_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100           # 2 celdas × 40 min de corte del pedido + la pausa y el margen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias (postgres.js fijado en package-lock) y tests (sin red ni base)
+        run: npm ci --prefix imerg-pendientes --no-audit --no-fund && npm test --prefix imerg-pendientes
+      - name: Rellenar
+        env:
+          IMERG_PG_URL: ${{ secrets.IMERG_PG_URL }}          # postgresql://colector_imerg.<ref>:<clave>@<pooler>:6543/postgres (nunca se imprime)
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}    # el mismo de colector-imerg (vence ~8/12)
+          IMERG_LAZY_ESPERA_MIN: ${{ vars.IMERG_LAZY_ESPERA_MIN || '180' }}   # mínimo 180, fijo en la base: la variable sólo alarga
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          TOPE: ${{ github.event_name == 'schedule' && '2' || inputs.tope }}
+        run: node imerg-pendientes/imerg-pendientes.mjs
