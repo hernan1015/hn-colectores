@@ -18,7 +18,7 @@ export function unirIndices(textos, tag) {
 
 export function entrada(s, asset, nuevo) {
   return { pedido_utc: s.pedido_utc, pedido_art: s.pedido_art, http: s.http, estado: s.estado, motivo: s.motivo,
-    scan_t: s.scan_t, scan_art: s.scan_art, asset, nuevo: !!nuevo, run_id: (s.colector && s.colector.run_id) || null };
+    scan_t: s.scan_t, scan_art: s.scan_art, zona: s.zona ?? null, asset, nuevo: !!nuevo, run_id: (s.colector && s.colector.run_id) || null };
 }
 
 export function agregar(ind, e) {

@@ -5,6 +5,10 @@
 //   { ok, parcial, scan_t, scan_t20, edad_min, h0_fuente, celdas:[…], sin_dato:[…], faltantes:[…], resumen, archivos, … }
 //   ~380 KB de JSON (≈2200 celdas + ≈950 sin_dato). La function NO guarda nada: la buena vive 600 s en la red de Netlify
 //   y la parcial o la falla, ni eso. Por eso este archivo.
+// [310 · 16/11/2026] LA ZONA: desde hn-agro _v1827 el ojo mira lat −38..−22 · lon −70..−56 (antes lon −66..−56; se sumó
+//   Cuyo). El cuerpo se guarda TAL CUAL, así que la zona nueva entra sola; además el sobre y la línea del índice dicen la
+//   zona de CADA barrido (`zona`, la que trae la respuesta, o null), para que un caso no mezcle barridos de dos zonas.
+//   Con 5600 celdas la respuesta pesa ~250-770 KB (medido con los barridos del 16/11): lejos del TOPE de 20 MB.
 // LOS TRES ESTADOS (el mismo criterio que satchi-publico.esBuena):
 //   · buena   = HTTP 200, JSON, ok ≠ false, parcial ≠ true y un scan_t válido;
 //   · parcial = HTTP 200, JSON, ok ≠ false y parcial = true (faltó NOAA, GLM u Open-Meteo para una parte), o sin scan_t;
@@ -80,14 +84,23 @@ export function scanValido(scan_t, pedido_ms) {
   return ms;
 }
 
+/** La zona de la respuesta ({latMin, latMax, lonMin, lonMax} con números) o null: un campo basura no se copia. */
+export function zonaDe(z) {
+  if (!z || typeof z !== 'object' || Array.isArray(z)) return null;
+  const k = ['latMin', 'latMax', 'lonMin', 'lonMax'];
+  if (!k.every((x) => typeof z[x] === 'number' && Number.isFinite(z[x]))) return null;
+  return Object.fromEntries(k.map((x) => [x, z[x]]));
+}
+
 export function clasificar(p) {
-  const c = { estado: 'falla', motivo: null, ok: null, parcial: null, scan_t: null, scan_ms: null, faltantes: null };
+  const c = { estado: 'falla', motivo: null, ok: null, parcial: null, scan_t: null, scan_ms: null, faltantes: null, zona: null };
   if (p.error) { c.motivo = p.error; return c; }
   let j = null;
   try { j = JSON.parse(p.cuerpo); } catch { j = null; }
   if (j && typeof j === 'object' && !Array.isArray(j)) {
     c.ok = j.ok === undefined ? null : j.ok; c.parcial = j.parcial === undefined ? null : j.parcial;
     c.faltantes = Array.isArray(j.faltantes) ? j.faltantes.map(String).slice(0, 20) : null;
+    c.zona = zonaDe(j.zona);
     c.scan_ms = scanValido(j.scan_t, p.pedido_ms);
     c.scan_t = c.scan_ms == null ? null : new Date(c.scan_ms).toISOString();
   }
@@ -117,7 +130,7 @@ export function sobre(p, c, colector = {}) {
     pedido_utc: new Date(p.pedido_ms).toISOString(), pedido_art: horaAR(p.pedido_ms), duracion_ms: p.duracion_ms,
     http: p.http, cabeceras: p.cabeceras, error: p.error,
     estado: c.estado, motivo: c.motivo, ok: c.ok, parcial: c.parcial, faltantes: c.faltantes,
-    scan_t: c.scan_t, scan_art: c.scan_ms != null ? horaAR(c.scan_ms) : null,
+    scan_t: c.scan_t, scan_art: c.scan_ms != null ? horaAR(c.scan_ms) : null, zona: c.zona ?? null,
     colector, cuerpo: p.cuerpo,
   };
 }

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { githubFalso, respuestaGranizo, satchiFalso } from './falsos.mjs';
 import { clienteReleases } from '../../lib/releases.mjs';
-import { pedirGranizo, clasificar, nombreBarrido, tagDe, horaAR, desempaquetar, URL_GRANIZO, UA, TOPE_BYTES } from '../lib/barrido.mjs';
+import { pedirGranizo, clasificar, nombreBarrido, tagDe, horaAR, desempaquetar, URL_GRANIZO, UA, TOPE_BYTES, zonaDe } from '../lib/barrido.mjs';
 import { yaExiste } from '../../lib/releases.mjs';
 import { archivar } from '../lib/flujo.mjs';
 import { RE_INDICE, unirIndices } from '../lib/indice.mjs';
@@ -383,4 +383,33 @@ test('[227] vigía: sin huecos → ok; lo que viene DESPUÉS del último guardad
 test('[227] vigía: los avisos más graves siguen primero (parado gana a huecos)', () => {
   const v = evaluarFrescura({ ahoraMs: Date.parse('2026-11-14T18:30:00Z'), barridos: archivo1411(), pedidos: [] });
   assert.equal(v.tipo, 'parado');
+});
+
+// ── [310] la zona nueva del ojo (hn-agro _v1827: lon −70..−56) ──────────────────────────────────────────────────────
+const ZONA_NUEVA = { latMin: -38, latMax: -22, lonMin: -70, lonMax: -56 };
+const ZONA_VIEJA = { latMin: -38, latMax: -22, lonMin: -66, lonMax: -56 };
+test('[310] la zona nueva se guarda: el cuerpo ENTERO (Desaguadero adentro) y la zona en el sobre y en el índice', async () => {
+  const { gh, cliente, sello } = armar();
+  const cuerpo = respuestaGranizo({ extra: { zona: ZONA_NUEVA, sin_dato: [{ lat: -33.3, lon: -67.1, motivo: 'despejado' }, { lat: -37.7, lon: -65.9, motivo: 'despejado' }] } });
+  const r = await archivar({ cliente: cliente(), pedido: pedido(cuerpo), sello });
+  assert.equal(r.estado, 'buena');
+  const b = barridoDe(gh, '20261113T2210Z.buena.json.gz');
+  assert.deepEqual(b.zona, ZONA_NUEVA);
+  assert.deepEqual(JSON.parse(b.cuerpo).zona, ZONA_NUEVA);
+  assert.ok(JSON.parse(b.cuerpo).sin_dato.some((x) => x.lon < -66), 'la celda de Desaguadero (lon −67,1) está en el archivo');
+  assert.deepEqual(indiceDe(gh)[0].pedidos[0].zona, ZONA_NUEVA);
+});
+test('[310] ⛔ control negativo: un barrido de la zona vieja queda con SU zona (no se confunde con la nueva); sin zona o basura → null', async () => {
+  const { gh, cliente, sello } = armar();
+  await archivar({ cliente: cliente(), pedido: pedido(respuestaGranizo({ extra: { zona: ZONA_VIEJA } })), sello });
+  const b = barridoDe(gh, '20261113T2210Z.buena.json.gz');
+  assert.deepEqual(b.zona, ZONA_VIEJA);
+  assert.notDeepEqual(b.zona, ZONA_NUEVA);
+  assert.ok(!JSON.parse(b.cuerpo).sin_dato.some((x) => x.lon < -66), 'con la zona vieja no hay nada al oeste de −66');
+  assert.equal(clasificar(pedido(respuestaGranizo())).zona, null);
+  assert.equal(zonaDe({ latMin: -38, latMax: -22, lonMin: '-70', lonMax: -56 }), null);
+  assert.equal(zonaDe([1, 2, 3, 4]), null);
+});
+test('[310] el tamaño con 5600 celdas (peor caso medido el 16/11: 768 KB) entra holgado en el TOPE', () => {
+  assert.ok(768 * 1024 < TOPE_BYTES / 20);
 });
