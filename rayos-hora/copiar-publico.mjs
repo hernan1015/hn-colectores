@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // HN AGRO · [_v1815 · la 262] RELLENO DE UNA VEZ: copia al depósito público de SATCHI (satchi-mapas) el derivado liviano de
 // las horas que ya están en la caché privada (rayos-hora/AAAA/MM/DD/HH.json). Ver lib/publico.mjs y LEEME.md.
-// Idempotente: lo que el índice público ya tiene (con el mismo estado) no se vuelve a escribir. No baja nada de NOAA.
+// Idempotente: lo que el índice público ya tiene (con el mismo estado y la misma firma) no se vuelve a escribir. No baja nada de NOAA.
 //
 // env: R2_ACCOUNT_ID · R2_ACCESS_KEY_ID · R2_SECRET_ACCESS_KEY · R2_BUCKET   (la caché privada, sólo se LEE)
 //      R2_OPERA_CUENTA · R2_OPERA_ACCESS_KEY_ID · R2_OPERA_SECRET_ACCESS_KEY  (el público, satchi-mapas: se escribe rayos/)
@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import { almacenCarpeta, almacenR2 } from './lib/almacen.mjs';
 import { parsearHora, ultimaCerrada } from './lib/cache.mjs';
-import { copiarAPublico, DEPOSITO_PUB } from './lib/publico.mjs';
+import { copiarAPublico, DEPOSITO_PUB, textoError } from './lib/publico.mjs';
 
 const env = process.env;
 const privado = env.ALMACEN_CARPETA ? almacenCarpeta(env.ALMACEN_CARPETA)
@@ -25,6 +25,6 @@ try {
   console.log(linea);
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, linea + '\n');
 } catch (e) {
-  console.error('FALLÓ LA COPIA: ' + String(e?.message || e).slice(0, 200));
+  console.error('FALLÓ LA COPIA: ' + textoError(e));   // [2.ª vuelta] sin URLs ni tiras largas
   process.exit(1);
 }

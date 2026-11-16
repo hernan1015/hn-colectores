@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import { almacenCarpeta, almacenR2 } from './lib/almacen.mjs';
 import { correr, parsearHora, ultimaCerrada, VENTANA_H, HORA } from './lib/cache.mjs';
-import { copiarAPublico, DEPOSITO_PUB } from './lib/publico.mjs';
+import { copiarAPublico, DEPOSITO_PUB, textoError } from './lib/publico.mjs';
 
 const env = process.env;
 const almacen = env.ALMACEN_CARPETA
@@ -54,5 +54,5 @@ if (!pub) console.log('público: sin las llaves R2_OPERA_* (no copio a satchi-ma
 else if (res.candado) {   // sin candado (otra corrida trabajando) no se copia: lo hace la otra
   const hasta = ultimaCerrada(Date.now());
   try { await copiarAPublico({ privado: almacen, publico: pub, desdeMs: hasta - (VENTANA_H - 1) * HORA, hastaMs: hasta, log: (s) => console.log(s) }); }
-  catch (e) { console.error('FALLÓ LA COPIA AL PÚBLICO: ' + String(e?.message || e).slice(0, 200)); process.exit(1); }
+  catch (e) { console.error('FALLÓ LA COPIA AL PÚBLICO: ' + textoError(e)); process.exit(1); }   // [2.ª vuelta] sin URLs ni tiras largas
 }

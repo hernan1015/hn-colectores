@@ -95,3 +95,84 @@ test('R2: el objeto público lleva Cache-Control (1 día la completa, 15 min la 
   assert.equal(put[1].h['cache-control'], 'public, max-age=900');
   assert.match(put[2].url, /\/rayos\/indice\.json$/); assert.equal(put[2].h['cache-control'], 'public, max-age=300');
 });
+
+/* ── [2.ª vuelta · Codex n3-262-1511] el derivador NUNCA escribe `faltantes: []` cuando no sabe qué falta ── */
+const sinFaltantes = (h, extra = {}) => { const d = docPriv(h, { faltantes: ['00:00'] }); delete d.faltantes; return Object.assign(d, extra); };
+
+test('2.ª vuelta · la reproducción de Codex: incompleta SIN faltantes → «desconocido», faltantes null (antes salía [])', () => {
+  const d = P.derivar(sinFaltantes(H0));
+  assert.equal(d.estado, 'desconocido');
+  assert.equal(d.faltantes, null);
+  assert.notDeepEqual(d.faltantes, []);
+  assert.match(d.nota, /DESCONOCIDA/);
+});
+
+test('2.ª vuelta · faltantes mal formados, vacíos en una incompleta o presentes en una completa → «desconocido»', () => {
+  const casos = [
+    Object.assign(docPriv(H0, { faltantes: ['00:00'] }), { faltantes: [] }),          // incompleta con lista vacía
+    Object.assign(docPriv(H0, { faltantes: ['00:00'] }), { faltantes: '00:00' }),     // no es lista
+    Object.assign(docPriv(H0, { faltantes: ['00:00'] }), { faltantes: [600] }),       // número
+    docPriv(H0, { faltantes: ['1:5'] }),                                              // mal escrito
+    docPriv(H0, { faltantes: ['10:10'] }),                                            // no es un casillero de 20 s
+    docPriv(H0, { faltantes: ['60:00'] }),                                            // fuera de la hora
+    Object.assign(docPriv(H0), { faltantes: ['10:00'] }),                             // completa CON faltantes
+    Object.assign(docPriv(H0), { faltantes: undefined }),                             // completa sin lista
+  ];
+  for (const c of casos) {
+    const d = P.derivar(c);
+    assert.equal(d.estado, 'desconocido', JSON.stringify(c.faltantes) + ' / ' + c.estado);
+    assert.equal(d.faltantes, null);
+  }
+  /* control: las buenas pasan como están */
+  assert.equal(P.derivar(docPriv(H0)).estado, 'completa'); assert.deepEqual(P.derivar(docPriv(H0)).faltantes, []);
+  assert.deepEqual(P.derivar(docPriv(H0, { faltantes: ['59:40', '00:20'] })).faltantes, ['59:40', '00:20']);
+});
+
+test('2.ª vuelta · ninguna incompleta ni desconocida sale con faltantes: [] (barrido)', () => {
+  const listas = [undefined, null, [], ['00:00'], ['x'], [1], ['00:00', '00:00'], {}, 'a'];
+  for (const estado of ['completa', 'incompleta']) for (const f of listas) {
+    const doc = Object.assign(docPriv(H0), { estado, faltantes: f });
+    const d = P.derivar(doc);
+    if (d.estado !== 'completa') assert.ok(!(Array.isArray(d.faltantes) && d.faltantes.length === 0), estado + ' ' + JSON.stringify(f));
+  }
+});
+
+test('2.ª vuelta · una hora desconocida entra al índice como «desconocido» (no como completa ni incompleta)', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H0), JSON.stringify(sinFaltantes(H0)));
+  const r = await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H0, hastaMs: H0 });
+  assert.equal(r.copiadas, 1); assert.equal(r.desconocidas, 1);
+  assert.equal((await leerJ(pub, 'rayos/indice.json')).horas['2026-11-13T05Z'], 'desconocido');
+  const d = await leerJ(pub, 'rayos/2026-11-13/05.json');
+  assert.equal(d.estado, 'desconocido'); assert.equal(d.faltantes, null);
+});
+
+test('2.ª vuelta · n3 §3: una incompleta que suma flashes SIN cambiar de estado se vuelve a copiar (firma)', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H0), JSON.stringify(docPriv(H0, { faltantes: ['00:00', '00:20'], flashes: [] })));
+  await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H0, hastaMs: H0 });
+  const i1 = await leerJ(pub, 'rayos/indice.json');
+  await priv.escribir(clavePriv(H0), JSON.stringify(docPriv(H0, { faltantes: ['00:00'], flashes: [[1000, -31.4, -64.5, 50.5, 66.7, 0]] })));
+  const r = await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H0, hastaMs: H0 });
+  assert.equal(r.copiadas, 1, 'misma «incompleta», contenido nuevo: se copia');
+  const i2 = await leerJ(pub, 'rayos/indice.json');
+  assert.equal(i2.horas['2026-11-13T05Z'], 'incompleta');
+  assert.ok(i1.firmas['2026-11-13T05Z'] && i2.firmas['2026-11-13T05Z'] && i1.firmas['2026-11-13T05Z'] !== i2.firmas['2026-11-13T05Z']);
+  const d = await leerJ(pub, 'rayos/2026-11-13/05.json');
+  assert.equal(d.n, 1); assert.deepEqual(d.faltantes, ['00:00']); assert.equal(d.firma, i2.firmas['2026-11-13T05Z']);
+  /* y sin cambios, sigue siendo idempotente */
+  assert.equal((await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H0, hastaMs: H0 })).copiadas, 0);
+});
+
+test('2.ª vuelta · una fila de flashes que no es lista no rompe la copia: queda null (el lector no acredita esa hora)', () => {
+  const d = P.derivar(docPriv(H0, { flashes: [[1000, -31.4, -64.5, 50.5, 66.7, 0], 'roto'] }));
+  assert.equal(d.flashes[1], null); assert.equal(d.n, 2); assert.equal(d.estado, 'completa');
+});
+
+test('2.ª vuelta · n3: el error que se imprime no lleva URLs ni tiras largas', () => {
+  const e = new Error('PUT https://abc.r2.cloudflarestorage.com/satchi-mapas/rayos/x.json?X-Amz-Signature=deadbeef falló · token AKIAABCDEFGHIJKLMNOPQRSTUV0123');
+  const t = P.textoError(e);
+  assert.doesNotMatch(t, /https?:|cloudflarestorage|Signature|AKIAABCDEFGHIJ/);
+  assert.match(t, /^PUT \[url\] falló · token \[…\]$/);
+  assert.ok(P.textoError('x'.repeat(10) + ' ' + 'y '.repeat(300)).length <= 200);
+});
