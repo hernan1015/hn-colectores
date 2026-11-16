@@ -1,0 +1,42 @@
+# HN AGRO · [_v1815 · la 262] RELLENO DE UNA VEZ del derivado público de rayos (satchi-mapas/rayos/), desde el 08/11/2026.
+# PARA INSTALARLO: copiar a .github/workflows/rayos-publico-copia.yml (el token de pc-nanci no tiene el permiso `workflow`).
+# Sólo a mano (Actions → rayos-publico-copia → Run workflow). No baja nada de NOAA: lee la caché privada y escribe rayos/.
+# Secretos: los de rayos-hora (R2_*) para LEER y los de opera-mosaico-diario (R2_OPERA_*) para escribir en satchi-mapas.
+name: rayos-publico-copia
+on:
+  workflow_dispatch:
+    inputs:
+      desde: { description: 'UTC, AAAA-MM-DD o AAAA-MM-DDTHH (vacío = 2026-11-08T01)', required: false, default: '' }
+      hasta: { description: 'UTC, AAAA-MM-DD o AAAA-MM-DDTHH (vacío = última hora cerrada)', required: false, default: '' }
+permissions:
+  contents: read
+concurrency:
+  group: colector-rayos-hora   # el mismo grupo que rayos-hora: no corren a la vez
+  cancel-in-progress: false
+jobs:
+  copiar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: rayos-hora
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix rayos-hora --no-audit --no-fund
+      - name: Tests (sin red)
+        run: node --test rayos-hora/test/publico.test.mjs
+      - name: Copiar
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+          DESDE: ${{ inputs.desde }}
+          HASTA: ${{ inputs.hasta }}
+        run: node rayos-hora/copiar-publico.mjs

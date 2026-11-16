@@ -3,7 +3,7 @@
 //    mínimo a propósito (pedido: no extraer un cliente común todavía). Cuando los dos estén en main, mover uno
 //    solo a lib/ en la raíz y que ambos lo importen.
 // Interfaz (claves completas, con "/"):
-//   leer(clave) -> Buffer | null        escribir(clave, cuerpo, { soloSiNoExiste, tipo }) -> true | false
+//   leer(clave) -> Buffer | null        escribir(clave, cuerpo, { soloSiNoExiste, tipo, cache }) -> true | false
 //   borrar(clave)                       listar(prefijo) -> [claves]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -95,8 +95,9 @@ export function almacenR2({ cuenta, clave, secreto, deposito, fetchFn = fetch } 
       if (!r.ok) return falla(r, 'leer');
       return Buffer.from(await r.arrayBuffer());
     },
-    async escribir(k, cuerpo, { soloSiNoExiste = false, tipo = 'application/json' } = {}) {
+    async escribir(k, cuerpo, { soloSiNoExiste = false, tipo = 'application/json', cache = null } = {}) {
       const headers = { 'content-type': tipo };
+      if (cache) headers['cache-control'] = cache;   // [_v1815] el depósito público de SATCHI: cuánto guarda el navegador
       if (soloSiNoExiste) headers['if-none-match'] = '*';
       const r = await pedido('PUT', k, { cuerpo: Buffer.isBuffer(cuerpo) ? cuerpo : Buffer.from(cuerpo), headers });
       if (soloSiNoExiste && (r.status === 412 || r.status === 409)) return false;
