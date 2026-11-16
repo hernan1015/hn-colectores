@@ -33,6 +33,11 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # [_v1815 · la 262] el derivado público para SATCHI (satchi-mapas/rayos/): los secretos de opera-mosaico-diario.
+          # Sin ellos la corrida sigue igual y dice «sin las llaves R2_OPERA_*».
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
           DESDE: ${{ inputs.desde }}
           HASTA: ${{ inputs.hasta }}
           MAX_HORAS: ${{ inputs.max_horas }}
