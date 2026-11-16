@@ -241,12 +241,19 @@ test('3.ª vuelta · si la hora de destino no está en la caché, el flash se de
   assert.ok(deLaHora(p17)); assert.equal(p17.n, 1);
 });
 
-test('3.ª vuelta · un flash repetido en las dos horas (el mismo, en los dos archivos) no se duplica', async () => {
+/* [4.ª vuelta · Codex n3-262-bordes] la deduplicación de la 3.ª borraba flashes DISTINTOS (el público no trae area_km2) */
+test('4.ª vuelta · la reproducción de Codex: dos flashes distintos sólo por el área quedan los dos (el conteo no baja)', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[5000, -29.6, -60.3, 40, 60, 0], [5000, -29.6, -60.3, 40, 75, 0]] })));
+  await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H17, hastaMs: H17, ahoraMs: H18 + 2 * H });
+  assert.equal((await leerJ(pub, P.clavePublica(H17))).n, 2);
+});
+test('4.ª vuelta · uno que llega de la vecina y uno propio que se ven iguales: quedan los dos (cada flash viene en un solo archivo)', async () => {
   const priv = carpeta(), pub = carpeta();
   await priv.escribir(clavePriv(H16), JSON.stringify(docPriv(H16, { flashes: [[H - 67, -29.63, -60.33, 43, 63, 0]] })));
-  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[-67, -29.63, -60.33, 43, 63, 0], [9, -29, -60, 1, 1, 0]] })));
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[-67, -29.63, -60.33, 43, 70, 0], [9, -29, -60, 1, 1, 0]] })));
   await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H16, hastaMs: H17, ahoraMs: H18 + 2 * H });
-  assert.equal((await leerJ(pub, P.clavePublica(H16))).n, 1);
+  assert.equal((await leerJ(pub, P.clavePublica(H16))).n, 2);
 });
 
 test('3.ª vuelta · la firma no depende del rango: correr sólo la 17Z o el día entero da la misma 16Z y la misma 17Z', async () => {

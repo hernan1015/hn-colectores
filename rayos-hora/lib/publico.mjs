@@ -77,7 +77,7 @@ export function derivar(doc) {
  * Un archivo GLM que empieza en la hora h puede traer flashes de unos ms ANTES (t_ms negativo) y, en el otro borde, de la
  * hora siguiente (t_ms ≥ 3.600.000). El lector de hn-agro es estricto (bien): una fila fuera de [0, HORA) descarta la hora
  * entera. Acá se arregla el DATO: lo que cae antes va a la hora anterior y lo que cae después a la siguiente, con t_ms
- * corrido; si esa hora no está, se descarta y se cuenta (`fuera`). Un mismo flash repetido en las dos horas no se duplica.
+ * corrido; si esa hora no está, se descarta y se cuenta (`fuera`). [4.ª] No se deduplica: no se pierde ninguna fila.
  * pubs: Map<horaMs, derivado> (lo modifica: flashes, n y firma). Devuelve { movidos, fuera }.
  * Determinístico: el resultado de una hora depende sólo de ella y de sus dos vecinas, así que corridas con rangos
  * distintos dan la misma firma (cada corrida lee también la hora anterior y la siguiente del rango).
@@ -100,8 +100,9 @@ export function repartirFlashes(pubs) {
     propias.set(h, quedan);
   }
   for (const [h, pub] of pubs) {
-    const visto = new Set(), todos = [];
-    for (const f of [...propias.get(h), ...(llega.get(h) || [])]) { const k = JSON.stringify(f); if (!visto.has(k)) { visto.add(k); todos.push(f); } }
+    /* [4.ª vuelta · Codex n3-262-bordes] SIN deduplicar: cada flash viene en un solo archivo GLM, y el derivado público ya no
+     * trae area_km2, así que dos flashes distintos pueden verse iguales. Deduplicar bajaba el conteo. No se pierde ninguna fila. */
+    const todos = [...propias.get(h), ...(llega.get(h) || [])];
     todos.sort((a, b) => (Array.isArray(a) && Array.isArray(b) && typeof a[0] === 'number' && typeof b[0] === 'number' ? a[0] - b[0] : 0));
     pub.flashes = todos; pub.n = todos.length; pub.firma = firmaDe(pub.estado, pub.faltantes, todos);
   }

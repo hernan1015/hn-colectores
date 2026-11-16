@@ -24,7 +24,7 @@ const MUT = [
   /* [3.ª vuelta · 16/11, datos reales] cada flash a su hora */
   ['no reparte los flashes de los bordes (t_ms negativo)', 'publico.mjs', 'const rep = repartirFlashes(pubs);', 'const rep = { movidos: 0, fuera: 0 };'],
   ['no lee las horas vecinas del rango', 'publico.mjs', 'const lee0 = desdeMs - HORA, lee1 = hastaMs + HORA;', 'const lee0 = desdeMs, lee1 = hastaMs;'],
-  ['duplica un flash repetido en las dos horas', 'publico.mjs', 'if (!visto.has(k)) { visto.add(k); todos.push(f); }', 'todos.push(f);'],
+  ['deduplica (borra flashes distintos sin el área)', 'publico.mjs', 'const todos = [...propias.get(h), ...(llega.get(h) || [])];', 'const todos = Array.from(new Map([...propias.get(h), ...(llega.get(h) || [])].map((f) => [JSON.stringify(f), f])).values());'],
   ['sin la hora de destino, lo deja fuera de rango', 'publico.mjs', 'if (!pubs.has(destino)) { res.fuera++; continue; }', 'if (!pubs.has(destino)) { res.fuera++; quedan.push(f); continue; }'],
   ['no corre el t_ms al moverlo', 'publico.mjs', 'const f2 = [t - (destino - h), ...f.slice(1)];', 'const f2 = f;'],
   /* [ajustes finales · sustituta n3-262-sustituta-1511, obs. 3] */
