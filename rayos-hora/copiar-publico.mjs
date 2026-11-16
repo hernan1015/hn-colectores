@@ -21,7 +21,7 @@ const desdeMs = env.DESDE ? parsearHora(env.DESDE) : Date.UTC(2026, 10, 8, 1);
 const hastaMs = Math.min(env.HASTA ? parsearHora(env.HASTA, true) : Infinity, ultimaCerrada(Date.now()));
 try {
   const r = await copiarAPublico({ privado, publico, desdeMs, hastaMs, log: (s) => console.log(s) });
-  const linea = `### Rayos al depósito público · ${r.copiadas} copiadas, ${r.ya} ya estaban, ${r.ilegibles} ilegibles (de ${r.privadas})`;
+  const linea = `### Rayos al depósito público · ${r.copiadas} copiadas, ${r.ya} ya estaban, ${r.ilegibles} ilegibles (de ${r.privadas}) · ${r.movidos} flashes a su hora, ${r.fuera} de borde sin su hora`;
   console.log(linea);
   if (env.GITHUB_STEP_SUMMARY) fs.appendFileSync(env.GITHUB_STEP_SUMMARY, linea + '\n');
 } catch (e) {
