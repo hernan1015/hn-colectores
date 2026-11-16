@@ -1,0 +1,15 @@
+{
+  "name": "hn-colector-smn-abierto",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · colector del SMN, datos abiertos (datos horarios), red SMN_ABIERTO (CC BY 2.5 AR, citando al SMN)",
+  "scripts": {
+    "colectar": "node smn.mjs",
+    "test": "node --test test/smn.test.mjs test/base-pg.test.mjs test/estatico.test.mjs test/migracion-pglite.test.mjs",
+    "mutantes": "node test/control-negativo.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "postgres": "3.4.4"
+  }
+}
