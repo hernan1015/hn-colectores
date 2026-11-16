@@ -21,6 +21,9 @@ const MUT = [
   ['no respeta el rango', 'publico.mjs', 'if (h != null && h >= desdeMs && h <= hastaMs)', 'if (h != null)'],
   ['sin Cache-Control', 'almacen.mjs', "if (cache) headers['cache-control'] = cache;", ''],
   ['copia la de otra hora', 'publico.mjs', 'if (!pub || Date.parse(pub.hora) !== h) { res.ilegibles++; continue; }', 'if (!pub) { res.ilegibles++; continue; }'],
+  /* [ajustes finales · sustituta n3-262-sustituta-1511, obs. 3] */
+  ['derivar copia campos privados', 'publico.mjs', '    hora: doc.hora,\n', '    ...doc, hora: doc.hora,\n'],
+  ['traga el error de escritura', 'publico.mjs', '  if (error) throw error;\n', ''],
 ];
 const correr = (dir) => spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'publico.test.mjs')], { encoding: 'utf8' }).status === 0;
 let mal = 0;

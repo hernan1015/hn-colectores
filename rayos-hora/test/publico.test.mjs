@@ -176,3 +176,26 @@ test('2.ª vuelta · n3: el error que se imprime no lleva URLs ni tiras largas',
   assert.match(t, /^PUT \[url\] falló · token \[…\]$/);
   assert.ok(P.textoError('x'.repeat(10) + ' ' + 'y '.repeat(300)).length <= 200);
 });
+
+/* [ajustes finales · sustituta n3-262-sustituta-1511, obs. 3] los dos huecos de test de colectores */
+test('ajustes finales · el derivado público lleva SÓLO la lista blanca (nada del documento privado)', () => {
+  const priv = Object.assign(docPriv(H0, { faltantes: ['10:00'] }), { secreto: 's', caja: { x: 1 }, generado: 'g', archivos: { a: 1 }, area_km2: 3 });
+  const d = P.derivar(priv);
+  assert.deepEqual(Object.keys(d).sort(), ['columnas', 'faltantes', 'firma', 'flashes', 'fuente', 'hora', 'n', 'nota', 'satelite', 'estado', 'v'].sort());
+  const s = JSON.stringify(d);
+  for (const k of ['secreto', 'caja', 'generado', 'archivos', 'producto', 'intentos', 'bytes_bajados', 'flashes_disco', 'area_km2']) assert.doesNotMatch(s, new RegExp('"' + k + '"'));
+});
+test('ajustes finales · una falla al escribir una hora se propaga (rojo) DESPUÉS de escribir el índice con lo copiado', async () => {
+  const priv = carpeta(), base = carpeta();
+  await priv.escribir(clavePriv(H0), JSON.stringify(docPriv(H0)));
+  await priv.escribir(clavePriv(H0 + H), JSON.stringify(docPriv(H0 + H)));
+  const pub = Object.assign({}, base, {
+    escribir: async (k, ...r) => { if (k === P.clavePublica(H0 + H)) throw new Error('R2 put 503'); return base.escribir(k, ...r); },
+  });
+  const logs = [];
+  await assert.rejects(P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H0, hastaMs: H0 + H, log: (s) => logs.push(s) }), /R2 put 503/);
+  const idx = await leerJ(base, 'rayos/indice.json');
+  assert.deepEqual(idx.horas, { '2026-11-13T05Z': 'completa' }, 'el índice tiene la que se copió, no la que falló');
+  assert.equal(await base.leer('rayos/2026-11-13/06.json'), null);
+  assert.equal(logs.length, 1);
+});
