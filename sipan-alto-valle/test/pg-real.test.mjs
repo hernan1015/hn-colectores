@@ -16,6 +16,11 @@ import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { crearBase } from '../lib/base.mjs';
 import { verificador } from '../migracion/scram.mjs';
+import { armarCerts } from '../../lib/test/certs.mjs';
+
+/* la 264: el cluster local escucha con TLS (un certificado de prueba firmado por una CA de prueba, SAN 127.0.0.1), así
+   crearBase entra con el ssl VERIFICADO de lib/pg-tls.mjs, igual que contra el pooler */
+let CERTS = null;
 
 const BIN = process.env.SIPAN_PG_BIN;
 const RAIZ = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -51,7 +56,11 @@ before(async () => {
   const datos = path.join(DIR, 'datos');
   const pw = path.join(DIR, 'pw'); fs.writeFileSync(pw, 'su_clave_local');
   execFileSync(exe('initdb'), ['-D', datos, '-U', 'su', '--pwfile', pw, '-A', 'scram-sha-256', '-E', 'UTF8', '--no-instructions'], { stdio: 'ignore' });
-  execFileSync(exe('pg_ctl'), ['-D', datos, '-l', path.join(DIR, 'log.txt'), '-o', `-p ${PUERTO} -c listen_addresses=127.0.0.1 -c log_statement=all`, '-w', 'start'], { stdio: 'ignore' });
+  CERTS = armarCerts();
+  const crt = path.join(DIR, 'srv.crt'), key = path.join(DIR, 'srv.key');
+  fs.writeFileSync(crt, CERTS.srvCrt); fs.writeFileSync(key, CERTS.srvKey); fs.chmodSync(key, 0o600);
+  const barra = (p) => p.split(path.sep).join('/');
+  execFileSync(exe('pg_ctl'), ['-D', datos, '-l', path.join(DIR, 'log.txt'), '-o', `-p ${PUERTO} -c listen_addresses=127.0.0.1 -c log_statement=all -c ssl=on -c ssl_cert_file=${barra(crt)} -c ssl_key_file=${barra(key)}`, '-w', 'start'], { stdio: 'ignore' });
   su = postgres(`postgres://su:su_clave_local@127.0.0.1:${PUERTO}/postgres`, { onnotice: () => {}, max: 1 });
   await su.unsafe(`create role adm login password 'adm_clave_local' createrole createdb replication bypassrls;
     create role authenticator nologin noinherit; create role anon nologin; create role authenticated nologin;
@@ -68,6 +77,7 @@ after(async () => {
   try { await adm.end(); await su.end(); } catch { /* nada */ }
   try { execFileSync(exe('pg_ctl'), ['-D', path.join(DIR, 'datos'), '-m', 'fast', '-w', 'stop'], { stdio: 'ignore' }); } catch { /* nada */ }
   fs.rmSync(DIR, { recursive: true, force: true });
+  if (CERTS) CERTS.borrar();
 });
 
 test('0147b como NO superusuario (el postgres de Supabase): se aplica, deja el rol limpio y es idempotente', { skip: SALTEAR }, async () => {
@@ -80,9 +90,16 @@ test('0147b como NO superusuario (el postgres de Supabase): se aplica, deja el r
   const [{ rolpassword }] = await su`select rolpassword from pg_authid where rolname = 'colector_estaciones'`;
   assert.match(rolpassword, /^SCRAM-SHA-256\$/);
   assert.ok(!fs.readFileSync(path.join(DIR, 'log.txt'), 'utf8').includes(clave));
-  /* el rol entra por SCRAM y la base del colector lo acepta (current_user y session_user) */
-  const b = await crearBase({ url: `postgresql://colector_estaciones:${clave}@127.0.0.1:${PUERTO}/postgres`, hostPermitido: (h) => h === '127.0.0.1' });
+  /* el rol entra por SCRAM y la base del colector lo acepta (current_user y session_user), con el TLS VERIFICADO */
+  const urlLocal = `postgresql://colector_estaciones:${clave}@127.0.0.1:${PUERTO}/postgres`;
+  const b = await crearBase({ url: urlLocal, hostPermitido: (h) => h === '127.0.0.1', ca: CERTS.ca });
   assert.equal(b.usuario, 'colector_estaciones');
+  const [{ tls }] = await su`select ssl as tls from pg_stat_ssl join pg_stat_activity using (pid) where usename = 'colector_estaciones' and application_name = 'colector-sipan'`;
+  assert.equal(tls, true, 'la conexión del colector no fue por TLS');
+  /* 264 · control negativo: un servidor con un certificado que NO firmó la CA dada (un impostor) → no entra */
+  const imp = await crearBase({ url: urlLocal, hostPermitido: (h) => h === '127.0.0.1', ca: CERTS.otra }).catch((e) => e);
+  assert.ok(imp instanceof Error, 'entró con otra CA');
+  assert.match(imp.message, /^conectar: (SELF_SIGNED_CERT_IN_CHAIN|UNABLE_TO_VERIFY_LEAF_SIGNATURE|UNABLE_TO_GET_ISSUER_CERT_LOCALLY)/);
   await b.guardarEstaciones([{ red: 'INTA_SIPAN_AV', estacion_id: '10', nombre: 'Guerrico', lat: -39.016667, lon: -67.666667, activa: true, metadatos: { a: "co'mi\"lla" } }]);
   const g = await b.guardarObs([{ red: 'INTA_SIPAN_AV', estacion_id: '10', fecha: '2026-09-10', tmin_c: -1.5, tmin_noche_c: -2, tmin_noche_en: '2026-09-10T08:40:00Z', noche_registros: 90, noche_esperados: 90, crudo: { x: 1 } }]);
   assert.equal(g.ok, 1, g.errores.join(' | '));

@@ -7,6 +7,15 @@ import { correr } from '../sipan.mjs';
 import { correr as medir } from '../medir.mjs';
 import { claves, verificador } from '../migracion/scram.mjs';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import postgres from 'postgres';
+import { armarCerts } from '../../lib/test/certs.mjs';
+import { CA_COMUN } from '../../lib/pg-tls.mjs';
+
+/* la 264: una CA de prueba (openssl, en una carpeta temporal) para que crearBase arme el TLS verificado sin la del repo */
+const CERTS = armarCerts();
+const CA = CERTS.ca;
+process.on('exit', () => CERTS.borrar());
 
 test('scram.mjs: el verificador SCRAM-SHA-256 cumple el vector del RFC 7677 (la clave en texto no llega a la base)', () => {
   /* RFC 7677 §3: usuario «user», clave «pencil», sal W22ZaJ0SNY7soEsUEjb6gQ==, 4096 iteraciones */
@@ -49,7 +58,7 @@ function sqlFalso({ usuario = 'colector_estaciones', sesion = usuario, fallar = 
 test('URL: sólo el usuario colector_estaciones (o colector_estaciones.<ref>); otro usuario ni se conecta', async () => {
   assert.equal(usuarioDeUrl(URL_OK), 'colector_estaciones.uxyewblbwzqaauzkcihf');
   const f = sqlFalso();
-  const b = await crearBase({ url: URL_OK, conectar: f.conectar });
+  const b = await crearBase({ ca: CA, url: URL_OK, conectar: f.conectar });
   assert.equal(b.usuario, 'colector_estaciones');
   assert.equal(f.s.opciones.prepare, false);                                  // pooler en modo transacción
   assert.equal(f.s.opciones.max, 1);
@@ -57,25 +66,25 @@ test('URL: sólo el usuario colector_estaciones (o colector_estaciones.<ref>); o
   for (const u of [`postgresql://postgres.uxyewblbwzqaauzkcihf:${CLAVE}@${HOST}:6543/postgres`, `postgresql://service_role:${CLAVE}@${HOST}:6543/postgres`,
     `https://uxyewblbwzqaauzkcihf.supabase.co`, '']) {
     const g = sqlFalso();
-    await assert.rejects(crearBase({ url: u, conectar: g.conectar }));
+    await assert.rejects(crearBase({ ca: CA, url: u, conectar: g.conectar }));
     assert.equal(g.s.consultas.length, 0, u);
   }
 });
 
 test('current_user: si la conexión no entró como colector_estaciones, se cierra y aborta', async () => {
   const f = sqlFalso({ usuario: 'postgres' });
-  await assert.rejects(crearBase({ url: URL_OK, conectar: f.conectar }), /otro usuario/);
+  await assert.rejects(crearBase({ ca: CA, url: URL_OK, conectar: f.conectar }), /otro usuario/);
   assert.equal(f.s.cerrada, true);
   /* control negativo: con el usuario correcto, arranca y no cierra */
   const g = sqlFalso();
-  await crearBase({ url: URL_OK, conectar: g.conectar });
+  await crearBase({ ca: CA, url: URL_OK, conectar: g.conectar });
   assert.equal(g.s.cerrada, false);
 });
 
 test('correr (real) con current_user equivocado: aborta ANTES de pedirle nada al INTA y no escribe', async () => {
   const f = sqlFalso({ usuario: 'authenticator' });
   let pedidos = 0;
-  await assert.rejects(correr({ seco: false, env: { SIPAN_PG_URL: URL_OK }, conectar: f.conectar, fetchFn: async () => { pedidos++; throw new Error('no'); }, log: () => {} }), /otro usuario/);
+  await assert.rejects(correr({ ca: CA, seco: false, env: { SIPAN_PG_URL: URL_OK }, conectar: f.conectar, fetchFn: async () => { pedidos++; throw new Error('no'); }, log: () => {} }), /otro usuario/);
   assert.equal(pedidos, 0);
   assert.equal(f.s.consultas.filter((c) => /insert/i.test(c.texto)).length, 0);
 });
@@ -83,7 +92,7 @@ test('correr (real) con current_user equivocado: aborta ANTES de pedirle nada al
 test('la URL y la clave NUNCA salen en un error: con el driver de verdad contra un puerto cerrado', async () => {
   const url = `postgresql://colector_estaciones.uxyewblbwzqaauzkcihf:${CLAVE}@127.0.0.1:1/postgres`;
   let err = null;
-  try { await crearBase({ url, hostPermitido: (h) => h === '127.0.0.1' }); } catch (e) { err = e; }
+  try { await crearBase({ ca: CA, url, hostPermitido: (h) => h === '127.0.0.1' }); } catch (e) { err = e; }
   assert.ok(err, 'tenía que fallar');
   const todo = String(err.message) + ' ' + String(err.stack) + ' ' + JSON.stringify(err);
   for (const x of [CLAVE, '127.0.0.1', 'uxyewblbwzqaauzkcihf', 'colector_estaciones.', 'postgresql://']) assert.ok(!todo.includes(x), 'se filtró: ' + x);
@@ -95,12 +104,12 @@ test('la URL y la clave NUNCA salen: ni en el log de la corrida ni en los errore
   /* 1 · al conectar (desde correr: lo que imprimiría el CLI) */
   const f = sqlFalso({ fallar: sucio });
   let err = null;
-  try { await correr({ seco: false, env: { SIPAN_PG_URL: URL_OK }, conectar: f.conectar, log: () => {} }); } catch (e) { err = e; }
+  try { await correr({ ca: CA, seco: false, env: { SIPAN_PG_URL: URL_OK }, conectar: f.conectar, log: () => {} }); } catch (e) { err = e; }
   assert.ok(err);
   for (const x of [CLAVE, HOST, URL_OK]) assert.ok(!(String(err.message) + String(err.stack)).includes(x));
   /* 2 · en una fila: el error va a `errores` (y de ahí a registro_procesos), limpio */
   const g = sqlFalso({ fallar: Object.assign(new Error(`insert falló en ${URL_OK}`), { code: '23503' }), fallarDesde: 1 });
-  const b = await crearBase({ url: URL_OK, conectar: g.conectar });
+  const b = await crearBase({ ca: CA, url: URL_OK, conectar: g.conectar });
   const r = await b.guardarObs([{ red: 'INTA_SIPAN_AV', estacion_id: '10', fecha: '2026-09-10', crudo: {} }]);
   assert.equal(r.ok, 0);
   assert.match(r.errores[0], /^10 2026-09-10: estaciones_obs: 23503 \(FK\)$/);
@@ -112,7 +121,7 @@ test('la URL y la clave NUNCA salen: ni en el log de la corrida ni en los errore
 
 test('las consultas: upsert con on conflict, jsonb con sql.json, fecha como texto y numeric como número', async () => {
   const f = sqlFalso();
-  const b = await crearBase({ url: URL_OK, conectar: f.conectar });
+  const b = await crearBase({ ca: CA, url: URL_OK, conectar: f.conectar });
   await b.guardarEstaciones([{ red: 'INTA_SIPAN_AV', estacion_id: '10', nombre: 'Guerrico', metadatos: { a: 1 }, activa: true }]);
   await b.guardarObs([{ red: 'INTA_SIPAN_AV', estacion_id: '10', fecha: '2026-09-10', tmin_c: -1, crudo: { x: 1 } }]);
   await b.registrar('sipan_alto_valle', true, { n: 1 });
@@ -125,7 +134,7 @@ test('las consultas: upsert con on conflict, jsonb con sql.json, fecha como text
   assert.match(reg.texto, /^insert into registro_procesos \(proceso, ok, resumen\) values/);
   /* lectura: fecha::text y numeric → número */
   const g = sqlFalso();
-  const b2 = await crearBase({ url: URL_OK, conectar: g.conectar });
+  const b2 = await crearBase({ ca: CA, url: URL_OK, conectar: g.conectar });
   await b2.obs('10', ['2026-09-10']);
   assert.match(g.s.consultas.at(-1).texto, /fecha::text as fecha/);
   /* control negativo: sin fechas no se consulta nada */
@@ -136,22 +145,22 @@ test('las consultas: upsert con on conflict, jsonb con sql.json, fecha como text
 
 test('medir.mjs también entra con el rol propio y cierra la conexión al terminar', async () => {
   const f = sqlFalso();
-  const r = await medir({ seco: true, env: { SIPAN_PG_URL: URL_OK }, conectar: f.conectar, fetchFn: async () => { throw new Error('sin red'); }, log: () => {} });
+  const r = await medir({ ca: CA, seco: true, env: { SIPAN_PG_URL: URL_OK }, conectar: f.conectar, fetchFn: async () => { throw new Error('sin red'); }, log: () => {} });
   assert.equal(r.filas, 0);
   assert.equal(f.s.cerrada, true);
   /* control negativo: con otro usuario, no mide */
-  await assert.rejects(medir({ seco: true, env: { SIPAN_PG_URL: URL_OK }, conectar: sqlFalso({ usuario: 'postgres' }).conectar, log: () => {} }), /otro usuario/);
+  await assert.rejects(medir({ ca: CA, seco: true, env: { SIPAN_PG_URL: URL_OK }, conectar: sqlFalso({ usuario: 'postgres' }).conectar, log: () => {} }), /otro usuario/);
 });
 
 test('session_user: con «?user=postgres&options=-c role=colector_estaciones» current_user da el rol, pero se rechaza', async () => {
   const f = sqlFalso({ usuario: 'colector_estaciones', sesion: 'postgres' });
-  await assert.rejects(crearBase({ url: URL_OK, conectar: f.conectar }), /otro usuario/);
+  await assert.rejects(crearBase({ ca: CA, url: URL_OK, conectar: f.conectar }), /otro usuario/);
   assert.equal(f.s.cerrada, true);
   /* y al revés: entró como colector_estaciones pero el rol vigente es otro (current_user ≠ rol) */
   const g = sqlFalso({ usuario: 'postgres', sesion: 'colector_estaciones' });
-  await assert.rejects(crearBase({ url: URL_OK, conectar: g.conectar }), /otro usuario/);
+  await assert.rejects(crearBase({ ca: CA, url: URL_OK, conectar: g.conectar }), /otro usuario/);
   /* control negativo: los dos iguales al rol, arranca */
-  assert.ok(await crearBase({ url: URL_OK, conectar: sqlFalso({ sesion: 'colector_estaciones' }).conectar }));
+  assert.ok(await crearBase({ ca: CA, url: URL_OK, conectar: sqlFalso({ sesion: 'colector_estaciones' }).conectar }));
 });
 
 test('host: sólo el pooler de Supabase, y con la clave codificada; si no, ni se conecta (ni una consulta DNS)', async () => {
@@ -164,15 +173,15 @@ test('host: sólo el pooler de Supabase, y con la clave codificada; si no, ni se
   ];
   for (const u of malas) {
     let llamado = false;
-    await assert.rejects(crearBase({ url: u, conectar: () => { llamado = true; return null; } }), /pooler/);
+    await assert.rejects(crearBase({ ca: CA, url: u, conectar: () => { llamado = true; return null; } }), /pooler/);
     assert.equal(llamado, false, u.replace(CLAVE, '***'));
   }
   /* y el mensaje no trae la URL */
-  try { await crearBase({ url: malas[1], conectar: () => null }); } catch (e) { assert.ok(!e.message.includes(CLAVE) && !e.message.includes('evil')); }
+  try { await crearBase({ ca: CA, url: malas[1], conectar: () => null }); } catch (e) { assert.ok(!e.message.includes(CLAVE) && !e.message.includes('evil')); }
   /* control negativo: la del pooler, con la clave codificada, conecta */
   let ok = false;
   const f = sqlFalso();
-  await crearBase({ url: URL_OK, conectar: (u, o) => { ok = true; return f.conectar(u, o); } });
+  await crearBase({ ca: CA, url: URL_OK, conectar: (u, o) => { ok = true; return f.conectar(u, o); } });
   assert.equal(ok, true);
 });
 
@@ -181,7 +190,7 @@ test('tipos: lat/lon como número, tmin_noche_en como texto ISO, fecha como text
   const f = sqlFalso({ filas: (t) => (/from estaciones where/.test(t)
     ? [{ estacion_id: '10', nombre: 'G', lat: '-39.016667', lon: '-67.666667', activa: true, metadatos: {} }]
     : [{ estacion_id: '10', fecha: '2026-09-10', tmin_c: '-1.5', tmin_noche_c: '-2.0', tmin_noche_en: fecha, noche_registros: 90, crudo: {} }]) });
-  const b = await crearBase({ url: URL_OK, conectar: f.conectar });
+  const b = await crearBase({ ca: CA, url: URL_OK, conectar: f.conectar });
   const [e] = await b.estaciones();
   assert.equal(typeof e.lat, 'number'); assert.equal(e.lon, -67.666667);
   const [o] = await b.obs('10', ['2026-09-10']);
@@ -192,6 +201,51 @@ test('tipos: lat/lon como número, tmin_noche_en como texto ISO, fecha como text
   assert.equal((t.match(/fecha::text as fecha/g) || []).length, 1);
   /* control negativo: un null sigue siendo null (no 0 ni NaN) */
   const g = sqlFalso({ filas: () => [{ estacion_id: '10', fecha: '2026-09-10', tmin_c: null, tmin_noche_en: null }] });
-  const [n] = await (await crearBase({ url: URL_OK, conectar: g.conectar })).obs('10', ['2026-09-10']);
+  const [n] = await (await crearBase({ ca: CA, url: URL_OK, conectar: g.conectar })).obs('10', ['2026-09-10']);
   assert.equal(n.tmin_c, null); assert.equal(n.tmin_noche_en, null);
+});
+
+/* ── la 264: el TLS que autentica al servidor ─────────────────────────────────────────────────────────────────────── */
+test('TLS: crearBase le pasa a postgres.js ssl VERIFICADO (rejectUnauthorized true, la CA, servername = host del pooler)', async () => {
+  const f = sqlFalso();
+  await crearBase({ ca: CA, url: URL_OK, conectar: f.conectar });
+  const s = f.s.opciones.ssl;
+  assert.equal(s.rejectUnauthorized, true);
+  assert.equal(s.ca.trim(), CA.trim());
+  assert.equal(s.servername, HOST);
+  assert.equal(s.minVersion, 'TLSv1.2');
+  assert.equal(typeof s.checkServerIdentity, 'function');
+});
+
+test('TLS: sin CA válida, crearBase NO llega a conectar (ni cae a ssl sin verificar), y el error no trae la URL', async () => {
+  for (const ca of ['basura', CERTS.hoja]) {
+    let llamado = false;
+    const e = await crearBase({ ca, url: URL_OK, conectar: () => { llamado = true; return sqlFalso().conectar(); } }).catch((x) => x);
+    assert.ok(e instanceof Error && /NO se conecta/.test(e.message), String(e && e.message));
+    assert.equal(llamado, false);
+    assert.ok(!e.message.includes(CLAVE) && !e.message.includes(HOST));
+  }
+  /* sin override: la CA común del repo. Si todavía no está (la agrega local), NO se conecta; si está, va ESA */
+  let opciones = null;
+  const r = await crearBase({ url: URL_OK, conectar: (u, o) => { opciones = o; return sqlFalso().conectar(u, o); } }).catch((x) => x);
+  if (fs.existsSync(CA_COMUN)) {
+    assert.ok(!(r instanceof Error), String(r && r.message));
+    assert.equal(opciones.ssl.ca.trim(), fs.readFileSync(CA_COMUN, 'utf8').trim().replace(/\r\n/g, '\n'));
+    assert.equal(opciones.ssl.rejectUnauthorized, true);
+  } else {
+    assert.ok(r instanceof Error && /no se puede leer la CA.*NO se conecta/.test(r.message));
+    assert.equal(opciones, null);
+  }
+});
+
+test('TLS: con el postgres.js de verdad, un «?sslmode=disable / require» en la URL no baja la verificación', async () => {
+  for (const q of ['?sslmode=disable', '?sslmode=require', '?ssl=false', '']) {
+    let opciones;
+    await crearBase({ ca: CA, url: URL_OK + q, conectar: (u, o) => { opciones = o; return sqlFalso().conectar(u, o); } });
+    /* postgres() no conecta hasta la primera consulta: sólo se miran las opciones que resolvió (sin red) */
+    const sql = postgres(URL_OK + q, opciones);
+    assert.equal(sql.options.ssl.rejectUnauthorized, true, q);
+    assert.equal(sql.options.ssl.ca.trim(), CA.trim(), q);
+    assert.equal(sql.options.ssl.servername, HOST, q);
+  }
 });

@@ -28,6 +28,7 @@ Los comandos son de Git Bash y `gh` es `C:/Users/jeshe/AppData/Local/Programs/gh
 
 ### 2 · La clave, el rol (0147b) y la URL, en la misma terminal
 Necesita `psql` (cliente de PostgreSQL ≥ 16) y `node`, y se corre desde el clon de hn-colectores, en esta rama o en main ya mergeado.
+- **TLS (la 264):** antes de los pasos 2 y 3, en la misma terminal, `export PGSSLMODE=verify-full PGSSLROOTCERT=lib/ca/supabase-prod-ca-2021.crt`: así `psql` también autentica al pooler contra la CA de Supabase (sin eso usa `prefer`, que no verifica). El colector ya lo hace solo (`lib/pg-tls.mjs`).
 
 - **La URL de administración** es la de siempre: el `DATABASE_URL` de Netlify, que es el usuario `postgres.uxyewblbwzqaauzkcihf` por el pooler. Sirve sólo para aplicar la 0147b y **no va a ningún secreto**.
 - **El host del pooler** sale de esa misma URL (lo que va entre `@` y `:`, del estilo `aws-0-<región>.pooler.supabase.com`) o del MCP de Supabase. El colector **sólo** conecta a un host `….pooler.supabase.com`.

@@ -57,12 +57,26 @@ const MUTANTES = [
   ['pg: no cierra la conexión al terminar', 'medir.mjs', '  finally { if (!baseDada && base.cerrar) await base.cerrar(); }', '  finally { }'],
   ['scram: ServerKey mal calculada', 'migracion/scram.mjs', "update('Server Key')", "update('Client Key')"],
   ['pg: los jsonb sin sql.json', 'lib/base.mjs', 'out[k] = JSONB.has(k) && v != null ? sql.json(v) : v;', 'out[k] = v;'],
+  /* la 264: el TLS que autentica al servidor (lib/pg-tls.mjs, común a los colectores) */
+  ['tls: sin el helper (ssl: require a mano)', 'lib/base.mjs', "import { conTls } from '../../lib/pg-tls.mjs';", "const conTls = (u, o) => ({ ...o, ssl: 'require' });"],
+  ['tls: el helper importado pero sin llamarlo', 'lib/base.mjs', 'const opciones = conTls(url, {', 'const opciones = ((u, o) => o)(url, {'],
+  ['tls: rejectUnauthorized false en el helper', '../lib/pg-tls.mjs', '    rejectUnauthorized: true,', '    rejectUnauthorized: false,'],
+  ['tls: sin CA cae a la conexión sin la CA de Supabase', '../lib/pg-tls.mjs', "    catch { throw propio('postgres: no se puede leer", "    catch { return null; throw propio('postgres: no se puede leer"],
+  ['tls: no controla el nombre del host', '../lib/pg-tls.mjs', '    checkServerIdentity: (_h, cert) => tls.checkServerIdentity(host, cert),', '    checkServerIdentity: () => undefined,'],
+  ['tls: acepta un certificado que no es de CA', '../lib/pg-tls.mjs', '    if (!c.ca) throw', '    if (false) throw'],
+  ['tls: acepta una CA vencida', '../lib/pg-tls.mjs', '    if (!(new Date(c.validFrom) <= ahora && ahora <= new Date(c.validTo))) throw', '    if (false) throw'],
+  ['tls: las opciones pisan el ssl', '../lib/pg-tls.mjs', '  return { ...opciones, ssl: pgTls(destino, tlsOpts) };', '  return { ssl: pgTls(destino, tlsOpts), ...opciones };'],
+  ['tls: el estático no mira los que importan postgres', '../lib/test/pg-tls-reglas.mjs', "      if (!USA_TLS.test(texto)) v.push(", "      if (false) v.push("],
 ];
 
+/* la copia: .mutante/sipan-alto-valle (este colector) y .mutante/lib (lo común: pg-tls y sus tests), así los
+   «../../lib/…» de la copia apuntan a la copia y los mutantes de lib/ también se pueden probar */
+const MUT = path.join(RAIZ, '.mutante');
 function correrCon(nombre, archivo, viejo, nuevo) {
-  const dir = path.join(RAIZ, '.mutante');
-  fs.rmSync(dir, { recursive: true, force: true });
+  const dir = path.join(MUT, 'sipan-alto-valle');
+  fs.rmSync(MUT, { recursive: true, force: true });
   for (const x of ['lib', 'test', 'migracion', 'sipan.mjs', 'medir.mjs', 'historico-pdf.mjs']) fs.cpSync(path.join(RAIZ, x), path.join(dir, x), { recursive: true });
+  fs.cpSync(path.join(RAIZ, '..', 'lib'), path.join(MUT, 'lib'), { recursive: true });
   if (archivo) {
     const p = path.join(dir, archivo);
     const txt = fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');   // un clon de Windows con CRLF no rompe la búsqueda
@@ -70,7 +84,9 @@ function correrCon(nombre, archivo, viejo, nuevo) {
     if (veces !== 1) throw new Error(`mutante «${nombre}»: el texto aparece ${veces} veces (tiene que ser 1)`);
     fs.writeFileSync(p, txt.replace(viejo, nuevo));
   }
-  const r = spawnSync(process.execPath, ['--test', path.join(dir, 'test', 'sipan.test.mjs'), path.join(dir, 'test', 'crudos-rol.test.mjs'), path.join(dir, 'test', 'prender.test.mjs'), path.join(dir, 'test', 'base-pg.test.mjs'), path.join(dir, 'test', 'pg-real.test.mjs'), path.join(dir, 'test', 'salida.test.mjs')], { encoding: 'utf8', env: process.env });
+  const tests = ['sipan', 'crudos-rol', 'prender', 'base-pg', 'pg-real', 'salida'].map((t) => path.join(dir, 'test', t + '.test.mjs'))
+    .concat(['pg-tls', 'pg-tls-estatico'].map((t) => path.join(MUT, 'lib', 'test', t + '.test.mjs')));
+  const r = spawnSync(process.execPath, ['--test', ...tests], { encoding: 'utf8', env: process.env });
   return r.status === 0;
 }
 
@@ -84,6 +100,6 @@ for (const [nombre, archivo, viejo, nuevo] of lista) {
   console.log(`${pasa ? 'VIVO   ' : 'muerto '} ${nombre}`);
   if (!pasa) muertos++;
 }
-fs.rmSync(path.join(RAIZ, '.mutante'), { recursive: true, force: true });
+fs.rmSync(MUT, { recursive: true, force: true });
 console.log(`${muertos} de ${lista.length} mutantes detectados${conPg ? '' : ` (sin SIPAN_PG_BIN: ${MUTANTES.length - lista.length} de la 0147b sin probar)`}`);
 process.exit(muertos === lista.length ? 0 : 1);

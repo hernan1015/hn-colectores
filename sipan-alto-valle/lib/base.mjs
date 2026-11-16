@@ -10,12 +10,15 @@
 // Defensas:
 //   · antes de conectar, el usuario de la URL tiene que ser colector_estaciones (o colector_estaciones.<ref>);
 //   · al arrancar, `select current_user` tiene que dar colector_estaciones; si no, se cierra y aborta;
+//   · TLS VERIFICADO (la 264): `ssl` sale SIEMPRE de lib/pg-tls.mjs (rejectUnauthorized: true, la CA común de Supabase
+//     lib/ca/supabase-prod-ca-2021.crt y el nombre del host de la URL). Sin CA legible y válida, no se conecta;
 //   · ningún mensaje de error del driver sale tal cual (pueden traer host, usuario o la URL): se reemplazan por el
 //     código (SQLSTATE o el errno de red) y una descripción nuestra. Ver `errorLimpio`.
 //
 // Tablas: estaciones y estaciones_obs (hn-agro migrations/0110 + las columnas de la 0147), registro_procesos (0075) y
 // pronostico_helada_medicion (0147).
 import postgres from 'postgres';
+import { conTls } from '../../lib/pg-tls.mjs';
 
 export const RED = 'INTA_SIPAN_AV';
 export const ROL = 'colector_estaciones';
@@ -40,12 +43,15 @@ export const HOST_POOLER = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.pooler\.supabase\.com$/;
 
 const DESC = { 23503: 'FK', 23505: 'clave repetida', 23514: 'CHECK', 42501: 'sin permiso (RLS o grant)', '28P01': 'usuario o clave',
   28000: 'usuario o clave', 53300: 'demasiadas conexiones', ECONNREFUSED: 'conexión rechazada', ENOTFOUND: 'host desconocido',
-  ETIMEDOUT: 'tiempo agotado', CONNECT_TIMEOUT: 'tiempo agotado' };
+  ETIMEDOUT: 'tiempo agotado', CONNECT_TIMEOUT: 'tiempo agotado', SELF_SIGNED_CERT_IN_CHAIN: 'certificado no confiable',
+  DEPTH_ZERO_SELF_SIGNED_CERT: 'certificado no confiable', UNABLE_TO_VERIFY_LEAF_SIGNATURE: 'certificado no confiable',
+  UNABLE_TO_GET_ISSUER_CERT_LOCALLY: 'certificado no confiable', ERR_TLS_CERT_ALTNAME_INVALID: 'el certificado es de otro host',
+  CERT_HAS_EXPIRED: 'certificado vencido' };
 
 /** Un error del driver → un Error nuestro, SIN el mensaje original (puede traer host, usuario o la URL). */
 export function errorLimpio(e, que = 'base') {
   const crudo = e && (e.code || e.errno);
-  const codigo = crudo ? String(crudo).replace(/[^A-Za-z0-9_]/g, '').slice(0, 16) : 'sin_codigo';
+  const codigo = crudo ? String(crudo).replace(/[^A-Za-z0-9_]/g, '').slice(0, 40) : 'sin_codigo';
   const err = new Error(`${que}: ${codigo}${DESC[codigo] ? ' (' + DESC[codigo] + ')' : ''}`);
   err.codigo = codigo;
   return err;
@@ -74,7 +80,8 @@ const COLS_OBS = ['red', 'estacion_id', 'lluvia_mm', 'horas_validas', 'tmin_c', 
 
 const COLS_EST = ['red', 'estacion_id', 'nombre', 'partido', 'provincia', 'lat', 'lon', 'precision_ubicacion', 'fuente_ubicacion', 'activa', 'metadatos', 'actualizado_en'];
 
-export async function crearBase({ url, conectar = (u, o) => postgres(u, o), hostPermitido = (h) => HOST_POOLER.test(h) }) {
+/** `ca` (PEM): override opcional, para los tests (una CA de prueba). En Actions va la común del repo (lib/ca). */
+export async function crearBase({ url, conectar = (u, o) => postgres(u, o), hostPermitido = (h) => HOST_POOLER.test(h), ca = null }) {
   if (!url) throw new Error('falta SIPAN_PG_URL');
   const usuario = usuarioDeUrl(url);
   if (!usuario || !(usuario === ROL || usuario.startsWith(ROL + '.'))) {
@@ -85,9 +92,12 @@ export async function crearBase({ url, conectar = (u, o) => postgres(u, o), host
   if (!host || !hostPermitido(host)) {
     throw new Error('SIPAN_PG_URL: el host tiene que ser el pooler de Supabase (…pooler.supabase.com) y la clave ir codificada: no se conecta');
   }
+  /* el TLS que autentica al servidor, FUERA del try: «sin CA» sale con su mensaje claro y no se llega a conectar */
+  const opciones = conTls(url, { max: 1, prepare: false, idle_timeout: 20, connect_timeout: 20, onnotice: () => {},
+    connection: { application_name: 'colector-sipan' } }, { ca });
   let sql;
   try {
-    sql = conectar(url, { max: 1, prepare: false, idle_timeout: 20, connect_timeout: 20, onnotice: () => {}, connection: { application_name: 'colector-sipan' } });
+    sql = conectar(url, opciones);
   } catch (e) { throw errorLimpio(e, 'conectar'); }
   const cerrar = async () => { try { await sql.end({ timeout: 5 }); } catch { /* nada */ } };
   const q = async (que, f) => { try { return await f(); } catch (e) { throw errorLimpio(e, que); } };

@@ -251,8 +251,8 @@ async function correrInterno({ seco = true, ids = null, barrer = false, aceptar 
 /** La corrida: abre la base (Postgres directo, SIPAN_PG_URL, rol colector_estaciones) sólo en modo real, y la cierra
  *  siempre al final, aunque algo falle. `conectar` se inyecta en los tests (una base falsa con la misma forma). */
 export async function correr(op = {}) {
-  const { seco = true, env = process.env, base: baseDada = null, conectar } = op;
-  const base = seco ? null : baseDada || await crearBase({ url: env.SIPAN_PG_URL, ...(conectar ? { conectar } : {}) });
+  const { seco = true, env = process.env, base: baseDada = null, conectar, ca } = op;
+  const base = seco ? null : baseDada || await crearBase({ url: env.SIPAN_PG_URL, ...(conectar ? { conectar } : {}), ...(ca ? { ca } : {}) });
   try { return await correrInterno({ ...op, base }); }
   finally { if (base && !baseDada && base.cerrar) await base.cerrar(); }
 }

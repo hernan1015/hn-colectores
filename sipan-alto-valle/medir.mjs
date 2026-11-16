@@ -42,8 +42,8 @@ export function resumir(filas) {
 
 /** Abre la base (Postgres directo, SIPAN_PG_URL, rol colector_estaciones; también en seco, porque lee) y la cierra siempre. */
 export async function correr(op = {}) {
-  const { env = process.env, base: baseDada = null, conectar } = op;
-  const base = baseDada || await crearBase({ url: env.SIPAN_PG_URL, ...(conectar ? { conectar } : {}) });
+  const { env = process.env, base: baseDada = null, conectar, ca } = op;
+  const base = baseDada || await crearBase({ url: env.SIPAN_PG_URL, ...(conectar ? { conectar } : {}), ...(ca ? { ca } : {}) });
   try { return await medirCon({ ...op, base }); }
   finally { if (!baseDada && base.cerrar) await base.cerrar(); }
 }
