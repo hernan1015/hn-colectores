@@ -72,6 +72,41 @@ export function derivar(doc) {
         : 'Hora DESCONOCIDA: no se sabe qué casilleros faltan; toda la hora es «sin dato» (no es «sin rayos»).',
   };
 }
+/**
+ * PURA. [3.ª vuelta · 16/11, datos reales: 64 de 73 horas salían «filas_ilegibles»] Cada flash a SU hora.
+ * Un archivo GLM que empieza en la hora h puede traer flashes de unos ms ANTES (t_ms negativo) y, en el otro borde, de la
+ * hora siguiente (t_ms ≥ 3.600.000). El lector de hn-agro es estricto (bien): una fila fuera de [0, HORA) descarta la hora
+ * entera. Acá se arregla el DATO: lo que cae antes va a la hora anterior y lo que cae después a la siguiente, con t_ms
+ * corrido; si esa hora no está, se descarta y se cuenta (`fuera`). Un mismo flash repetido en las dos horas no se duplica.
+ * pubs: Map<horaMs, derivado> (lo modifica: flashes, n y firma). Devuelve { movidos, fuera }.
+ * Determinístico: el resultado de una hora depende sólo de ella y de sus dos vecinas, así que corridas con rangos
+ * distintos dan la misma firma (cada corrida lee también la hora anterior y la siguiente del rango).
+ */
+export function repartirFlashes(pubs) {
+  const res = { movidos: 0, fuera: 0 };
+  const llega = new Map();   // horaMs → flashes que le llegan de las vecinas (ya con t_ms corrido)
+  const propias = new Map();
+  for (const [h, pub] of pubs) {
+    const quedan = [];
+    for (const f of pub.flashes) {
+      const t = Array.isArray(f) ? f[0] : null;
+      if (typeof t !== 'number' || !Number.isFinite(t) || (t >= 0 && t < HORA)) { quedan.push(f); continue; }   // ilegible: se deja (el lector lo ve)
+      const destino = t < 0 ? h - HORA * Math.ceil(-t / HORA) : h + HORA * Math.floor(t / HORA);
+      const f2 = [t - (destino - h), ...f.slice(1)];
+      if (!pubs.has(destino)) { res.fuera++; continue; }
+      if (!llega.has(destino)) llega.set(destino, []);
+      llega.get(destino).push(f2); res.movidos++;
+    }
+    propias.set(h, quedan);
+  }
+  for (const [h, pub] of pubs) {
+    const visto = new Set(), todos = [];
+    for (const f of [...propias.get(h), ...(llega.get(h) || [])]) { const k = JSON.stringify(f); if (!visto.has(k)) { visto.add(k); todos.push(f); } }
+    todos.sort((a, b) => (Array.isArray(a) && Array.isArray(b) && typeof a[0] === 'number' && typeof b[0] === 'number' ? a[0] - b[0] : 0));
+    pub.flashes = todos; pub.n = todos.length; pub.firma = firmaDe(pub.estado, pub.faltantes, todos);
+  }
+  return res;
+}
 /** PURA. [2.ª vuelta · n3] El texto de un error para la consola: sin URLs (pueden llevar firmas) ni tiras largas que parezcan llaves. */
 export function textoError(e) {
   return String((e && e.message) || e).replace(/https?:\/\/\S+/g, '[url]').replace(/[A-Za-z0-9+/=_-]{24,}/g, '[…]').slice(0, 200);
@@ -87,23 +122,32 @@ const prefijoDiaPrivado = (ms) => { const d = new Date(ms); return `rayos-hora/$
  * Una falla al ESCRIBIR en el público tira error (la corrida queda en rojo); el índice se escribe con lo que sí se copió.
  */
 export async function copiarAPublico({ privado, publico, desdeMs, hastaMs, ahoraMs = Date.now(), log = () => {} }) {
-  const res = { privadas: 0, copiadas: 0, ya: 0, ilegibles: 0 };
+  const res = { privadas: 0, copiadas: 0, ya: 0, ilegibles: 0, movidos: 0, fuera: 0 };
   let idx = { v: 1, horas: {}, firmas: {} };
   const b = await publico.leer(INDICE_PUB);
   if (b) { try { const j = JSON.parse(b.toString('utf8')); if (j && j.horas && typeof j.horas === 'object') idx = { v: 1, horas: j.horas, firmas: j.firmas && typeof j.firmas === 'object' && !Array.isArray(j.firmas) ? j.firmas : {} }; } catch { /* ilegible: se rehace */ } }
+  /* [3.ª vuelta] se leen también la hora anterior y la siguiente del rango (para repartir los flashes de los bordes),
+   * pero sólo se escriben las del rango */
+  const lee0 = desdeMs - HORA, lee1 = hastaMs + HORA;
   const horas = [];
-  for (const d of diasEntre(desdeMs, hastaMs)) for (const k of await privado.listar(prefijoDiaPrivado(d))) {
-    const h = horaDeClavePrivada(k); if (h != null && h >= desdeMs && h <= hastaMs) horas.push([h, k]);
+  for (const d of diasEntre(lee0, lee1)) for (const k of await privado.listar(prefijoDiaPrivado(d))) {
+    const h = horaDeClavePrivada(k); if (h != null && h >= lee0 && h <= lee1) horas.push([h, k]);
   }
   horas.sort((a, b) => a[0] - b[0]);
-  res.privadas = horas.length;
+  res.privadas = horas.filter(([h]) => h >= desdeMs && h <= hastaMs).length;
+  const pubs = new Map();
+  for (const [h, k] of horas) {
+    let doc = null;
+    try { doc = JSON.parse((await privado.leer(k)).toString('utf8')); } catch { doc = null; }
+    const pub = derivar(doc);
+    if (!pub || Date.parse(pub.hora) !== h) { if (h >= desdeMs && h <= hastaMs) res.ilegibles++; continue; }
+    pubs.set(h, pub);
+  }
+  const rep = repartirFlashes(pubs); res.movidos = rep.movidos; res.fuera = rep.fuera;
   let cambio = false, error = null;
   try {
-    for (const [h, k] of horas) {
-      let doc = null;
-      try { doc = JSON.parse((await privado.leer(k)).toString('utf8')); } catch { doc = null; }
-      const pub = derivar(doc);
-      if (!pub || Date.parse(pub.hora) !== h) { res.ilegibles++; continue; }
+    for (const [h, pub] of pubs) {
+      if (h < desdeMs || h > hastaMs) continue;
       const marca = marcaIndice(h);
       /* [2.ª vuelta · n3 §3] ya está sólo si coinciden el estado Y la firma (una incompleta puede cambiar sin cambiar de estado) */
       if (idx.horas[marca] === pub.estado && idx.firmas[marca] === pub.firma) { res.ya++; continue; }
@@ -118,7 +162,7 @@ export async function copiarAPublico({ privado, publico, desdeMs, hastaMs, ahora
     await publico.escribir(INDICE_PUB, JSON.stringify({ v: 1, actualizado: new Date(ahoraMs).toISOString(), desde: orden[0] || null, hasta: orden[orden.length - 1] || null, horas: horasOrd, firmas: firmasOrd }),
       { tipo: 'application/json', cache: CACHE_INDICE });
   }
-  log(`público: ${res.copiadas} horas copiadas, ${res.ya} ya estaban, ${res.ilegibles} ilegibles (de ${res.privadas} privadas)`);
+  log(`público: ${res.copiadas} horas copiadas, ${res.ya} ya estaban, ${res.ilegibles} ilegibles (de ${res.privadas} privadas); ${res.movidos} flashes a su hora, ${res.fuera} de borde sin su hora`);
   if (error) throw error;
   return res;
 }

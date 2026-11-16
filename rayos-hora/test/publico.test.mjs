@@ -199,3 +199,89 @@ test('ajustes finales · una falla al escribir una hora se propaga (rojo) DESPU�
   assert.equal(await base.leer('rayos/2026-11-13/06.json'), null);
   assert.equal(logs.length, 1);
 });
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * [3.ª vuelta · 16/11 · datos reales] rayos/2026-11-12/17.json traía filas con t_ms NEGATIVO ([-406,…], [-198,…], [-67,…]):
+ * flashes de unos ms antes del inicio de la hora (borde de los archivos GLM). hn-agro (estricto, bien) descartaba la hora
+ * entera: 64 de 73 horas «filas_ilegibles». Ahora cada flash va a SU hora.
+ * ════════════════════════════════════════════════════════════════════════════ */
+const H17 = Date.UTC(2026, 10, 12, 17), H16 = H17 - H, H18 = H17 + H;
+const deLaHora = (pub) => pub.flashes.every((f) => typeof f[0] === 'number' && f[0] >= 0 && f[0] < H);
+
+test('3.ª vuelta · la hora real del 12/11 17Z: los t_ms negativos pasan a la 16Z con t_ms corrido, y las dos quedan legibles', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H16), JSON.stringify(docPriv(H16, { flashes: [[3599000, -29.6, -60.3, 40, 60, 0]] })));
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[-406, -29.61, -60.31, 41, 61, 0], [-198, -29.62, -60.32, 42, 62, 1], [-67, -29.63, -60.33, 43, 63, 0], [5000, -29.64, -60.34, 44, 64, 0]] })));
+  await priv.escribir(clavePriv(H18), JSON.stringify(docPriv(H18)));
+  const r = await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H16, hastaMs: H18, ahoraMs: H18 + 2 * H });
+  assert.equal(r.movidos, 3); assert.equal(r.fuera, 0); assert.equal(r.ilegibles, 0);
+  const p16 = await leerJ(pub, P.clavePublica(H16)), p17 = await leerJ(pub, P.clavePublica(H17));
+  assert.ok(deLaHora(p16) && deLaHora(p17));
+  assert.deepEqual(p17.flashes.map((f) => f[0]), [5000]);
+  assert.deepEqual(p16.flashes.map((f) => f[0]), [3599000, H - 406, H - 198, H - 67]);
+  assert.equal(p16.n, 4); assert.equal(p17.n, 1);
+  assert.equal(p16.firma, P.firmaDe(p16.estado, p16.faltantes, p16.flashes));
+});
+
+test('3.ª vuelta · el otro borde: t_ms ≥ 3.600.000 pasa a la hora siguiente', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[1000, -31, -64, 1, 1, 0], [H + 250, -31.1, -64.1, 2, 2, 0]] })));
+  await priv.escribir(clavePriv(H18), JSON.stringify(docPriv(H18, { flashes: [[2000, -31.2, -64.2, 3, 3, 0]] })));
+  const r = await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H17, hastaMs: H18, ahoraMs: H18 + 2 * H });
+  assert.equal(r.movidos, 1);
+  assert.deepEqual((await leerJ(pub, P.clavePublica(H18))).flashes.map((f) => f[0]), [250, 2000]);
+});
+
+test('3.ª vuelta · si la hora de destino no está en la caché, el flash se descarta y se cuenta (nunca queda fuera de rango)', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[-406, -29.6, -60.3, 1, 1, 0], [5000, -29.6, -60.3, 1, 1, 0]] })));
+  const r = await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H17, hastaMs: H17, ahoraMs: H18 + 2 * H });
+  assert.equal(r.fuera, 1); assert.equal(r.movidos, 0);
+  const p17 = await leerJ(pub, P.clavePublica(H17));
+  assert.ok(deLaHora(p17)); assert.equal(p17.n, 1);
+});
+
+test('3.ª vuelta · un flash repetido en las dos horas (el mismo, en los dos archivos) no se duplica', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H16), JSON.stringify(docPriv(H16, { flashes: [[H - 67, -29.63, -60.33, 43, 63, 0]] })));
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[-67, -29.63, -60.33, 43, 63, 0], [9, -29, -60, 1, 1, 0]] })));
+  await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H16, hastaMs: H17, ahoraMs: H18 + 2 * H });
+  assert.equal((await leerJ(pub, P.clavePublica(H16))).n, 1);
+});
+
+test('3.ª vuelta · la firma no depende del rango: correr sólo la 17Z o el día entero da la misma 16Z y la misma 17Z', async () => {
+  const priv = carpeta();
+  await priv.escribir(clavePriv(H16), JSON.stringify(docPriv(H16)));
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[-406, -29.6, -60.3, 1, 1, 0], [H + 9, -29.6, -60.3, 1, 1, 0]] })));
+  await priv.escribir(clavePriv(H18), JSON.stringify(docPriv(H18)));
+  const a = carpeta(), b = carpeta();
+  await P.copiarAPublico({ privado: priv, publico: a, desdeMs: H17, hastaMs: H17, ahoraMs: H18 + 2 * H });
+  await P.copiarAPublico({ privado: priv, publico: b, desdeMs: H16, hastaMs: H18, ahoraMs: H18 + 2 * H });
+  assert.equal((await leerJ(a, P.clavePublica(H17))).firma, (await leerJ(b, P.clavePublica(H17))).firma);
+});
+
+test('3.ª vuelta · el relleno PISA lo ya copiado con la versión vieja (firma distinta → se vuelve a escribir, y el índice queda coherente)', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H16), JSON.stringify(docPriv(H16)));
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[-406, -29.6, -60.3, 1, 1, 0], [5000, -29.6, -60.3, 1, 1, 0]] })));
+  /* lo que dejó el copiador viejo: la 17Z con el -406 adentro */
+  const vieja = P.derivar(docPriv(H17, { flashes: [[-406, -29.6, -60.3, 1, 1, 0], [5000, -29.6, -60.3, 1, 1, 0]] }));
+  await pub.escribir(P.clavePublica(H17), JSON.stringify(vieja));
+  await pub.escribir(P.INDICE_PUB, JSON.stringify({ v: 1, horas: { [P.marcaIndice(H17)]: 'completa' }, firmas: { [P.marcaIndice(H17)]: vieja.firma } }));
+  const r = await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H16, hastaMs: H17, ahoraMs: H18 + 2 * H });
+  assert.equal(r.copiadas, 2);
+  const p17 = await leerJ(pub, P.clavePublica(H17)), idx = await leerJ(pub, P.INDICE_PUB);
+  assert.ok(deLaHora(p17)); assert.notEqual(p17.firma, vieja.firma);
+  assert.equal(idx.firmas[P.marcaIndice(H17)], p17.firma);
+  assert.equal(idx.firmas[P.marcaIndice(H16)], (await leerJ(pub, P.clavePublica(H16))).firma);
+});
+
+test('3.ª vuelta · corriendo SÓLO la 17Z, igual recibe el flash tardío que vino en el archivo de la 16Z (lee las vecinas)', async () => {
+  const priv = carpeta(), pub = carpeta();
+  await priv.escribir(clavePriv(H16), JSON.stringify(docPriv(H16, { flashes: [[1000, -29, -60, 1, 1, 0], [H + 9, -29.6, -60.3, 7, 7, 0]] })));
+  await priv.escribir(clavePriv(H17), JSON.stringify(docPriv(H17, { flashes: [[5000, -29.6, -60.3, 1, 1, 0]] })));
+  const r = await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H17, hastaMs: H17, ahoraMs: H18 + 2 * H });
+  assert.equal(r.copiadas, 1);
+  assert.deepEqual((await leerJ(pub, P.clavePublica(H17))).flashes.map((f) => f[0]), [9, 5000]);
+  assert.equal(await pub.leer(P.clavePublica(H16)), null);   // la vecina se lee, no se escribe
+});

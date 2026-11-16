@@ -18,9 +18,15 @@ const MUT = [
   ['idempotencia sólo por estado (n3 §3)', 'publico.mjs', 'if (idx.horas[marca] === pub.estado && idx.firmas[marca] === pub.firma)', 'if (idx.horas[marca] === pub.estado)'],
   ['imprime la URL del error', 'publico.mjs', ".replace(/https?:\\/\\/\\S+/g, '[url]')", ''],
   ['no es idempotente', 'publico.mjs', 'if (idx.horas[marca] === pub.estado && idx.firmas[marca] === pub.firma) { res.ya++; continue; }', ''],
-  ['no respeta el rango', 'publico.mjs', 'if (h != null && h >= desdeMs && h <= hastaMs)', 'if (h != null)'],
+  ['no respeta el rango', 'publico.mjs', 'if (h < desdeMs || h > hastaMs) continue;', ''],
   ['sin Cache-Control', 'almacen.mjs', "if (cache) headers['cache-control'] = cache;", ''],
-  ['copia la de otra hora', 'publico.mjs', 'if (!pub || Date.parse(pub.hora) !== h) { res.ilegibles++; continue; }', 'if (!pub) { res.ilegibles++; continue; }'],
+  ['copia la de otra hora', 'publico.mjs', 'if (!pub || Date.parse(pub.hora) !== h) { if (h >= desdeMs && h <= hastaMs) res.ilegibles++; continue; }', 'if (!pub) { if (h >= desdeMs && h <= hastaMs) res.ilegibles++; continue; }'],
+  /* [3.ª vuelta · 16/11, datos reales] cada flash a su hora */
+  ['no reparte los flashes de los bordes (t_ms negativo)', 'publico.mjs', 'const rep = repartirFlashes(pubs);', 'const rep = { movidos: 0, fuera: 0 };'],
+  ['no lee las horas vecinas del rango', 'publico.mjs', 'const lee0 = desdeMs - HORA, lee1 = hastaMs + HORA;', 'const lee0 = desdeMs, lee1 = hastaMs;'],
+  ['duplica un flash repetido en las dos horas', 'publico.mjs', 'if (!visto.has(k)) { visto.add(k); todos.push(f); }', 'todos.push(f);'],
+  ['sin la hora de destino, lo deja fuera de rango', 'publico.mjs', 'if (!pubs.has(destino)) { res.fuera++; continue; }', 'if (!pubs.has(destino)) { res.fuera++; quedan.push(f); continue; }'],
+  ['no corre el t_ms al moverlo', 'publico.mjs', 'const f2 = [t - (destino - h), ...f.slice(1)];', 'const f2 = f;'],
   /* [ajustes finales · sustituta n3-262-sustituta-1511, obs. 3] */
   ['derivar copia campos privados', 'publico.mjs', '    hora: doc.hora,\n', '    ...doc, hora: doc.hora,\n'],
   ['traga el error de escritura', 'publico.mjs', '  if (error) throw error;\n', ''],
