@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto';
 export const PREFIJO_PUB = 'rayos/';
 export const INDICE_PUB = PREFIJO_PUB + 'indice.json';
-export const DEPOSITO_PUB = 'satchi-mapas';
+export const DEPOSITO_PUB = 'satchi-rayos'; // 16/11: depósito propio y público SÓLO de rayos (satchi-mapas guarda estaciones-internas, no se abre)
 export const CACHE_COMPLETA = 'public, max-age=86400', CACHE_INCOMPLETA = 'public, max-age=900', CACHE_INDICE = 'public, max-age=300';
 const HORA = 3600000;
 const pad = (n) => String(n).padStart(2, '0');

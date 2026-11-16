@@ -24,7 +24,7 @@ test('las claves son las que lee hn-agro (lib/rayos-vs-foco.mjs): rayos/AAAA-MM-
   assert.equal(P.clavePublica(H0), 'rayos/2026-11-13/05.json');
   assert.equal(P.marcaIndice(H0), '2026-11-13T05Z');
   assert.equal(P.INDICE_PUB, 'rayos/indice.json');
-  assert.equal(P.DEPOSITO_PUB, 'satchi-mapas');
+  assert.equal(P.DEPOSITO_PUB, 'satchi-rayos');
   assert.equal(P.horaDeClavePrivada(clavePriv(H0)), H0);
 });
 
@@ -83,7 +83,7 @@ test('una hora privada ilegible o de otra hora no se copia ni entra al índice',
 test('R2: el objeto público lleva Cache-Control (1 día la completa, 15 min la incompleta, 5 min el índice)', async () => {
   const vistos = [];
   const fetchFn = async (url, o) => { vistos.push({ url, h: o.headers, m: o.method }); return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0), text: async () => '<ListBucketResult></ListBucketResult>' }; };
-  const pub = almacenR2({ cuenta: 'a'.repeat(32), clave: 'k', secreto: 's', deposito: 'satchi-mapas', fetchFn });
+  const pub = almacenR2({ cuenta: 'a'.repeat(32), clave: 'k', secreto: 's', deposito: 'satchi-rayos', fetchFn });
   pub.leer = async () => null;
   const priv = carpeta();
   await priv.escribir(clavePriv(H0), JSON.stringify(docPriv(H0)));
@@ -91,7 +91,7 @@ test('R2: el objeto público lleva Cache-Control (1 día la completa, 15 min la 
   await P.copiarAPublico({ privado: priv, publico: pub, desdeMs: H0, hastaMs: H0 + H });
   const put = vistos.filter((v) => v.m === 'PUT');
   assert.equal(put.length, 3);
-  assert.match(put[0].url, /\/satchi-mapas\/rayos\/2026-11-13\/05\.json$/); assert.equal(put[0].h['cache-control'], 'public, max-age=86400');
+  assert.match(put[0].url, /\/satchi-rayos\/rayos\/2026-11-13\/05\.json$/); assert.equal(put[0].h['cache-control'], 'public, max-age=86400');
   assert.equal(put[1].h['cache-control'], 'public, max-age=900');
   assert.match(put[2].url, /\/rayos\/indice\.json$/); assert.equal(put[2].h['cache-control'], 'public, max-age=300');
 });
