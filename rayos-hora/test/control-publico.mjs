@@ -14,6 +14,8 @@ const MUT = [
   ['faltantes ausentes → [] (lo de la 1.ª vuelta)', 'publico.mjs', '    faltantes: fal,\n', '    faltantes: Array.isArray(doc.faltantes) ? doc.faltantes : [],\n'],
   ['no marca «desconocido»', 'publico.mjs', "const estado = fal ? doc.estado : 'desconocido';", 'const estado = doc.estado;'],
   ['acepta la incompleta con lista vacía', 'publico.mjs', "if (estado === 'incompleta') return u.length > 0 ? u : null;", "if (estado === 'incompleta') return u;"],
+  /* [3.ª vuelta · Codex n3-262-colectores-1511: «quitar la validación de longitud» quedaba verde en el control] */
+  ['acepta la completa con faltantes (longitud)', 'publico.mjs', "if (estado === 'completa') return u.length === 0 ? u : null;", "if (estado === 'completa') return u;"],
   ['acepta casilleros mal escritos', 'publico.mjs', 'const CASILLERO_RE = /^([0-5]\\d):(00|20|40)$/;', 'const CASILLERO_RE = /./;'],
   ['idempotencia sólo por estado (n3 §3)', 'publico.mjs', 'if (idx.horas[marca] === pub.estado && idx.firmas[marca] === pub.firma)', 'if (idx.horas[marca] === pub.estado)'],
   ['imprime la URL del error', 'publico.mjs', ".replace(/https?:\\/\\/\\S+/g, '[url]')", ''],
