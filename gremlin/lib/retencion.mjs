@@ -7,9 +7,13 @@
 // Los días con casos están en gremlin/dias-casos.json (en el repo): días ARGENTINOS, «AAAA-MM-DD». Un día argentino va
 // de las 03:00 UTC de D a las 03:00 UTC de D+1, así que se guardan los días UTC D y D+1.
 // Si la lista no se puede leer o no es válida, NO SE BORRA NADA (mejor guardar de más que perder un caso).
+// [M1] Una lista VACÍA es inválida: la lista sólo crece, así que vacía es siempre un error.
+// [M2] Si el reloj está más de 1 día adelante del tiempo más nuevo de SLIDER (o no hay referencia), no se limpia.
+// [M3] El índice del día se borra en un paso APARTE, al final, sólo si todos los objetos del día se borraron bien.
 export const DIAS_RETENCION = 90;
 export const TOPE_BORRADOS = 300;
 export const PARALELO = 8;
+export const ADELANTO_MAX_MS = 86400000;     // [M2] 1 día
 export const PRIMER_DIA = '2026-11-16';          // el colector no existía antes: no hay nada que limpiar más atrás
 export const CLAVE_MARCA = 'gremlin/limpieza.json';
 const DIA = 86400000;
@@ -24,7 +28,7 @@ export const prefijoDia = (d) => `gremlin/${d.slice(0, 4)}/${d.slice(5, 7)}/${d.
 /** Los días UTC protegidos a partir de la lista de días argentinos con casos. null si la lista no es válida. */
 export function diasProtegidos(json) {
   const dias = json && Array.isArray(json.dias) ? json.dias : null;
-  if (!dias || !dias.every(esDia)) return null;
+  if (!dias || dias.length === 0 || !dias.every(esDia)) return null;   // [M1] vacía = error
   const out = new Set();
   for (const d of dias) { out.add(d); out.add(siguienteDia(d)); }
   return out;
@@ -39,11 +43,16 @@ export const ultimoBorrable = (ahoraMs) => diaDe(Math.floor(ahoraMs / DIA) * DIA
  * @param {object} o.almacen
  * @param {object|null} o.casos   el JSON de dias-casos.json (ya leído)
  */
-export async function limpiar({ almacen, casos, ahoraMs = Date.now(), tope = TOPE_BORRADOS, log = console.log }) {
+export async function limpiar({ almacen, casos, ahoraMs = Date.now(), masNuevoMs, tope = TOPE_BORRADOS, log = console.log }) {
   const protegidos = diasProtegidos(casos);
   if (!protegidos) {
     log('gremlin · retención: la lista de días con casos no es válida; no borro nada');
     return { estado: 'sin-lista', borrados: 0 };
+  }
+  // [M2] el reloj contra SLIDER: sin referencia, o más de 1 día adelante del tiempo más nuevo, no se borra nada
+  if (!Number.isFinite(masNuevoMs) || ahoraMs - masNuevoMs > ADELANTO_MAX_MS) {
+    log('gremlin · retención: el reloj no coincide con SLIDER (o no hay tiempos); no borro nada');
+    return { estado: 'reloj-adelantado', borrados: 0 };
   }
   const leida = await almacen.leer(CLAVE_MARCA);
   let marca = diaDe(msDia(PRIMER_DIA) - DIA);   // «limpio hasta» el día anterior al primero
@@ -58,11 +67,21 @@ export async function limpiar({ almacen, casos, ahoraMs = Date.now(), tope = TOP
   for (let vueltas = 0; vueltas < 10 && dia <= limite && borrados < tope; vueltas++) {
     if (!protegidos.has(dia)) {
       const claves = (await almacen.listar(prefijoDia(dia))).filter((k) => k.startsWith(prefijoDia(dia)));
-      const orden = [...claves.filter((k) => !k.endsWith('/indice.json')), ...claves.filter((k) => k.endsWith('/indice.json'))];
-      const lote = orden.slice(0, tope - borrados);
-      for (let i = 0; i < lote.length; i += PARALELO) await Promise.all(lote.slice(i, i + PARALELO).map((k) => almacen.borrar(k)));
-      borrados += lote.length;
-      if (lote.length < orden.length) break;   // el día no terminó: sigue en la próxima corrida, sin mover la marca
+      const objetos = claves.filter((k) => !k.endsWith('/indice.json'));
+      const indices = claves.filter((k) => k.endsWith('/indice.json'));
+      const lote = objetos.slice(0, tope - borrados);
+      let fallas = 0;
+      for (let i = 0; i < lote.length; i += PARALELO) {
+        const r = await Promise.allSettled(lote.slice(i, i + PARALELO).map((k) => almacen.borrar(k)));
+        fallas += r.filter((x) => x.status === 'rejected').length;
+        borrados += r.filter((x) => x.status === 'fulfilled').length;
+      }
+      // [M3] con una falla, el índice del día y la marca quedan; la corrida queda en rojo y la próxima sigue listando el día
+      if (fallas) throw new Error(`R2 borrar: ${fallas} fallas en ${dia}; el índice del día y la marca quedan`);
+      if (lote.length < objetos.length) break;   // el día no terminó: sigue en la próxima corrida, sin mover la marca
+      if (indices.length && borrados >= tope) break;   // el índice, en la próxima
+      // [M3] el índice, en un paso aparte y al final: recién con todos los objetos del día borrados bien
+      for (const k of indices) { await almacen.borrar(k); borrados++; }
     }
     marca = dia;
     await almacen.escribir(CLAVE_MARCA, JSON.stringify({ hasta: marca, actualizado: new Date(ahoraMs).toISOString() }));
