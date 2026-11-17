@@ -23,7 +23,7 @@ MUTANTES = [
     ('sin control de unidades', 'fuentes.py', 'if np.nanmax(arr) > tope or np.nanmin(arr) < -1:', 'if False:'),
     # el CAPE
     ('GFS toma el CAPE de superficie', 'fuentes.py', "quiero = ('CAPE', '255-0 mb above ground',", "quiero = ('CAPE', 'surface',"),
-    ('ECMWF no verifica que sea MUCAPE', 'fuentes.py', 'niveles_cape = (17, 255)', 'niveles_cape = (1, 255)'),
+    ('ECMWF no verifica que sea MUCAPE', 'fuentes.py', 'niveles_cape = ((17, None), (255, None))', 'niveles_cape = ((1, None), (255, None))'),
     # el GRIB
     ('no valida el paso', 'grib.py', "if paso_h is not None and abs(c['paso_h'] - paso_h) > 1e-6:", 'if False:'),
     ('no valida la acumulación', 'grib.py', "if acum_h is not None and (c['acum_h'] is None", "if False and (c['acum_h'] is None"),
@@ -60,7 +60,10 @@ MUTANTES = [
     ('la carpeta ignora si_no_existe', 'almacen.py', 'if si_no_existe and os.path.exists(p):', 'if False:'),
     ('R2 toma el 412 como error', 'almacen.py', 'if si_no_existe and st in (409, 412):', 'if False:'),
     ('acepta un promedio como acumulación', 'grib.py', "if acum_h is not None and (c['proceso'] != 1 or c['n_rangos'] != 1):", 'if False:'),
-    ('no mira las superficies', 'grib.py', "if niveles is not None and (c['nivel1'][0], c['nivel2'][0]) != tuple(niveles):", 'if False:'),
+    ('no mira las superficies', 'grib.py', "if niveles is not None and not (coincide_nivel(c['nivel1'], niveles[0]) and coincide_nivel(c['nivel2'], niveles[1])):", 'if False:'),
+    ('ignora el factor de escala del nivel', 'grib.py', 'esc = 0 if factor == 255 else _s(bytes([factor]))', 'esc = 0'),
+    ('compara sólo el tipo del nivel', 'grib.py', '    if esperado is None:\n        return True\n', '    return True\n'),
+    ('GFS acepta otra capa de CAPE', 'fuentes.py', 'niveles_cape = ((108, 25500.0), (108, 0.0))', 'niveles_cape = ((108, None), (108, None))'),
     ('firma SigV4 mal armada', 'almacen.py', "('AWS4' + secreto).encode()", "('AWS4' + secreto[::-1]).encode()"),
 ]
 

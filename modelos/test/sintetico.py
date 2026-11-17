@@ -43,8 +43,9 @@ def mensaje(valores, malla, corrida, cat, num, disciplina=0, centro=98, paso=0, 
         t = bytes([6]) + (26).to_bytes(3, 'big') + bytes([1]) + malla.get('uuid', UUID_ICON)
         s3 = bytes([0]) + struct.pack('>I', n) + bytes([0, 0]) + struct.pack('>H', 101) + t
 
-    def nivel(x):
-        return bytes([x[0], 0]) + (b'\xff' * 4 if x[1] is None else _sm(x[1], 4))
+    def nivel(x):        # (tipo, valor[, factor de escala]): físico = valor × 10^(−factor)
+        f = x[2] if len(x) > 2 else 0
+        return bytes([x[0]]) + _sm(f, 1) + (b'\xff' * 4 if x[1] is None else _sm(x[1], 4))
     cab = bytes([cat, num, 2, 0, 0]) + b'\x00\x00' + bytes([0]) + bytes([unidad])
     if acum is None:
         s4 = struct.pack('>HH', 0, 0) + cab + struct.pack('>I', paso) + nivel(nivel1) + nivel(nivel2)

@@ -95,7 +95,7 @@ class Ecmwf(Regular):
     modelo = 'ECMWF IFS (open data, 0,25°)'
     resolucion = '0,25° (~28 km)'
     cape_tipo = 'MUCAPE'
-    niveles_cape = (17, 255)     # parcela más inestable, sin segunda superficie
+    niveles_cape = ((17, None), (255, None))     # parcela más inestable (sin valor), sin segunda superficie
     retraso_h = 6.0
     BASE = 'https://data.ecmwf.int/forecasts'
     param_cape = 'mucape (J/kg, parcela más inestable)'
@@ -166,7 +166,7 @@ class Gfs(Regular):
     modelo = 'NOAA GFS (0,25°)'
     resolucion = '0,25° (~28 km)'
     cape_tipo = 'MUCAPE'
-    niveles_cape = (108, 108)    # entre 255 hPa sobre el suelo y el suelo (los valores, en _validar_cape)
+    niveles_cape = ((108, 25500.0), (108, 0.0))  # [n3-312a v2] de 255 hPa (25500 Pa, FÍSICO, con la escala) al suelo
     retraso_h = 3.5
     BASE = 'https://noaa-gfs-bdp-pds.s3.amazonaws.com'
     param_cape = 'CAPE 255-0 mb above ground (J/kg, parcela más inestable de los 255 hPa de abajo)'
@@ -211,8 +211,7 @@ class Gfs(Regular):
         raise ErrorFuente('no está %s en el .idx de f%03d' % (':'.join(quiero), h))
 
     def _validar_cape(self, c):
-        if c['nivel1'] != (108, 25500) or c['nivel2'] != (108, 0):
-            raise ErrorFuente('el CAPE no es el de 255-0 hPa sobre el suelo')
+        pass        # [n3-312a v2] los dos niveles (con su escala) los exige leer() con niveles_cape
 
     def _lluvia6(self, red, corrida, h):
         from . import grib
@@ -293,7 +292,7 @@ class Icon(Fuente):
         M = self._malla(red, corrida)
         if variable == 'cape':
             c = grib.leer(self._bajar(red, self._url(corrida, h, 'CAPE_ML')), corrida=corrida, paso_h=h, parametro=(0, 7, 6),
-                          niveles=(192, 255))
+                          niveles=((192, None), (255, None)))
             if c['nivel1'][0] != 192:
                 raise ErrorFuente('el CAPE no es el de capa de mezcla (superficie %d)' % c['nivel1'][0])
             arr = M.a_salida(c['valores'], c['malla']['uuid'])

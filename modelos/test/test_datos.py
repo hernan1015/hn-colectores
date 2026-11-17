@@ -243,6 +243,46 @@ class TestCape(unittest.TestCase):
         with self.assertRaises((ErrorFuente, grib.ErrorGrib)):
             E.cuadro(S.RedFalsa(A), C, 'cape', 6)
 
+    def _gfs_cape(self, nivel1, nivel2=(108, 0)):
+        A = S.servidor(C, fuentes=('gfs',), horas=(6,))
+        G = Gfs()
+        LA, LO = S.coords_regular(S.MALLA_GFS)
+        m = S.mensaje(S.cape(LA, LO, 6), S.MALLA_GFS, C, 7, 6, centro=7, paso=6, nivel1=nivel1, nivel2=nivel2, decimales=1)
+        A[G._url(C, 6)] = m + S.relleno(S.MALLA_GFS)
+        A[G._url(C, 6, '.idx')] = b'1:0:d=x:CAPE:255-0 mb above ground:6 hour fcst:\n2:%d:d=x:CIN:x:x:' % len(m)
+        G.nuevo(C)
+        return G, S.RedFalsa(A)
+
+    def test_escala_del_nivel_se_aplica(self):
+        """[n3-312a v2] el nivel se compara en Pa FÍSICOS: valor × 10^(−factor)"""
+        LA, LO = S.coords_regular(S.MALLA_GFS)
+        c = grib.cabecera(S.mensaje(S.cape(LA, LO, 6), S.MALLA_GFS, C, 7, 6, paso=6, nivel1=(108, 2550, -1)))
+        self.assertEqual(c['nivel1'], (108, 25500.0))
+        c = grib.cabecera(S.mensaje(S.cape(LA, LO, 6), S.MALLA_GFS, C, 7, 6, paso=6, nivel1=(108, 25500, 1)))
+        self.assertEqual(c['nivel1'], (108, 2550.0))
+
+    def test_gfs_misma_capa_con_otra_escala_se_acepta(self):
+        for n1 in ((108, 2550, -1), (108, 255000, 1), (108, 25500, 0)):
+            G, red = self._gfs_cape(n1, nivel2=(108, 0, 2))
+            a, _ = G.cuadro(red, C, 'cape', 6)
+            self.assertGreater(a.max(), 2000, n1)
+
+    def test_control_negativo_gfs_otra_capa_por_la_escala(self):
+        """el caso de Codex: 25500 con factor 1 = 2550 Pa (25,5 hPa), NO es la capa de 255 hPa"""
+        for n1, n2 in (((108, 25500, 1), (108, 0)), ((108, 255, 0), (108, 0)), ((108, 25500, 0), (108, 1000, 0))):
+            G, red = self._gfs_cape(n1, n2)
+            with self.assertRaises(grib.ErrorGrib):
+                G.cuadro(red, C, 'cape', 6)
+
+    def test_lluvia_superficie_con_escala(self):
+        """la superficie de la lluvia también va en valor físico: 0 con cualquier escala pasa; distinto de 0, no"""
+        prueba = TestProcesoYNivel('test_la_buena_pasa')
+        G, red = prueba._gfs_con(nivel1=(1, 0, 3))
+        self.assertGreater(G.cuadro(red, C, 'lluvia6h', 12)[0].max(), 0)
+        G, red = prueba._gfs_con(nivel1=(1, 5, 0))
+        with self.assertRaises(grib.ErrorGrib):
+            G.cuadro(red, C, 'lluvia6h', 12)
+
     def test_control_negativo_gfs_no_toma_el_cape_de_superficie(self):
         """en el .idx el CAPE de superficie (×3 en el sintético) viene antes; tiene que tomar el de 255-0 hPa"""
         red = S.RedFalsa(S.servidor(C, fuentes=('gfs',), horas=(6,)))

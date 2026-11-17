@@ -146,7 +146,7 @@ con una paleta fija y sube PNG + JSON al depósito público `satchi-modelos`.
 
 ## Tests
 
-`python -m unittest discover -s modelos/test -t modelos/test` corre 58 tests con GRIB **sintéticos**:
+`python -m unittest discover -s modelos/test -t modelos/test` corre 62 tests con GRIB **sintéticos**:
 - tienen las mismas plantillas, parámetros, niveles y acumulaciones que se midieron en los archivos reales;
 - van con empaquetado simple, para poder leerlos también sin ecCodes;
 - se sirven con una red de mentira que imita los `.index`, los `.idx` y los `.bz2`.
@@ -166,6 +166,9 @@ Qué cubren, cada uno con su control negativo adentro:
   - [n3-312a 3] un **promedio** (proceso 0) con el mismo intervalo no pasa por acumulación: se exige plantilla 4.8 con un
     rango y proceso 1; la lluvia tiene que estar en **superficie** (tipo 1, sin segunda superficie) y cada CAPE en la suya
     (ECMWF 17, ICON 192, GFS 108/108 con 25500–0 Pa); un APCP isobárico o con segunda superficie se rechaza;
+  - [n3-312a v2] los niveles se comparan en **valor físico** (valor × 10^(−factor de escala), Pa o m, con tolerancia):
+    25500 con factor 1 (= 2550 Pa, 25,5 hPa) NO es el CAPE de 255-0 hPa y se rechaza; 2550 × 10¹ (factor −1) sí lo es y
+    se acepta; la superficie de la lluvia tiene que valer 0 (o faltar) con cualquier escala;
   - un tp en mm en vez de m se rechaza.
 - **El CAPE:** cada fuente el suyo. El GFS no toma el de superficie aunque venga antes en el `.idx`.
 - **El regrillado de ICON:**
@@ -194,7 +197,7 @@ Qué cubren, cada uno con su control negativo adentro:
 
 **Control negativo contado:** `python modelos/test/control_negativo.py`. Rompe una cosa por vez en una copia de `lib/` y
 `colector.py` y corre la suite: cada mutante tiene que hacerla fallar. Antes corre la copia sin romper, que tiene que pasar.
-Resultado: **43 de 43 mutantes detectados** (con la copia sin romper en verde).
+Resultado: **46 de 46 mutantes detectados** (con la copia sin romper en verde).
 
 **Verificación con datos reales (una vez, sin subir nada):**
 - GFS 16/11 12 UTC: el balde 6-12 h y el CAPE 255-0 de +12 h, decodificados con GDAL (en esta PC no se puede instalar ecCodes),

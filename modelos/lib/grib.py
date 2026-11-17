@@ -58,6 +58,27 @@ def _secciones(m):
     return out
 
 
+def _nivel(tipo, factor, valor):
+    if valor == b'\xff\xff\xff\xff':
+        return (tipo, None)
+    esc = 0 if factor == 255 else _s(bytes([factor]))
+    return (tipo, _s(valor) * 10.0 ** (-esc))
+
+
+def coincide_nivel(nivel, pedido):
+    """pedido: un tipo (int) o (tipo, valor físico); valor None = cualquiera; un 0 pedido acepta también el faltante"""
+    if isinstance(pedido, int):
+        return nivel[0] == pedido
+    tipo, esperado = pedido
+    if nivel[0] != tipo:
+        return False
+    if esperado is None:
+        return True
+    if nivel[1] is None:
+        return esperado == 0
+    return abs(nivel[1] - esperado) <= 1e-6 * max(1.0, abs(esperado))
+
+
 def cabecera(m):
     """lo que importa de un mensaje, sin decodificar los valores"""
     s = _secciones(m)
@@ -83,8 +104,10 @@ def cabecera(m):
     if u not in UNIDAD_MIN:
         raise ErrorGrib('unidad de tiempo %d' % u)
     t_min = int.from_bytes(s4[18:22], 'big') * UNIDAD_MIN[u]
-    r['nivel1'] = (s4[22], _s(s4[24:28]) if s4[24:28] != b'\xff\xff\xff\xff' else None)
-    r['nivel2'] = (s4[28], _s(s4[30:34]) if s4[30:34] != b'\xff\xff\xff\xff' else None)
+    # [n3-312a v2] el valor FÍSICO de cada superficie: valor × 10^(−factor de escala) (2550 con factor −1 = 25500 Pa;
+    # 25500 con factor 1 = 2550 Pa, otra capa). Valor faltante (todo 1) → None.
+    r['nivel1'] = _nivel(s4[22], s4[23], s4[24:28])
+    r['nivel2'] = _nivel(s4[28], s4[29], s4[30:34])
     if t4 == 8:
         if s4[48] not in UNIDAD_MIN:
             raise ErrorGrib('unidad del rango %d' % s4[48])
@@ -147,13 +170,13 @@ def valores(m):
     return v
 
 
-SUPERFICIE = (1, 255)        # tipo de superficie 1 (suelo o agua) y sin segunda superficie: la lluvia
+SUPERFICIE = ((1, 0), (255, None))   # la lluvia: superficie tipo 1 (suelo o agua) a 0, sin segunda superficie
 
 
 def leer(m, corrida=None, paso_h=None, acum_h=None, parametro=None, niveles=None):
     """cabecera + valores, validando que es lo pedido (corrida, paso, acumulación y parámetro).
     [n3-312a 3] Con acum_h, además: plantilla 4.8 con UN rango de tiempo y proceso 1 (ACUMULACIÓN; un promedio o un
-    máximo con el mismo intervalo no pasa). Con niveles=(tipo1, tipo2): los tipos de la primera y segunda superficie."""
+    máximo con el mismo intervalo no pasa). Con niveles=(n1, n2): cada uno un tipo, o (tipo, valor FÍSICO) con la escala aplicada [n3-312a v2]."""
     c = cabecera(m)
     if corrida is not None and c['corrida'] != corrida:
         raise ErrorGrib('corrida %s, se pidió %s' % (c['corrida'].isoformat(), corrida.isoformat()))
@@ -164,8 +187,8 @@ def leer(m, corrida=None, paso_h=None, acum_h=None, parametro=None, niveles=None
         raise ErrorGrib('acumulación %s, se pidió %s' % (c['acum_h'], acum_h))
     if acum_h is not None and (c['proceso'] != 1 or c['n_rangos'] != 1):
         raise ErrorGrib('no es una acumulación (proceso %s, %s rangos)' % (c['proceso'], c['n_rangos']))
-    if niveles is not None and (c['nivel1'][0], c['nivel2'][0]) != tuple(niveles):
-        raise ErrorGrib('superficies %s/%s, se pidió %s/%s' % (c['nivel1'][0], c['nivel2'][0], niveles[0], niveles[1]))
+    if niveles is not None and not (coincide_nivel(c['nivel1'], niveles[0]) and coincide_nivel(c['nivel2'], niveles[1])):
+        raise ErrorGrib('superficies %s/%s, se pidió %s/%s' % (c['nivel1'], c['nivel2'], niveles[0], niveles[1]))
     if parametro is not None and (c['disciplina'], c['categoria'], c['numero']) != parametro:
         raise ErrorGrib('parámetro %s' % ((c['disciplina'], c['categoria'], c['numero']),))
     v = valores(m)
