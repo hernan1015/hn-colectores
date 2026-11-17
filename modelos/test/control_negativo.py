@@ -29,7 +29,7 @@ MUTANTES = [
     ('no valida la acumulación', 'grib.py', "if acum_h is not None and (c['acum_h'] is None", "if False and (c['acum_h'] is None"),
     ('no valida la corrida', 'grib.py', "if corrida is not None and c['corrida'] != corrida:", 'if False:'),
     # el regrillado de ICON
-    ('ICON: lat y lon cruzadas en el árbol', 'malla.py', 'arbol.query(_xyz(LA.ravel(), LO.ravel()), k=1)', 'arbol.query(_xyz(LO.ravel(), LA.ravel()), k=1)'),
+    ('ICON: lat y lon cruzadas en el árbol', 'malla.py', ' d, k = arbol.query(_xyz(LA.ravel(), LO.ravel()), k=1)', ' d, k = arbol.query(_xyz(LO.ravel(), LA.ravel()), k=1)'),
     ('ICON: radianes sin convertir', 'malla.py', 'clat, clon = np.degrees(clat), np.degrees(clon)', 'clat, clon = clat, clon'),
     ('ICON: no verifica la malla del campo', 'malla.py', 'if uuid != self.uuid:', 'if False:'),
     ('ICON: no verifica la distancia', 'malla.py', 'if d.max() * 6371.0 > self.DIST_MAX_KM:', 'if False:'),
@@ -65,6 +65,21 @@ MUTANTES = [
     ('compara sólo el tipo del nivel', 'grib.py', '    if esperado is None:\n        return True\n', '    return True\n'),
     ('GFS acepta otra capa de CAPE', 'fuentes.py', 'niveles_cape = ((108, 25500.0), (108, 0.0))', 'niveles_cape = ((108, None), (108, None))'),
     ('firma SigV4 mal armada', 'almacen.py', "('AWS4' + secreto).encode()", "('AWS4' + secreto[::-1]).encode()"),
+    # [312c] la grilla de valores v2
+    ('v2: filas de sur a norte', 'malla.py', "return CAJA['norte'] - np.arange(NLAT_V2) * PASO_V2,", "return CAJA['sur'] + np.arange(NLAT_V2) * PASO_V2,"),
+    ('v2: remuestrea a escondidas una malla corrida', 'malla.py', "> 0.01 * PASO_V2 or np.abs(lons[ii] - lo_n).max() > 0.01 * PASO_V2:", "> 9 or np.abs(lons[ii] - lo_n).max() > 9:"),
+    ('v2: ICON con lat y lon cruzadas', 'malla.py', 'd2, k2 = arbol.query(_xyz(LA.ravel(), LO.ravel()), k=1)', 'd2, k2 = arbol.query(_xyz(LO.ravel(), LA.ravel()), k=1)'),
+    ('v2: ICON no verifica la malla del campo', 'malla.py', "        if self.uuid != uuid:\n            raise ValueError('el campo es de otra malla (uuid %s, CLAT/CLON %s)' % (uuid, self.uuid))\n        return np.asarray(valores, dtype='f8')[self.indice_v2]", "        return np.asarray(valores, dtype='f8')[self.indice_v2]"),
+    ('v2: el NaN no se marca', 'valores.py', '    q[nan] = SIN_DATO\n', '    pass\n'),
+    ('v2: la lluvia en décimas', 'valores.py', "ESCALA = {'lluvia6h': 0.01,", "ESCALA = {'lluvia6h': 0.1,"),
+    ('v2: PNG de 8 bits', 'valores.py', "q = np.ascontiguousarray(q, dtype='>u2')", "q = np.ascontiguousarray(q, dtype='u1')"),
+    ('v2: pisa la grilla ya publicada', 'tuberia.py', "if not almacen.escribir(kvp, vpng, 'image/png', CACHE_CUADRO, si_no_existe=True):\n        viejo = almacen.leer(kvp)\n        if viejo is None or paleta.firma(viejo) != m['firma']:", "if not almacen.escribir(kvp, vpng, 'image/png', CACHE_CUADRO):\n        viejo = almacen.leer(kvp)\n        if viejo is None or paleta.firma(viejo) != m['firma']:"),
+    ('v2: una falla de la v2 tumba el cuadro v1', 'tuberia.py', "                except Exception as e:\n                    sobre['valores_fallan'][variable].append(h)", "                except KeyError as e:\n                    sobre['valores_fallan'][variable].append(h)"),
+    ('v2: un error al armarla tumba el v1 (fuentes)', 'fuentes.py', '        except Exception as e:   # cualquier error de la v2 no toca el v1', '        except KeyError as e:   # cualquier error de la v2 no toca el v1'),
+    ('v2: leerla al recuperar tumba la corrida', 'tuberia.py', "                except Exception as e:\n                    log('  %s %s %s +%d h: recuperado sin poder leer su v2", "                except KeyError as e:\n                    log('  %s %s %s +%d h: recuperado sin poder leer su v2"),
+    ('v2: la fallida no se anota', 'tuberia.py', "                    sobre['valores_fallan'][variable].append(h)\n", "                    pass\n"),
+    ('v2: la retención no la borra', 'tuberia.py', 'for pre in (V, valores.V2):', 'for pre in (V,):'),
+    ('v2: no se recupera al perder el sobre', 'tuberia.py', "                    if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):", '                    if False:'),
 ]
 
 

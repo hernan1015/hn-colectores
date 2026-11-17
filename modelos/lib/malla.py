@@ -120,8 +120,55 @@ class MallaIcon:
             raise ValueError('celda más cercana a %.0f km: malla equivocada' % (d.max() * 6371.0))
         self.indice = sel[k].reshape(ALTO, ANCHO)
         self.n_celdas_caja = int(len(sel))
+        # [312c] los nodos de la grilla de valores v2, con el mismo árbol. La distancia ya la acotó el chequeo de arriba (la misma
+        # malla, la misma caja + 1° de margen: un nodo del borde nunca queda más lejos que el tope si los píxeles no quedaron)
+        la_n, lo_n = nodos_v2()
+        LA, LO = np.meshgrid(la_n, lo_n, indexing='ij')
+        d2, k2 = arbol.query(_xyz(LA.ravel(), LO.ravel()), k=1)
+        self.dist_max_v2_km = float(d2.max() * 6371.0)
+        self.indice_v2 = sel[k2].reshape(NLAT_V2, NLON_V2)
 
     def a_salida(self, valores, uuid):
         if uuid != self.uuid:
             raise ValueError('el campo es de otra malla (uuid %s, CLAT/CLON %s)' % (uuid, self.uuid))
         return np.asarray(valores, dtype='f8')[self.indice]
+
+    def a_v2(self, valores, uuid):
+        """[312c] el campo en los nodos de la grilla de valores v2"""
+        if self.uuid != uuid:
+            raise ValueError('el campo es de otra malla (uuid %s, CLAT/CLON %s)' % (uuid, self.uuid))
+        return np.asarray(valores, dtype='f8')[self.indice_v2]
+
+
+# ── [312c · 17/11] LA GRILLA DE VALORES (contrato R2 v2) ──────────────────────────────────────────────────────────────────
+# Para que el front interpole el VALOR y aplique la paleta continua DESPUÉS (el dibujo suavizado de la 312c, el método de _v795):
+# una malla lat-lon regular de 0,25° cuyos NODOS van de −15 a −56 (165 filas, norte → sur) y de −76 a −45 (125 columnas,
+# oeste → este). ECMWF y GFS (0,25°) tienen sus puntos EXACTAMENTE en esos nodos: el valor es el de la fuente, sin remuestreo.
+# ICON: el centro de celda más cercano a cada nodo (vecino más cercano sobre la esfera, el mismo árbol que el PNG). Nunca se
+# promedia ni se inventa: un nodo sin valor es NaN (en el PNG de 16 bits, 65535).
+PASO_V2 = 0.25
+NLAT_V2 = int(round((CAJA['norte'] - CAJA['sur']) / PASO_V2)) + 1     # 165
+NLON_V2 = int(round((CAJA['este'] - CAJA['oeste']) / PASO_V2)) + 1    # 125
+
+
+def nodos_v2():
+    """(lat 1D de las filas, de norte a sur; lon 1D de las columnas, de oeste a este)"""
+    return CAJA['norte'] - np.arange(NLAT_V2) * PASO_V2, CAJA['oeste'] + np.arange(NLON_V2) * PASO_V2
+
+
+def grilla_v2():
+    return {'lat0': CAJA['norte'], 'dlat': -PASO_V2, 'nlat': NLAT_V2, 'lon0': CAJA['oeste'], 'dlon': PASO_V2, 'nlon': NLON_V2,
+            'orden': 'filas de norte a sur, columnas de oeste a este; cada valor es el del NODO (lat, lon)',
+            'proyeccion': 'EPSG:4326 (lat-lon regular)'}
+
+
+def regular_a_v2(sub, lats, lons):
+    """de una sub-malla lat-lon de la fuente a los nodos v2: el punto de la fuente en el nodo (a menos de 1/100 de paso);
+    una malla que no tiene sus puntos en los nodos es un error (no se remuestrea a escondidas)"""
+    la_n, lo_n = nodos_v2()
+    jj = np.abs(la_n[:, None] - lats[None, :]).argmin(axis=1)
+    ii = np.abs(lo_n[:, None] - lons[None, :]).argmin(axis=1)
+    if np.abs(lats[jj] - la_n).max() > 0.01 * PASO_V2 or np.abs(lons[ii] - lo_n).max() > 0.01 * PASO_V2:
+        raise ValueError('la malla de la fuente no tiene sus puntos en los nodos de 0,25°')
+    return sub[np.ix_(jj, ii)]
+
