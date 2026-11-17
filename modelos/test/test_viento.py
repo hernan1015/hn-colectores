@@ -266,6 +266,21 @@ class TestElV1SaleSiempre(Carpeta):
         with self.assertRaises(F.ErrorFuente):
             E._chequear_viento(np.full((2, 2), 300.0), np.zeros((2, 2)))
 
+    def test_el_nivel_de_la_cabecera_grib_manda(self):
+        """el índice dice 250 hPa pero la cabecera de u Y de v dice 500 hPa: ese nivel no sale (el resto, sí; el v1, entero)"""
+        orig = S._nv
+        S._nv = lambda n: (100, 50000) if n == 'viento250' else orig(n)
+        try:
+            A = S.servidor(C, fuentes=('ecmwf',), viento=True)
+        finally:
+            S._nv = orig
+        tuberia.correr(S.RedFalsa(A), self.alm, ahora=AHORA, llave='si', log=SILENCIO, fuentes=[Ecmwf()], viento=('ecmwf',))
+        s = _j(self.alm, 'v1/ecmwf/%s/corrida.json' % CC)
+        self.assertEqual(s['estado'], 'completa')
+        self.assertEqual(s['viento']['viento10m'], list(range(0, 121, 6)))
+        self.assertEqual(s['viento']['viento850'], list(range(0, 121, 6)))
+        self.assertEqual(s['viento']['viento250'], [])
+
     def test_un_viento_distinto_ya_publicado_no_se_pisa(self):
         k = 'v2/gfs/%s/viento10m/006.val.png' % CC
         otro = valores.png16(valores.codificar_viento(np.zeros((165, 125)), np.zeros((165, 125))))

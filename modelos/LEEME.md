@@ -121,7 +121,7 @@ Para el viento animado de MODELOS en SATCHI (el método de `_v795` de HN AGRO). 
 - **El v1 sale siempre:** el viento es una segunda fase, cuando el v1 de todas las fuentes ya está publicado; cada cuadro y la fase
   entera tienen su try; topes de 3 fallas seguidas, 20 min y 3 pasadas por corrida.
 - **La llave:** `MODELOS_VIENTO` (variable del repo; vacía = las mismas fuentes, `no` lo apaga, o una lista).
-- **Los tests:** `test/test_viento.py` (19). El control negativo suma 17 mutantes del viento.
+- **Los tests:** `test/test_viento.py` (20). El control negativo suma 17 mutantes del viento (77 de 77 detectados).
 
 ## Idempotencia, reintentos y retención
 
