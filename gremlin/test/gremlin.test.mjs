@@ -434,7 +434,7 @@ test('retención: borra lo de más de 90 días, deja los 90 días y los días co
   assert.equal(R.ultimoBorrable(HOY), '2026-11-21');
   const alm = nuevo();
   for (const d of ['2026-11-16', '2026-11-17', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22', '2027-02-19']) await llenarDia(alm, d);
-  const r = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, log: callado });
+  const r = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado });
   assert.equal(r.estado, 'ok');
   assert.equal(await hay(alm, '2026-11-16'), 0);
   assert.equal(await hay(alm, '2026-11-17'), 0);
@@ -446,7 +446,7 @@ test('retención: borra lo de más de 90 días, deja los 90 días y los días co
   assert.equal(r.marca, '2026-11-21');
   assert.equal(JSON.parse((await alm.leer(R.CLAVE_MARCA)).toString()).hasta, '2026-11-21');
   // al día siguiente cae el 22, y nada más
-  const r2 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY + DIA_MS, log: callado });
+  const r2 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY + DIA_MS, masNuevoMs: HOY + DIA_MS - 1800000, log: callado });
   assert.equal(r2.marca, '2026-11-22');
   assert.equal(await hay(alm, '2026-11-22'), 0);
   assert.equal(await hay(alm, '2026-11-20'), 5, 'el caso sigue');
@@ -455,35 +455,41 @@ test('retención: borra lo de más de 90 días, deja los 90 días y los días co
 test('retención: el tope de borrados por corrida; un día a medias sigue en la próxima y el índice del día va último', async () => {
   const alm = nuevo();
   await llenarDia(alm, '2026-11-16', 20);                 // 22 objetos
-  const r1 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, tope: 10, log: callado });
+  const r1 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, tope: 10, log: callado });
   assert.equal(r1.borrados, 10);
   assert.equal(await hay(alm, '2026-11-16'), 12);
   assert.ok(await alm.leer(`${R.prefijoDia('2026-11-16')}indice.json`), 'el índice se borra al final');
   assert.equal(await alm.leer(R.CLAVE_MARCA), null, 'la marca no avanza con el día a medias');
-  await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, tope: 10, log: callado });
-  const r3 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, tope: 10, log: callado });
+  await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, tope: 10, log: callado });
+  const r3 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, tope: 10, log: callado });
   assert.equal(await hay(alm, '2026-11-16'), 0);
-  assert.equal(r3.borrados, 2 + 0);
+  assert.equal(r3.borrados, 2, 'la última tanda (1 objeto) y el índice, aparte');
   assert.equal(R.TOPE_BORRADOS, 300);
+  // un día SIN índice (una corrida vieja cortada) que no entra en el tope: la marca tampoco avanza
+  const alm2 = nuevo();
+  for (let i = 0; i < 12; i++) await alm2.escribir(`${R.prefijoDia('2026-11-16')}20261116120000/03/00${i}_000.png`, pngFalso());
+  await R.limpiar({ almacen: alm2, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, tope: 10, log: callado });
+  assert.equal(await hay(alm2, '2026-11-16'), 2);
+  assert.equal(await alm2.leer(R.CLAVE_MARCA), null, 'sin índice, la marca tampoco avanza a medias');
 });
 
 test('retención: sin lista válida de casos (o con la marca ilegible) no borra nada', async () => {
-  for (const casos of [null, {}, { dias: '2026-11-20' }, { dias: ['2026-11-20', '20/11/2026'] }, { dias: ['2026-02-30'] }]) {
+  for (const casos of [null, {}, { dias: [] }, { dias: '2026-11-20' }, { dias: ['2026-11-20', '20/11/2026'] }, { dias: ['2026-02-30'] }]) {
     const alm = nuevo();
     await llenarDia(alm, '2026-11-16');
-    const r = await R.limpiar({ almacen: alm, casos, ahoraMs: HOY, log: callado });
+    const r = await R.limpiar({ almacen: alm, casos, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado });
     assert.equal(r.estado, 'sin-lista', JSON.stringify(casos));
     assert.equal(await hay(alm, '2026-11-16'), 5);
   }
   const alm = nuevo();
   await llenarDia(alm, '2026-11-16');
   await alm.escribir(R.CLAVE_MARCA, 'basura');
-  assert.equal((await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, log: callado })).estado, 'sin-marca');
+  assert.equal((await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado })).estado, 'sin-marca');
   assert.equal(await hay(alm, '2026-11-16'), 5);
   // control: con lista válida, sí borra
   const alm2 = nuevo();
   await llenarDia(alm2, '2026-11-16');
-  await R.limpiar({ almacen: alm2, casos: { dias: [] }, ahoraMs: HOY, log: callado });
+  await R.limpiar({ almacen: alm2, casos: { dias: ['2026-12-25'] }, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado });
   assert.equal(await hay(alm2, '2026-11-16'), 0);
 });
 
@@ -512,4 +518,59 @@ test('dias-casos.json del repo: válido, con el caso de Cuyo del 16/11', async (
   assert.ok(p, 'lista válida');
   assert.ok(j.dias.includes('2026-11-16'));
   assert.ok(p.has('2026-11-17'), 'D+1 UTC');
+});
+
+test('[M1] una lista de casos VACÍA es inválida y no borra nada (la lista sólo crece)', async () => {
+  const alm = nuevo();
+  await llenarDia(alm, '2026-11-16');
+  const r = await R.limpiar({ almacen: alm, casos: { dias: [] }, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado });
+  assert.equal(r.estado, 'sin-lista');
+  assert.equal(await hay(alm, '2026-11-16'), 5);
+  assert.equal(R.diasProtegidos({ dias: [] }), null);
+  // control: con un día (que no es éste), sí borra
+  await R.limpiar({ almacen: alm, casos: { dias: ['2026-12-25'] }, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado });
+  assert.equal(await hay(alm, '2026-11-16'), 0);
+});
+
+test('[M2] con el reloj más de 1 día adelante del tiempo más nuevo de SLIDER (o sin referencia) no se limpia', async () => {
+  for (const masNuevoMs of [HOY - 86400001, HOY - 10 * 86400000, undefined, NaN]) {
+    const alm = nuevo();
+    await llenarDia(alm, '2026-11-16');
+    const r = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, masNuevoMs, log: callado });
+    assert.equal(r.estado, 'reloj-adelantado', String(masNuevoMs));
+    assert.equal(await hay(alm, '2026-11-16'), 5);
+    assert.equal(await alm.leer(R.CLAVE_MARCA), null);
+  }
+  // control: justo 1 día, sí
+  const alm = nuevo();
+  await llenarDia(alm, '2026-11-16');
+  await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 86400000, log: callado });
+  assert.equal(await hay(alm, '2026-11-16'), 0);
+  // en la corrida: SLIDER con tiempos de hace 2 días (reloj adelantado) no limpia; con tiempos de hace 30 min, sí
+  const viejo = new Date(HOY - 2 * 86400000).toISOString().replace(/[-:T]/g, '').slice(0, 10) + '0000';
+  const alm2 = nuevo();
+  await llenarDia(alm2, '2026-11-16');
+  const r2 = await correr({ almacen: alm2, fetchFn: sliderFalso({ tiempos: [viejo] }).fetchFn, ahoraMs: HOY, casos: CASOS });
+  assert.equal(r2.retencion.estado, 'reloj-adelantado');
+  assert.equal(await hay(alm2, '2026-11-16'), 5);
+});
+
+test('[M3] el índice del día se borra aparte y al final, sólo si todos los objetos del día se borraron bien', async () => {
+  const alm = nuevo();
+  await llenarDia(alm, '2026-11-16', 6);                   // 6 teselas + sobre + índice
+  const indice = `${R.prefijoDia('2026-11-16')}indice.json`;
+  const orden = [];
+  let romper = true;
+  const fragil = { ...alm, borrar: async (k) => { orden.push(k); if (romper && k.endsWith('sobre.json')) throw new Error('R2 borrar: HTTP 500'); return alm.borrar(k); } };
+  await assert.rejects(R.limpiar({ almacen: fragil, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado }), /R2 borrar: 1 fallas/);
+  assert.ok(await alm.leer(indice), 'con una falla, el índice queda');
+  assert.ok(!orden.includes(indice), 'ni se intentó');
+  assert.equal(await alm.leer(R.CLAVE_MARCA), null, 'la marca no avanza');
+  romper = false;
+  orden.length = 0;
+  const r = await R.limpiar({ almacen: fragil, casos: CASOS, ahoraMs: HOY, masNuevoMs: HOY - 1800000, log: callado });
+  assert.equal(r.estado, 'ok');
+  assert.equal(await hay(alm, '2026-11-16'), 0);
+  assert.equal(orden.at(-1), indice, 'el índice, último y solo');
+  assert.equal(orden.filter((k) => k === indice).length, 1);
 });

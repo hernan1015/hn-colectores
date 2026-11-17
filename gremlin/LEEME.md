@@ -114,6 +114,13 @@ La idempotencia sale de acá:
   - Un día lleno tiene unos 1.450 objetos, que se borran en 5 corridas.
   - Borrar no cuesta: el DELETE de R2 es gratis.
 - **Si la lista no es válida o la marca no se puede leer, no se borra nada.** Mejor guardar de más que perder un caso.
+- **Además, por ser código que borra** (revisión sustituta del 17/11, M1 a M3):
+  - **M1:** una lista **vacía** (`{"dias": []}`) cuenta como inválida. La lista sólo crece, así que vacía es siempre un error.
+  - **M2:** si el reloj está **más de 1 día adelante** del tiempo más nuevo de `latest_times`, o no hay tiempos, no se limpia.
+  - **M3:** el índice del día se borra en un **paso aparte, al final**, y sólo si todos los objetos del día se borraron bien. Con una falla:
+    - el índice y la marca quedan;
+    - la corrida queda en rojo;
+    - la próxima sigue listando el día.
 - No se hace con una regla de ciclo de vida de R2, porque una regla por prefijo no puede exceptuar días sueltos.
 
 ## Workflow, secretos y llave
@@ -186,8 +193,8 @@ gremlin (SECO): 100 tiempos en SLIDER · 95 por bajar · 9 teselas por tiempo ·
 
 ```bash
 cd gremlin
-npm test                          # 49 tests, sin red: SLIDER de mentira y almacén en carpeta
-node test/control-negativo.mjs    # 65 de 65 mutantes detectados
+npm test                          # 52 tests, sin red: SLIDER de mentira y almacén en carpeta
+node test/control-negativo.mjs    # 71 de 71 mutantes detectados
 ```
 
 Qué cubren:
@@ -211,6 +218,6 @@ Qué cubren:
 - **El workflow:** nace apagado, a mano corre en seco y usa los 4 secretos R2.
 
 **Control negativo contado:** `node test/control-negativo.mjs`.
-- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 65 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
+- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 71 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
 - Cada mutante tiene que hacer fallar al menos un test.
 - Antes corre la copia sin romper, que tiene que pasar entera.
