@@ -2,7 +2,7 @@
 // Correr: npm test (dentro de gremlin/). El control negativo está en control-negativo.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { S, C, ALM, carpetaTemporal, sliderFalso, tiemposHasta, pngFalso, leerDato, sinEspera, callado } from './falsos.mjs';
+import { S, C, ALM, carpetaTemporal, sliderFalso, tiemposHasta, pngFalso, idatCorrupto, crcMal, leerDato, sinEspera, callado } from './falsos.mjs';
 
 const AHORA = Date.UTC(2026, 10, 17, 0, 55);                 // 17/11/2026 00:55 UTC
 const ULT = Date.UTC(2026, 10, 17, 0, 30);                   // último tiempo de SLIDER: 00:30 UTC
@@ -57,6 +57,11 @@ test('recorte: la caja Argentina toca exactamente 9 teselas al zoom 3 (filas 5-7
   assert.ok(!ARGENTINA.includes(en(-12.0, -77.0)), 'Lima');
   assert.ok(!ARGENTINA.includes(en(25.8, -80.2)), 'Miami');
   assert.equal(S.teselaDe(40.4, -3.7 + 180), null, 'antípoda: fuera del disco');
+  // [311b · Codex] el horizonte de verdad: a ~81,3° del subsatélite (lon0 −75) sobre el ecuador
+  assert.equal(S.pixel(0, 6.4), null, '81,4° al este de lon0: detrás del horizonte');
+  assert.equal(S.pixel(0, -156.4), null, '81,4° al oeste');
+  assert.ok(S.pixel(0, -75 + 81.2), '81,2°: todavía se ve');
+  assert.ok(S.pixel(-54.8, -68.3), 'Ushuaia se ve');
   assert.ok(S.teselasCaja({ lat_min: -35, lat_max: -34, lon_min: -59, lon_max: -58 }).length < 9, 'una caja chica toca menos');
 });
 
@@ -139,8 +144,12 @@ test('una tesela que falla queda como faltante, no se guarda nada en su clave y 
   assert.deepEqual((await leerJ(alm, C.claveIndiceDia(T))).tiempos[T].faltantes, ['006_004']);
 
   const sl2 = sliderFalso({ tiempos: [T] });
-  const r2 = await correr({ almacen: alm, fetchFn: sl2.fetchFn, ahoraMs: AHORA + 600000 });
+  let lecturasPng = 0;
+  const espia = { ...alm, leer: async (k) => { if (k.endsWith('.png')) lecturasPng++; return alm.leer(k); } };
+  const r2 = await correr({ almacen: espia, fetchFn: sl2.fetchFn, ahoraMs: AHORA + 600000 });
   assert.equal(r2.completos, 1);
+  assert.equal(lecturasPng, 0, 'las 8 del sobre se toman del sobre: no se releen de R2');
+  assert.equal(r2.recuperadas, 0);
   assert.deepEqual(sl2.teselasPedidas().map((p) => p.url.slice(-11)), ['006_004.png'], 'no vuelve a bajar las 8 que ya estaban');
   s = await leerJ(alm, C.claveSobre(T));
   assert.equal(s.estado, 'completo');
@@ -292,4 +301,55 @@ test('el workflow nace apagado: schedule sólo con vars.GREMLIN_ON == «si», a 
   for (const s of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']) assert.match(y, new RegExp(`${s}: \\$\\{\\{ secrets\\.${s} \\}\\}`));
   assert.match(y, /cron: '4,14,24,34,44,54 \* \* \* \*'/);
   assert.match(y, /timeout-minutes: 9/);
+});
+
+// ---------- 311b · la revisión de Codex ----------
+test('[311b] PNG de verdad: un IDAT corrupto con el mismo largo e IEND, o un CRC mal, quedan faltantes y no se guardan', async () => {
+  const real = leerDato('tesela_20261117003000_005_005.png');
+  const corrupto = idatCorrupto(real);
+  assert.equal(corrupto.length, real.length, 'mismo largo');
+  assert.ok(corrupto.subarray(-8).equals(real.subarray(-8)), 'mismo IEND');
+  assert.equal(S.motivoTeselaMala(corrupto), 'PNG con el IDAT corrupto');
+  assert.equal(S.motivoTeselaMala(crcMal(real)), 'PNG con el CRC de IDAT mal');
+  assert.equal(S.motivoTeselaMala(real), null, 'control: la real pasa');
+  assert.equal(S.motivoTeselaMala(pngFalso()), null, 'control: la sintética pasa');
+  const alm = nuevo();
+  const sl = sliderFalso({ tiempos: [T], tesela: (t, f, c) => (f === 6 && c === 4 ? corrupto : f === 6 && c === 5 ? crcMal(real) : real) });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn });
+  assert.equal(r.incompletos, 1);
+  const s = await leerJ(alm, C.claveSobre(T));
+  assert.equal(s.estado, 'incompleto', 'nunca «completo» con una tesela rota');
+  assert.deepEqual(s.faltantes.map((x) => `${C.nombreTesela(x)} ${x.motivo}`), ['006_004 PNG con el IDAT corrupto', '006_005 PNG con el CRC de IDAT mal']);
+  assert.equal(await alm.leer(C.claveTesela(T, { fila: 6, col: 4 })), null);
+  assert.equal(await alm.leer(C.claveTesela(T, { fila: 6, col: 5 })), null);
+});
+
+test('[311b] una corrida que se corta a mitad (R2 falla después de 4 teselas): la siguiente baja sólo las 5 que faltan', async () => {
+  const alm = nuevo();
+  let pngs = 0;
+  const fragil = { ...alm, escribir: async (k, ...a) => { if (k.endsWith('.png') && ++pngs > 4) throw new Error('R2 escribir: HTTP 500'); return alm.escribir(k, ...a); } };
+  const sl1 = sliderFalso({ tiempos: [T] });
+  await assert.rejects(correr({ almacen: fragil, fetchFn: sl1.fetchFn }), /R2 escribir/);
+  assert.equal(await alm.leer(C.claveSobre(T)), null, 'no llegó a escribir el sobre');
+  assert.equal((await alm.listar('gremlin/')).filter((k) => k.endsWith('.png')).length, 4);
+  const sl2 = sliderFalso({ tiempos: [T] });
+  const r = await correr({ almacen: alm, fetchFn: sl2.fetchFn, ahoraMs: AHORA + 600000 });
+  assert.equal(r.recuperadas, 4);
+  assert.deepEqual(sl2.teselasPedidas().map((p) => p.url.slice(-11)), ['006_004.png', '006_005.png', '007_003.png', '007_004.png', '007_005.png']);
+  const s = await leerJ(alm, C.claveSobre(T));
+  assert.equal(s.estado, 'completo');
+  assert.deepEqual(s.teselas.map(C.nombreTesela), ARGENTINA);
+  for (const x of s.teselas) assert.match(x.sha256, /^[0-9a-f]{64}$/);
+});
+
+test('[311b] una tesela rota que quedó en R2 sin sobre no se adopta: se vuelve a pedir', async () => {
+  const alm = nuevo();
+  await alm.escribir(C.claveTesela(T, { fila: 5, col: 3 }), idatCorrupto(leerDato('tesela_20261117003000_005_005.png')));
+  await alm.escribir(C.claveTesela(T, { fila: 5, col: 4 }), pngFalso());
+  const sl = sliderFalso({ tiempos: [T] });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn });
+  assert.equal(r.recuperadas, 1);
+  assert.equal(sl.teselasPedidas().length, 8);
+  assert.ok(sl.teselasPedidas().some((p) => p.url.endsWith('005_003.png')));
+  assert.equal(S.motivoTeselaMala(await alm.leer(C.claveTesela(T, { fila: 5, col: 3 }))), null, 'quedó la buena');
 });

@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
@@ -18,15 +19,43 @@ export function carpetaTemporal() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'gremlin-test-'));
 }
 
-/** PNG mínimo con la forma que valida el colector: firma + IHDR (ancho × alto) + IEND. */
-export function pngFalso(ancho = 678, alto = 678, relleno = 'x') {
-  const firma = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const ihdr = Buffer.alloc(25);
-  ihdr.writeUInt32BE(13, 0); ihdr.write('IHDR', 4, 'latin1'); ihdr.writeUInt32BE(ancho, 8); ihdr.writeUInt32BE(alto, 12);
-  ihdr[16] = 8; ihdr[17] = 3;
-  const datos = Buffer.from(relleno);
-  const iend = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
-  return Buffer.concat([firma, ihdr, datos, iend]);
+/** PNG VÁLIDO (chunks con CRC e IDAT que se descomprime entero), 8 bits con paleta, como los de SLIDER. */
+export function pngFalso(ancho = 678, alto = 678, semilla = 'x') {
+  const chunk = (tipo, datos) => {
+    const t = Buffer.concat([Buffer.from(tipo, 'latin1'), datos]);
+    const l = Buffer.alloc(4); l.writeUInt32BE(datos.length);
+    const c = Buffer.alloc(4); c.writeUInt32BE(S.crc32(t));
+    return Buffer.concat([l, t, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(ancho, 0); ihdr.writeUInt32BE(alto, 4); ihdr[8] = 8; ihdr[9] = 3;
+  const filas = Buffer.alloc(alto * (1 + ancho));
+  const v = [...String(semilla)].reduce((x, ch) => (x + ch.charCodeAt(0)) % 4, 0);
+  for (let i = 0; i < alto; i++) filas[i * (1 + ancho) + 1] = v;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr), chunk('PLTE', Buffer.alloc(12)), chunk('IDAT', zlib.deflateSync(filas)), chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/** El fixture real con un byte del IDAT cambiado y su CRC recalculado: mismo largo, mismo IEND, pero no descomprime (311b). */
+export function idatCorrupto(png) {
+  const b = Buffer.from(png);
+  let pos = 8;
+  while (b.toString('latin1', pos + 4, pos + 8) !== 'IDAT') pos += 12 + b.readUInt32BE(pos);
+  const largo = b.readUInt32BE(pos);
+  for (let i = 0; i < 64; i++) b[pos + 8 + Math.floor(largo / 2) + i] ^= 0xff;
+  b.writeUInt32BE(S.crc32(b.subarray(pos + 4, pos + 8 + largo)), pos + 8 + largo);
+  return b;
+}
+
+/** Igual, pero con el CRC viejo (el IDAT tocado no coincide con su CRC). */
+export function crcMal(png) {
+  const b = Buffer.from(png);
+  let pos = 8;
+  while (b.toString('latin1', pos + 4, pos + 8) !== 'IDAT') pos += 12 + b.readUInt32BE(pos);
+  b[pos + 8 + 10] ^= 0x01;
+  return b;
 }
 
 const respuesta = (cuerpo, status = 200, tipo = 'image/png', largo) => {

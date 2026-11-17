@@ -40,10 +40,11 @@ Una tesela es un PNG de 678×678 con paleta de 8 bits (la de `mrms_merged_base_r
    Van **del más viejo al más nuevo**, porque los viejos son los primeros que SLIDER borra.
 4. **Cada tiempo, entero o nada.** Si sus teselas no entran en el tope de la corrida, el tiempo queda para la próxima. Para cada tiempo:
    - Pide sólo las teselas que no estén guardadas: las 9, o las faltantes de una corrida anterior.
+   - Antes, lista la carpeta del tiempo en R2 y **adopta las teselas que quedaron de una corrida cortada a mitad**, si validan (311b). Así no se vuelven a bajar.
    - Una tesela se guarda sólo si cumple todo esto:
      - HTTP 200;
      - el tamaño coincide con el anunciado;
-     - es PNG, de 678×678, y termina en `IEND`.
+     - es un **PNG válido de verdad**: 678×678, cada chunk con su CRC, IHDR primero, IEND último, y el IDAT se descomprime entero con zlib, con el largo justo (311b).
    - Si no, queda en `faltantes` con el motivo, y **en su clave no se escribe nada**.
    - Escribe el sobre del tiempo y actualiza el índice del día.
 5. **Resumen:** imprime sólo cantidades (el registro de Actions es público).
@@ -136,12 +137,18 @@ gremlin (SECO): 100 tiempos en SLIDER · 95 por bajar · 9 teselas por tiempo ·
 | Minutos de Actions | una corrida dura ~20-30 s (sparse checkout, Node, 10 pedidos con 1 s de pausa) y se cobra **1 min**: **144 min por día**, ~4.300 por mes. El repo es público, así que **no se cobran** |
 | Ponerse al día al prender | ~95 tiempos × 9 = ~855 teselas. Con el tope de 60 entran 6 tiempos por corrida, unas 16 corridas (~2,7 h): en ese lapso se pierden los tiempos más viejos. Si no se quiere perderlos, una corrida a mano con `tope: 300` hace 33 tiempos en ~5 min, así que 3 corridas a mano bastan |
 
+## Revisión de Codex (311b, n3-311b-1611): corregido
+
+- **[P1] PNG de verdad.** El validador ahora mira el CRC de cada chunk y descomprime el IDAT. Un IDAT corrupto, aunque tenga el mismo largo y el mismo IEND, queda faltante.
+- **[P1] Corte a mitad.** La corrida siguiente adopta de R2 las teselas ya guardadas que validan, con su sha256, y baja sólo las que faltan.
+- **Visibilidad del disco:** se compara `sx·(H − sx)` (antes decía `H·(H − sx)`). El test usa un punto a 81,4° del subsatélite.
+
 ## Tests
 
 ```bash
 cd gremlin
-npm test                          # 19 tests, sin red: SLIDER de mentira y almacén en carpeta
-node test/control-negativo.mjs    # 35 de 35 mutantes detectados
+npm test                          # 22 tests, sin red: SLIDER de mentira y almacén en carpeta
+node test/control-negativo.mjs    # 40 de 40 mutantes detectados
 ```
 
 Qué cubren:
@@ -165,6 +172,6 @@ Qué cubren:
 - **El workflow:** nace apagado, a mano corre en seco y usa los 4 secretos R2.
 
 **Control negativo contado:** `node test/control-negativo.mjs`.
-- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 35 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
+- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 40 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
 - Cada mutante tiene que hacer fallar al menos un test.
 - Antes corre la copia sin romper, que tiene que pasar entera.

@@ -50,6 +50,12 @@ const MUTANTES = [
   ['sobre sin faltantes', 'colector.mjs', '      teselas, faltantes, generado: isoTiempo(ahoraMs),', '      teselas, faltantes: [], generado: isoTiempo(ahoraMs),'],
   ['sobre con el tiempo de la corrida', 'colector.mjs', 'tiempo: isoTiempo(tiempoMs(t)),', 'tiempo: isoTiempo(ahoraMs),'],
   ['índice sin faltantes', 'colector.mjs', 'faltantes: faltantes.map(nombreTesela), intentos,', 'faltantes: [], intentos,'],
+  // 311b (revisión de Codex)
+  ['visibilidad con H·(H − sx) (la de antes)', 'slider.mjs', 'if (sx * (H - sx) < sy * sy', 'if (H * (H - sx) < sy * sy'],
+  ['sin el CRC de los chunks', 'slider.mjs', "!== buf.readUInt32BE(pos + 8 + largo)) return `PNG con el CRC de ${tipo} mal`;", "!== buf.readUInt32BE(pos + 8 + largo) && false) return 'x';"],
+  ['sin descomprimir el IDAT', 'slider.mjs', "try { crudo = zlib.inflateSync(Buffer.concat(idat)); } catch { return 'PNG con el IDAT corrupto'; }", "try { crudo = zlib.inflateSync(Buffer.concat(idat)); } catch { crudo = Buffer.alloc(alto * (1 + Math.ceil((ancho * CANALES[color] * prof) / 8))); }"],
+  ['no recupera lo que quedó en R2 sin sobre', 'colector.mjs', "if (guardadas.has(nombreTesela(tes)) || !enR2.has(clave)) continue;", 'continue;'],
+  ['adopta lo de R2 sin validarlo', 'colector.mjs', '      if (!b || motivoTeselaMala(b)) continue;', '      if (!b) continue;'],
   ['SLIDER caído escribe igual', 'colector.mjs', "    return { ...res, estado: 'slider-caido' };", '    tiempos = [];'],
 ];
 

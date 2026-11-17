@@ -1,6 +1,8 @@
 // HN AGRO · GREMLIN (CIRA) en RAMMB SLIDER: nombres, URLs, tiempos, geometría del disco y validación de teselas.
 // Todo lo de acá es puro (sin red ni almacén), para poder probarlo sin nada.
 //
+import zlib from 'node:zlib';
+
 // Nombres leídos el 16/11/2026 (21:58 ART) de https://slider.cira.colostate.edu/js/define-products.js:
 //   satélite "goes-19" (GOES-19 East; 75.2W) · sector "full_disk" (max_zoom_level 5, tile_size 678, cada 10 min)
 //   producto "gremlin": "GREMLIN (CIRA)", zoom_level_adjust 2, resolution "2 km"
@@ -79,7 +81,7 @@ export function pixel(lat, lon, zoom = ZOOM) {
   const fc = Math.atan(((RPOL * RPOL) / (REQ * REQ)) * Math.tan(f));
   const rc = RPOL / Math.sqrt(1 - e2 * Math.cos(fc) ** 2);
   const sx = H - rc * Math.cos(fc) * Math.cos(l), sy = -rc * Math.cos(fc) * Math.sin(l), sz = rc * Math.sin(fc);
-  if (H * (H - sx) < sy * sy + (REQ * REQ / (RPOL * RPOL)) * sz * sz) return null;   // del otro lado de la Tierra
+  if (sx * (H - sx) < sy * sy + (REQ * REQ / (RPOL * RPOL)) * sz * sz) return null;   // del otro lado de la Tierra
   const x = Math.asin(-sy / Math.hypot(sx, sy, sz)), y = Math.atan(sz / sx);
   const ancho = TESELA_PX * 2 ** zoom;
   return { col: ((x + MAX_X) / (2 * MAX_X)) * ancho, fila: ((MAX_Y - y) / (2 * MAX_Y)) * ancho };
@@ -114,7 +116,25 @@ export function teselasCaja(caja = CAJA, zoom = ZOOM, paso = 0.05) {
 const FIRMA_PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const FIN_PNG = Buffer.from([0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);   // «IEND» + su CRC
 
-/** null si sirve; si no, el motivo. */
+// CRC-32 de PNG (el de zlib), con tabla propia: no depende de la versión de Node.
+const TABLA_CRC = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+  return t;
+})();
+export function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = TABLA_CRC[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+const CANALES = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };   // tipo de color de PNG → muestras por píxel
+
+/**
+ * null si sirve; si no, el motivo. Se valida el PNG DE VERDAD (311b, P1 de Codex): firma, cada chunk con su CRC,
+ * IHDR primero y de 678×678, IEND último y sin nada después, PLTE si es con paleta, y que el IDAT entero se
+ * descomprima con zlib y dé exactamente alto × (1 + bytes por fila), con un filtro válido (0 a 4) en cada fila.
+ */
 export function motivoTeselaMala(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 8 + 25 + 12) return 'muy corta';
   if (!buf.subarray(0, 8).equals(FIRMA_PNG)) return 'no es PNG';
@@ -122,5 +142,33 @@ export function motivoTeselaMala(buf) {
   const ancho = buf.readUInt32BE(16), alto = buf.readUInt32BE(20);
   if (ancho !== TESELA_PX || alto !== TESELA_PX) return `PNG de ${ancho}×${alto}`;
   if (!buf.subarray(buf.length - 8).equals(FIN_PNG)) return 'PNG cortado (sin IEND)';
+  const idat = [];
+  let pos = 8, ihdr = null, plte = false, fin = false;
+  while (pos < buf.length) {
+    if (pos + 12 > buf.length) return 'PNG con un chunk cortado';
+    const largo = buf.readUInt32BE(pos);
+    const tipo = buf.toString('latin1', pos + 4, pos + 8);
+    if (!/^[A-Za-z]{4}$/.test(tipo)) return 'PNG con un chunk ilegible';
+    if (pos + 12 + largo > buf.length) return `PNG con el chunk ${tipo} cortado`;
+    const datos = buf.subarray(pos + 8, pos + 8 + largo);
+    if (crc32(buf.subarray(pos + 4, pos + 8 + largo)) !== buf.readUInt32BE(pos + 8 + largo)) return `PNG con el CRC de ${tipo} mal`;
+    if (pos === 8 && tipo !== 'IHDR') return 'PNG sin IHDR';
+    if (tipo === 'IHDR') { if (ihdr || largo !== 13) return 'PNG con IHDR raro'; ihdr = datos; }
+    else if (tipo === 'PLTE') plte = true;
+    else if (tipo === 'IDAT') idat.push(datos);
+    else if (tipo === 'IEND') { fin = true; pos += 12 + largo; break; }
+    pos += 12 + largo;
+  }
+  if (!fin || pos !== buf.length) return 'PNG con datos después de IEND';
+  const prof = ihdr[8], color = ihdr[9];
+  if (!(color in CANALES) || ![1, 2, 4, 8, 16].includes(prof) || ihdr[10] !== 0 || ihdr[11] !== 0) return 'PNG con un formato que no se espera';
+  if (ihdr[12] !== 0) return 'PNG entrelazado (no se espera)';
+  if (color === 3 && !plte) return 'PNG con paleta sin PLTE';
+  if (!idat.length) return 'PNG sin IDAT';
+  let crudo;
+  try { crudo = zlib.inflateSync(Buffer.concat(idat)); } catch { return 'PNG con el IDAT corrupto'; }
+  const porFila = 1 + Math.ceil((ancho * CANALES[color] * prof) / 8);
+  if (crudo.length !== alto * porFila) return 'PNG con el IDAT de otro largo';
+  for (let f = 0; f < alto; f++) if (crudo[f * porFila] > 4) return 'PNG con un filtro de fila inválido';
   return null;
 }

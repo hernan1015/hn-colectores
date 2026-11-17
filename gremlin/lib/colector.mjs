@@ -78,7 +78,7 @@ export async function correr({
   almacen, fetchFn = fetch, ahoraMs = Date.now(), llave, modo = 'real', tope = TOPE_DEFECTO,
   pausaMs = PAUSA_MS, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log,
 }) {
-  const res = { estado: 'ok', pedidos: 0, tiempos_slider: 0, pendientes: 0, guardados: 0, completos: 0, incompletos: 0, teselas: 0, faltantes: 0, bytes: 0 };
+  const res = { estado: 'ok', pedidos: 0, tiempos_slider: 0, pendientes: 0, guardados: 0, recuperadas: 0, completos: 0, incompletos: 0, teselas: 0, faltantes: 0, bytes: 0 };
   if (llave !== 'si') {
     log('gremlin: llave apagada (GREMLIN_ON no vale «si»): no hago nada');
     return { ...res, estado: 'apagado' };
@@ -129,6 +129,17 @@ export async function correr({
     if (cortar) break;
     const previo = await leerJSON(almacen, claveSobre(t));
     const guardadas = new Map((previo?.teselas || []).map((x) => [nombreTesela(x), x]));
+    // [311b · P1 de Codex] una corrida que se cortó a mitad (R2 o GitHub) deja teselas guardadas sin sobre: se listan,
+    // se leen, se validan y se adoptan con su sha256, para no volver a bajarlas. Una que no valida se vuelve a pedir.
+    const enR2 = new Set(await almacen.listar(`${dirTiempo(t)}/`));
+    for (const tes of esperadas) {
+      const clave = claveTesela(t, tes);
+      if (guardadas.has(nombreTesela(tes)) || !enR2.has(clave)) continue;
+      const b = await almacen.leer(clave);
+      if (!b || motivoTeselaMala(b)) continue;
+      guardadas.set(nombreTesela(tes), { fila: tes.fila, col: tes.col, clave, bytes: b.length, sha256: crypto.createHash('sha256').update(b).digest('hex') });
+      res.recuperadas++;
+    }
     const aPedir = esperadas.filter((x) => !guardadas.has(nombreTesela(x)));
     if (res.pedidos + aPedir.length > maxPedidos) { log(`gremlin: tope de ${maxPedidos} pedidos; lo que falta queda para la próxima corrida`); break; }
     const faltantes = [];
