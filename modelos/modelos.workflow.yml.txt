@@ -1,0 +1,67 @@
+# HN AGRO · 312 · MODELOS (ECMWF · ICON · GFS) → R2 satchi-modelos, para la pestaña «Modelos» de SATCHI. Ver modelos/LEEME.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/modelos.yml (el token con el que se armó la rama no tiene el
+# permiso «workflow», igual que rayos-hora, imerg-pendientes y opera-mosaico). Lo instala local: LISTO-312a en hn-cortex.
+# LA LLAVE NACE APAGADA: sin la VARIABLE del repo MODELOS_ON = «si», el job no arranca (ni a mano ni por horario), y el
+# script lo vuelve a mirar: con la llave apagada no hace ni un pedido.
+# El registro de Actions es PÚBLICO: se imprimen corridas, claves de objeto y cantidades; nunca llaves ni URL firmadas.
+name: colector-modelos
+on:
+  schedule:
+    - cron: '40 * * * *'       # cada hora al minuto 40; sin corridas nuevas termina en segundos (sin instalar nada)
+  workflow_dispatch:
+    inputs:
+      seco:
+        description: 'seco = arma los cuadros en una carpeta y los deja como artefacto de Actions (3 días), sin tocar R2'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: colector-modelos
+  cancel-in-progress: false
+jobs:
+  modelos:
+    if: ${{ vars.MODELOS_ON == 'si' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60          # medido: 1–4 min con trabajo; el tope de GitHub es 6 h
+    env:
+      MODELOS_LLAVE: ${{ vars.MODELOS_ON }}
+      MODELOS_FUENTES: ${{ vars.MODELOS_FUENTES || 'ecmwf,icon,gfs' }}
+      ALMACEN_CARPETA: ${{ inputs.seco && format('{0}/salida', github.workspace) || '' }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: modelos
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: ¿Hay corridas nuevas? (sin dependencias)
+        id: chq
+        env:
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+        run: python modelos/colector.py --chequeo
+      - name: Dependencias (versiones fijas) y tests (sin red, con ecCodes de verdad)
+        if: steps.chq.outputs.hay == 'si'
+        run: |
+          set -euo pipefail
+          pip install -q --only-binary=:all: -r modelos/requirements.txt
+          python -c "import eccodes; print('ecCodes', eccodes.codes_get_api_version())"
+          python -m unittest discover -s modelos/test -t modelos/test
+      - name: Colectar
+        if: steps.chq.outputs.hay == 'si'
+        env:
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+        run: python modelos/colector.py
+      - name: Artefacto (sólo en seco)
+        if: inputs.seco && steps.chq.outputs.hay == 'si'
+        uses: actions/upload-artifact@v4
+        with:
+          name: modelos-seco
+          path: salida
+          retention-days: 3
