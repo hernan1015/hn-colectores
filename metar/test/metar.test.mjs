@@ -407,3 +407,79 @@ test('validación: REGR mira la hora anterior; las destacadas cerca de un aeropu
   const r2 = V.validar({ partes: partes.filter((p) => p.estacion !== 'SAOU'), barridos: [V.barridoDe(barr('2026-11-16T21:00:21Z', [celda(-33.3, -66.3, true, 3)], { latMin: -38, latMax: -22, lonMin: -70, lonMax: -56 }))] });
   assert.equal(r2.no_confirmadas.length, 0);
 });
+
+// ───────────────────────── 2.ª vuelta: n3-317col-1611 y n3-317-1611 (Codex) ─────────────────────────
+test('[n3 P2] NIL es «no hubo parte»: se guarda marcado, pero no suma con_dato, ni «ultima», ni «no confirmada»', async () => {
+  const alm = almacenCarpeta(carpeta()), pub = almacenCarpeta(carpeta());
+  const ahora = Date.parse('2026-11-16T20:15:00Z');
+  const nil = parte('METAR SAOC 161900Z NIL');
+  assert.equal(C.normalizar(nil).parseado.nil, true);
+  await C.correr({ almacen: alm, publico: pub, fetchFn: api(() => ({ cuerpo: [nil] })), llave: 'si', ahoraMs: ahora, esperar: sinEspera, log: callado });
+  const ind = await leerJ(alm, 'metar/2026/11/16/indice.json');
+  assert.equal(Object.values(ind.obs)[0].nil, true, 'queda para auditar');
+  assert.ok(ind.horas['19'].sin_dato.includes('SAOC'));
+  assert.equal((await leerJ(pub, 'metar/v1/ultimas.json')).estaciones.find((e) => e.id === 'SAOC').ultima, null);
+  const b = [V.barridoDe(barr('2026-11-16T19:00:21Z', [celda(-33.1, -64.2, true, 3)]))];
+  assert.equal(V.validar({ partes: V.partesDe({ api: [nil] }), barridos: b }).no_confirmadas.length, 0);
+  assert.equal(V.validar({ partes: V.partesDe({ indices: [ind] }), barridos: b }).no_confirmadas.length, 0);
+  // control negativo: un parte de verdad sin granizo sí es dato y sí da «no confirmada»
+  const ok = parte('METAR SAOC 161900Z 18010KT 9999 SCT040 20/15 Q1010');
+  const alm2 = almacenCarpeta(carpeta());
+  await C.correr({ almacen: alm2, fetchFn: api(() => ({ cuerpo: [ok] })), llave: 'si', ahoraMs: ahora, esperar: sinEspera, log: callado });
+  assert.ok((await leerJ(alm2, 'metar/2026/11/16/indice.json')).horas['19'].con_dato.includes('SAOC'));
+  assert.equal(V.validar({ partes: V.partesDe({ api: [ok] }), barridos: b }).no_confirmadas.length, 1);
+});
+
+test('[n3 P2] el derivado público dice si la lectura vino COMPLETA (truncada = completo:false) y cuándo se leyó', async () => {
+  const lleno = Array.from({ length: 400 }, (_, i) => parte(`METAR SAEZ 17${String(Math.floor(i / 60)).padStart(2, '0')}${String(i % 60).padStart(2, '0')}Z 18010KT CAVOK 20/10 Q1015`));
+  const pub = almacenCarpeta(carpeta());
+  await correr({ almacen: almacenCarpeta(carpeta()), publico: pub, fetchFn: api(() => ({ cuerpo: lleno })), tope: 1 });
+  const j = await leerJ(pub, 'metar/v1/ultimas.json');
+  assert.equal(j.completo, false); assert.equal(j.leido, '2026-11-17T02:57:59Z');
+  // control negativo: una lectura entera es completo:true
+  const pub2 = almacenCarpeta(carpeta());
+  await correr({ almacen: almacenCarpeta(carpeta()), publico: pub2, fetchFn: api(() => ({ cuerpo: ACTUAL })) });
+  assert.equal((await leerJ(pub2, 'metar/v1/ultimas.json')).completo, true);
+});
+
+test('[n3 P7] el relleno y la API caída NO reescriben el derivado público (su «leido» envejece)', async () => {
+  const pub = contado(almacenCarpeta(carpeta()));
+  await C.correr({ almacen: almacenCarpeta(carpeta()), publico: pub, fetchFn: api(() => ({ cuerpo: [] })), llave: 'si', ahoraMs: AHORA, modo: 'relleno', desdeMs: AHORA - 6 * 3600e3, hastaMs: AHORA, esperar: sinEspera, log: callado });
+  await correr({ almacen: almacenCarpeta(carpeta()), publico: pub, fetchFn: api(() => ({ status: 500 })) });
+  assert.equal(pub.c.escribir, 0);
+  // control negativo: una corrida real buena sí lo escribe
+  await correr({ almacen: almacenCarpeta(carpeta()), publico: pub, fetchFn: api(() => ({ cuerpo: ACTUAL })) });
+  assert.equal(pub.c.escribir, 1);
+});
+
+test('[n3 P7] tres 200 que no son una lista JSON seguidos cortan el relleno', async () => {
+  const f = api(() => ({ status: 200, cuerpo: '<html>mantenimiento</html>' }));
+  const r = await correr({ almacen: almacenCarpeta(carpeta()), fetchFn: f, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-12T00:00:00Z') });
+  assert.equal(f.pedidos.length, 3); assert.equal(r.estado, 'cortada');
+  const g = api(() => ({ status: 200, cuerpo: { no: 'lista' } }));
+  assert.equal((await correr({ almacen: almacenCarpeta(carpeta()), fetchFn: g, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-12T00:00:00Z') })).estado, 'cortada');
+  // control negativo: dos malas y después buenas no cortan (el contador se reinicia)
+  const h = api((u, k) => (k <= 2 ? { status: 200, cuerpo: '<html>' } : { cuerpo: [] }));
+  const r3 = await correr({ almacen: almacenCarpeta(carpeta()), fetchFn: h, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-11T00:00:00Z') });
+  assert.equal(r3.estado, 'ok'); assert.equal(h.pedidos.length, 8);
+});
+
+test('[n3 P5] validación: un barrido sin información útil para el aeropuerto no da PÉRDIDA (SIN DATO); uno parcial con destacada sí da ACIERTO', () => {
+  const partes = V.partesDe({ api: HIST }).filter((p) => p.granizo && p.granizo.observado);
+  const parcial = (celdas) => ({ cuerpo: JSON.stringify({ ok: true, parcial: true, scan_t: '2026-11-16T18:20:21Z', zona: { latMin: -38, latMax: -22, lonMin: -66, lonMax: -56 }, celdas }) });
+  const r = (b) => V.validar({ partes, barridos: b.map(V.barridoDe) }).filas[0];
+  assert.equal(r([parcial([])]).resultado, 'SIN DATO');
+  assert.match(r([parcial([])]).motivo, /no sirven/);
+  assert.equal(r([parcial([celda(-33.1, -64.15, true, 3)])]).resultado, 'ACIERTO');
+  const inc = [{ lat: -33.1, lon: -64.15, patas: null, patas_min: 1, destacada: false, incompleta: true }];
+  assert.equal(r([barr('2026-11-16T18:20:21Z', inc)]).resultado, 'SIN DATO', 'completo pero con las celdas cercanas incompletas');
+  // control negativo: un barrido completo sin destacadas sí es PÉRDIDA
+  assert.equal(r([barr('2026-11-16T18:20:21Z', [celda(-33.1, -64.15, false, 1)])]).resultado, 'PÉRDIDA');
+});
+
+test('[n3 P6] el workflow de validación baja las releases del día argentino anterior, del día y del siguiente', () => {
+  const y = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'metar-validacion.workflow.yml.txt'), 'utf8');
+  assert.match(y, /for r in "\$\(date -u -d "\$d - 1 day" \+%F\)" "\$d" "\$\(date -u -d "\$d \+ 1 day" \+%F\)"; do/);
+  // control: un scan del 16/11 01:00 UTC es del 15/11 argentino (la release granizo-2026-11-15)
+  assert.equal(new Date(Date.parse('2026-11-16T01:00:00Z') - 3 * 3600e3).toISOString().slice(0, 10), '2026-11-15');
+});

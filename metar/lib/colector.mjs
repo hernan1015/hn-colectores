@@ -90,6 +90,7 @@ export function normalizar(e) {
 
 const resumenIndice = (x) => ({
   estacion: x.est, tipo: x.tipo, hora: iso(x.ms), cor: x.parseado.cor,
+  ...(x.parseado.nil ? { nil: true } : {}),   // [n3-317col P2] NIL = «no hubo parte»: se guarda para auditar, pero no es dato
   granizo: x.parseado.granizo.alguno ? { observado: x.parseado.granizo.observado, reciente: x.parseado.granizo.reciente, en_rmk: x.parseado.granizo.en_rmk,
     tipos: x.parseado.granizo.tipos, grupos: x.parseado.granizo.grupos, intenso: x.parseado.granizo.intenso } : null,
   tormenta: x.parseado.granizo.tormenta, tormenta_cerca: x.parseado.granizo.tormenta_cerca,
@@ -131,7 +132,7 @@ async function ingerir({ almacen, entradas, horas, ahoraMs, res, indices }) {
     if (!c.ind) { c.ind = indiceVacio(h); c.cambio = true; }
     const hh = partes(h).h;
     const con = new Set((c.ind.horas[hh]?.con_dato) || []);
-    for (const o of Object.values(c.ind.obs)) { const t = Date.parse(o.hora); if (t >= h && t < h + HORA) con.add(o.estacion); }
+    for (const o of Object.values(c.ind.obs)) { const t = Date.parse(o.hora); if (!o.nil && t >= h && t < h + HORA) con.add(o.estacion); }
     const sin = IDS.filter((i) => !con.has(i));
     const previo = c.ind.horas[hh];
     const nuevo = { con_dato: [...con].sort(), sin_dato: sin, revisada: iso(ahoraMs) };
@@ -157,7 +158,7 @@ async function guardarIndices(almacen, indices, ahoraMs) {
  *   { v, generado, ventana_h, fuente, estaciones: [{ id, nombre, lat, lon, ultima }], granizo: [{ estacion, nombre, lat, lon, hora, tipo, observado, reciente, en_rmk, tipos, grupos, crudo }] }
  * `ultima` es la hora del último parte LEÍDO de la estación (null si en 24 h no hubo ninguno: «sin dato»).
  */
-export function armarPublico(indicesDias, ahoraMs) {
+export function armarPublico(indicesDias, ahoraMs, { completo = true } = {}) {
   const desde = ahoraMs - VENTANA_PUBLICA_H * HORA;
   const ultima = {}; const granizo = [];
   for (const ind of indicesDias) {
@@ -165,7 +166,7 @@ export function armarPublico(indicesDias, ahoraMs) {
     for (const o of Object.values(ind.obs)) {
       const t = Date.parse(o.hora);
       if (!(t >= desde && t <= ahoraMs + 5 * MIN)) continue;
-      if (!ultima[o.estacion] || t > Date.parse(ultima[o.estacion])) ultima[o.estacion] = o.hora;
+      if (!o.nil && (!ultima[o.estacion] || t > Date.parse(ultima[o.estacion]))) ultima[o.estacion] = o.hora;   // [n3-317col P2] un NIL no es «última lectura»
       if (o.granizo) {
         const e = POR_ID[o.estacion];
         granizo.push({ estacion: o.estacion, nombre: e.nombre, lat: e.lat, lon: e.lon, hora: o.hora, tipo: o.tipo,
@@ -175,14 +176,16 @@ export function armarPublico(indicesDias, ahoraMs) {
   }
   granizo.sort((a, b) => (a.hora < b.hora ? 1 : a.hora > b.hora ? -1 : a.estacion < b.estacion ? -1 : 1));
   return {
-    v: 1, generado: iso(ahoraMs), ventana_h: VENTANA_PUBLICA_H, fuente: { ...FUENTE },
+    // [n3-317 P2/P4] leido = la hora de la lectura de la API que produjo este archivo; completo = false si vino truncada
+    // (entonces nadie puede concluir «ninguno»). Sólo lo escribe una corrida real con lectura buena.
+    v: 1, generado: iso(ahoraMs), leido: iso(ahoraMs), completo: !!completo, ventana_h: VENTANA_PUBLICA_H, fuente: { ...FUENTE },
     estaciones: IDS.map((id) => ({ id, nombre: POR_ID[id].nombre, lat: POR_ID[id].lat, lon: POR_ID[id].lon, ultima: ultima[id] || null })),
     granizo,
     nota: 'Observación oficial de aeropuerto (METAR/SPECI). Una estación sin parte en la ventana es «sin dato», nunca «sin granizo». Lejos del aeropuerto, el METAR no dice nada.',
   };
 }
 
-async function publicar({ almacen, publico, ahoraMs, log }) {
+async function publicar({ almacen, publico, ahoraMs, log, completo }) {
   const dias = [];
   for (let d = ahoraMs - VENTANA_PUBLICA_H * HORA; d <= ahoraMs + 24 * HORA; d += 24 * HORA) {
     const k = claveIndiceDia(Math.min(d, ahoraMs));
@@ -190,7 +193,7 @@ async function publicar({ almacen, publico, ahoraMs, log }) {
   }
   const inds = [];
   for (const k of dias) inds.push(await leerJSON(almacen, k));
-  const pub = armarPublico(inds, ahoraMs);
+  const pub = armarPublico(inds, ahoraMs, { completo });
   await publico.escribir(CLAVE_PUBLICA, JSON.stringify(pub), { tipo: 'application/json', cache: CACHE_PUBLICA });
   log(`metar: público ${CLAVE_PUBLICA} · ${pub.granizo.length} partes con granizo en 24 h · ${pub.estaciones.filter((e) => e.ultima).length} de ${pub.estaciones.length} estaciones con dato`);
   return pub;
@@ -238,7 +241,7 @@ export async function correr({
       const x = await fetchFn(url, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
       r = { status: x.status, texto: await x.text() };
     } catch (e) { r = { status: 0, error: String(e?.name || e) }; }
-    if (r.status === 0 || r.status >= 500) fallasSeguidas++; else fallasSeguidas = 0;
+    if (r.status === 0 || r.status >= 500) fallasSeguidas++; else if (r.status !== 200) fallasSeguidas = 0;   // un 200 se juzga después, al leerlo
     if (r.status === 429 || r.status === 403) cortar = `aviationweather respondió ${r.status}`;
     else if (fallasSeguidas >= FALLAS_SEGUIDAS_CORTE) cortar = `${fallasSeguidas} fallas seguidas`;
     return r;
@@ -249,9 +252,12 @@ export async function correr({
     const r = await pedir(urlMetar(ids, opciones));
     if (r.status === 204) return { ok: true, entradas: [] };          // la API contesta 204 cuando no hay ningún parte
     if (r.status !== 200) return { ok: false, motivo: r.status ? `HTTP ${r.status}` : `red: ${r.error}` };
+    // [n3-317col P7] un 200 que no es una lista JSON también es una falla, y cuenta para el corte
+    const invalida = (motivo) => { fallasSeguidas++; if (!cortar && fallasSeguidas >= FALLAS_SEGUIDAS_CORTE) cortar = `${fallasSeguidas} fallas seguidas`; return { ok: false, motivo }; };
     let j;
-    try { j = r.texto.trim() ? JSON.parse(r.texto) : []; } catch { return { ok: false, motivo: 'la respuesta no es JSON' }; }
-    if (!Array.isArray(j)) return { ok: false, motivo: 'la respuesta no es una lista' };
+    try { j = r.texto.trim() ? JSON.parse(r.texto) : []; } catch { return invalida('la respuesta no es JSON'); }
+    if (!Array.isArray(j)) return invalida('la respuesta no es una lista');
+    fallasSeguidas = 0;
     if (j.length >= TOPE_API) {
       if (ids.length > 1 && res.pedidos + 2 <= maxPedidos && !cortar) {
         res.partidos++;
@@ -268,6 +274,7 @@ export async function correr({
   };
 
   const indices = new Map();
+  let completo = false;
   if (modo === 'real' || modo === 'seco') {
     const t = await traer(IDS, { horas: HORAS_NORMAL });
     if (!t.ok) {
@@ -281,6 +288,7 @@ export async function correr({
       log(`metar (SECO): ${res.pedidos} pedido(s) · ${t.entradas.length} partes · ${new Set(ok.map((x) => x.est)).size} estaciones con parte · ${ok.filter((x) => x.parseado.granizo.alguno).length} con granizo · no guardo nada`);
       return { ...res, estado: 'seco' };
     }
+    completo = !t.truncado;
     if (t.truncado) await alertar(almacen, `la respuesta llegó al tope de ${TOPE_API} partes y no se pudo partir: puede faltar algo (queda como faltante).`, ahoraMs);
     await ingerir({ almacen, entradas: t.entradas, horas: t.truncado ? [] : horasRevisables(ahoraMs - HORAS_NORMAL * HORA, ahoraMs, ahoraMs), ahoraMs, res, indices });
   } else if (modo === 'relleno') {
@@ -304,7 +312,9 @@ export async function correr({
   }
   if (modo === 'real') res.indices = await guardarIndices(almacen, indices, ahoraMs);
   if (cortar) { await alertar(almacen, `aviationweather: ${cortar}. Se cortó la corrida; lo que falta se pide en la próxima.`, ahoraMs); res.estado = 'cortada'; }
-  if (publico) { const pub = await publicar({ almacen, publico, ahoraMs, log }); res.publico_granizo = pub.granizo.length; }
+  // [n3-317col P7] el derivado público sólo lo escribe una corrida REAL que leyó la API (el relleno y una API caída no lo tocan:
+  // así su `leido` envejece y SATCHI pasa a «sin dato» a los 90 min)
+  if (publico && modo === 'real') { const pub = await publicar({ almacen, publico, ahoraMs, log, completo }); res.publico_granizo = pub.granizo.length; res.publico_completo = completo; }
   log(`metar: ${res.pedidos} pedidos · ${res.partes_api} partes de la API · ${res.guardados} nuevos · ${res.recuperados} recuperados · ${res.repetidos} ya estaban · ${res.descartados} descartados · ${res.con_granizo} con granizo · ${res.horas_revisadas} horas revisadas · ${res.faltantes} faltantes (estación-hora sin parte)${res.partidos ? ' · partido ' + res.partidos : ''}${res.truncados ? ' · TRUNCADO ' + res.truncados : ''}${cortar ? ' · CORTADA: ' + cortar : ''}`);
   return res;
 }

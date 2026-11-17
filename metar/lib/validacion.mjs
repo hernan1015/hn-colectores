@@ -28,14 +28,14 @@ export function partesDe({ api = [], indices = [] } = {}) {
   const out = new Map();
   for (const e of api) {
     const x = normalizar(e);
-    if (x.descartado) continue;
+    if (x.descartado || x.parseado.nil) continue;   // [n3-317col P2] un NIL no es observación
     const g = x.parseado.granizo;
     out.set(`${x.est} ${x.ms} ${x.crudo}`, { estacion: x.est, ms: x.ms, crudo: x.crudo, granizo: g.alguno ? { observado: g.observado, reciente: g.reciente, en_rmk: g.en_rmk, tipos: g.tipos, grupos: g.grupos } : null });
   }
   for (const ind of indices) {
     for (const o of Object.values((ind && ind.obs) || {})) {
       const ms = Date.parse(o.hora);
-      if (!POR_ID[o.estacion] || !Number.isFinite(ms)) continue;
+      if (!POR_ID[o.estacion] || !Number.isFinite(ms) || o.nil) continue;
       const k = `${o.estacion} ${ms} ${o.crudo || o.clave}`;
       if (![...out.values()].some((p) => p.estacion === o.estacion && p.ms === ms && (!o.crudo || p.crudo === o.crudo))) out.set(k, { estacion: o.estacion, ms, crudo: o.crudo || null, granizo: o.granizo || null });
     }
@@ -64,8 +64,12 @@ export function ventana(p) {
 /** Lo mejor que vio el ojo cerca del aeropuerto en la ventana */
 function mirar(barridos, est, v) {
   const en = barridos.filter((b) => b.ms >= v.desde && b.ms <= v.hasta && enZona(b.zona, est.lat, est.lon));
-  let dest = null, maxPatas = null, incompletas = 0;
+  let dest = null, maxPatas = null, incompletas = 0, utiles = 0;
   for (const b of en) {
+    // [n3-317col P5] un barrido cuenta para PÉRDIDA sólo si es útil para el aeropuerto: completo (no parcial) y sin que todas
+    // sus celdas a ≤ 30 km estén incompletas. Uno parcial igual puede dar un ACIERTO (una destacada vale), nunca una pérdida.
+    const cerca = b.celdas.filter((c) => distanciaKm(est.lat, est.lon, c.lat, c.lon) <= RADIO_KM);
+    if (!b.parcial && !(cerca.length && cerca.every((c) => c.incompleta))) utiles++;
     for (const c of b.celdas) {
       const d = distanciaKm(est.lat, est.lon, c.lat, c.lon);
       if (d > RADIO_KM) continue;
@@ -75,7 +79,7 @@ function mirar(barridos, est, v) {
       if (c.destacada && (!dest || d < dest.km)) dest = { km: Math.round(d * 10) / 10, ms: b.ms };
     }
   }
-  return { barridos: en.length, parciales: en.filter((b) => b.parcial).length, dest, maxPatas, incompletas };
+  return { barridos: en.length, utiles, parciales: en.filter((b) => b.parcial).length, dest, maxPatas, incompletas };
 }
 
 /** La tabla. partes: los de partesDe(); barridos: los de barridoDe(). */
@@ -86,13 +90,14 @@ export function validar({ partes, barridos }) {
     const est = POR_ID[p.estacion];
     const v = ventana(p);
     const m = mirar(B, est, v);
-    const resultado = m.dest ? 'ACIERTO' : m.barridos === 0 ? 'SIN DATO' : 'PÉRDIDA';
+    const resultado = m.dest ? 'ACIERTO' : m.utiles === 0 ? 'SIN DATO' : 'PÉRDIDA';
     filas.push({ estacion: p.estacion, nombre: est.nombre, hora: iso(p.ms), hora_art: art(p.ms), crudo: p.crudo, grupos: p.granizo.grupos,
       tipo: p.granizo.observado ? 'presente' : p.granizo.reciente ? 'reciente' : 'rmk', ventana: { desde: iso(v.desde), hasta: iso(v.hasta) },
       barridos: m.barridos, parciales: m.parciales, destacada: m.dest ? { km: m.dest.km, hora: iso(m.dest.ms) } : null,
       mejor: m.maxPatas ? { patas: m.maxPatas.patas, km: m.maxPatas.km, hora: iso(m.maxPatas.ms), incompleta: m.maxPatas.incompleta } : null,
       incompletas: m.incompletas, resultado,
-      motivo: resultado === 'SIN DATO' ? 'no hay barrido del ojo en la ventana (o el aeropuerto está fuera de su zona)' : null });
+      barridos_utiles: m.utiles,
+      motivo: resultado === 'SIN DATO' ? (m.barridos ? 'los barridos de la ventana no sirven para el aeropuerto (parciales o con las celdas cercanas incompletas)' : 'no hay barrido del ojo en la ventana (o el aeropuerto está fuera de su zona)') : null });
   }
   // al revés: destacadas a ≤ 30 km de un aeropuerto que tiene parte en ±30 min y ese parte NO dice granizo
   const noConfirmadas = [];

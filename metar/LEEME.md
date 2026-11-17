@@ -91,8 +91,16 @@ El mismo criterio de los casos del 13/11, 14/11 y 16/11: una celda **destacada**
 
 ## Tests
 
-`npm test` (dentro de `metar/`): **26 tests**, sin red.
+`npm test` (dentro de `metar/`): **32 tests**, sin red (ver la 2.ª vuelta).
 - **El parser:** GR, GS, `+TSGR`, `+TSSHGRRA` y `REGR` reales de Río Cuarto (16/11), `VCTS` real de San Rafael, `RE TSRA` y `COR` reales de San Luis, la tendencia real de Córdoba, el ejemplo de `rawOb` de la OpenAPI de la API (KORD … RMK AO2 SLP162 VIRGA OHD …) y las RMK de granizo del FMH-1. Los 213 partes reales de los fixtures.
 - **El colector:** el pedido único con las 93 estaciones, el UA, las claves, la idempotencia (dos corridas, el COR y la corrida cortada), los faltantes (y el que llega tarde), los descartados, el tope de 400 (partir o truncar sin faltantes falsos), la API caída, el 429, la pausa, la llave, el seco, el relleno y el derivado público.
 - **La validación:** ACIERTO, PÉRDIDA y SIN DATO con ±30 min y ≤ 30 km, la ventana del `REGR` y las «no confirmadas».
 - **Control negativo contado:** `npm run mutantes`. 35 mutantes (el parser, el pedido, la cortesía, la idempotencia, los faltantes, la llave, el relleno, el público y la validación): **35 de 35 detectados**.
+
+## 2.ª vuelta (Codex n3-317col-1611 y n3-317-1611, NO ENTRA → arreglado)
+- **NIL** («no hubo parte») se guarda marcado (`nil: true`) para auditar, pero **no** suma `con_dato`, **no** es `ultima` en el público y **no** sirve para «no confirmada».
+- **El público dice si la lectura fue completa:** `leido` (la hora de la lectura de la API) y `completo` (`false` si vino truncada: nadie puede concluir «ninguno»). Sólo lo reescribe una corrida **real** con lectura buena; el relleno y la API caída no lo tocan, así `leido` envejece y SATCHI pasa a «sin dato» a los 90 min.
+- **Un 200 que no es una lista JSON es una falla** y cuenta para el corte de 3 seguidas (antes, 8 HTML seguidos terminaban `ok`).
+- **Validación:** un barrido cuenta para PÉRDIDA sólo si es **útil** para el aeropuerto (no parcial, y no todas sus celdas a ≤ 30 km incompletas). Uno parcial puede dar ACIERTO, nunca PÉRDIDA. La tabla del 16/11 no cambia (5 y 8 barridos útiles: 2 pérdidas).
+- **El workflow de validación** baja las releases del día argentino anterior, del día y del siguiente (un scan de 01:00 UTC es del día argentino anterior).
+- **El mutante «la API caída igual escribe el índice»** ahora escribe de verdad. Tests: **32**; mutantes: **42 de 42**.

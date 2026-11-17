@@ -38,7 +38,15 @@ const MUTANTES = [
   ['acepta la hora cruzada', 'colector.mjs', 'if (ms == null || Math.abs(ms - ref) > 70 * MIN)', 'if (ms == null)'],
   // la llave, la API caída y el relleno
   ['la llave acepta cualquier cosa', 'colector.mjs', "if (llave !== 'si') {", 'if (!llave) {'],
-  ['la API caída igual escribe el índice', 'colector.mjs', "return { ...res, estado: 'api-caida' };", "res.estado = 'api-caida';"],
+  // [n3-317col P8] el mutante escribe de verdad el índice (con todas las horas «sin dato») y sigue devolviendo api-caida
+  ['la API caída igual escribe el índice', 'colector.mjs', "return { ...res, estado: 'api-caida' };", "await ingerir({ almacen, entradas: [], horas: horasRevisables(ahoraMs - HORAS_NORMAL * HORA, ahoraMs, ahoraMs), ahoraMs, res, indices }); await guardarIndices(almacen, indices, ahoraMs); return { ...res, estado: 'api-caida' };"],
+  ['NIL cuenta como dato', 'colector.mjs', 'if (!o.nil && t >= h && t < h + HORA) con.add(o.estacion);', 'if (t >= h && t < h + HORA) con.add(o.estacion);'],
+  ['NIL es «última lectura»', 'colector.mjs', 'if (!o.nil && (!ultima[o.estacion]', 'if ((!ultima[o.estacion]'],
+  ['NIL en la validación', 'validacion.mjs', 'if (x.descartado || x.parseado.nil) continue;', 'if (x.descartado) continue;'],
+  ['un 200 inválido no cuenta como falla', 'colector.mjs', 'const invalida = (motivo) => { fallasSeguidas++;', 'const invalida = (motivo) => { fallasSeguidas += 0;'],
+  ['truncado se publica como completo', 'colector.mjs', 'const pub = armarPublico(inds, ahoraMs, { completo });', 'const pub = armarPublico(inds, ahoraMs, { completo: true });'],
+  ['el relleno publica', 'colector.mjs', "if (publico && modo === 'real') {", 'if (publico) {'],
+  ['validación: un barrido parcial da pérdida', 'validacion.mjs', "m.utiles === 0 ? 'SIN DATO' : 'PÉRDIDA'", "m.barridos === 0 ? 'SIN DATO' : 'PÉRDIDA'"],
   ['relleno sin el piso de 30 días', 'colector.mjs', 'const piso = ahoraMs - DIAS_HISTORIA * 24 * HORA + HORA;', 'const piso = 0;'],
   ['relleno repide lo hecho', 'colector.mjs', "if (hechos[k] === 'hecho') continue;", ''],
   // el público
@@ -46,7 +54,7 @@ const MUTANTES = [
   ['el público inventa «ultima» para todos', 'colector.mjs', 'ultima: ultima[id] || null', 'ultima: ultima[id] || new Date(ahoraMs).toISOString()'],
   // la validación
   ['validación con 60 km', 'validacion.mjs', 'export const RADIO_KM = 30,', 'export const RADIO_KM = 60,'],
-  ['validación: sin barridos es pérdida', 'validacion.mjs', "m.barridos === 0 ? 'SIN DATO' : 'PÉRDIDA'", "'PÉRDIDA'"],
+  ['validación: sin barridos es pérdida', 'validacion.mjs', "m.utiles === 0 ? 'SIN DATO' : 'PÉRDIDA'", "'PÉRDIDA'"],
   ['validación: 2 patas cuentan como destacada', 'validacion.mjs', 'if (c.destacada && (!dest || d < dest.km))', 'if ((c.destacada || c.patas >= 2) && (!dest || d < dest.km))'],
   ['validación: REGR no mira la hora anterior', 'validacion.mjs', '? p.ms - RECIENTE_MIN * MIN : p.ms;', '? p.ms : p.ms;'],
   ['validación: sin parte del METAR igual es no confirmada', 'validacion.mjs', 'if (!cerca.length) continue;', ''],

@@ -33,6 +33,6 @@ const modo = ['seco', 'relleno'].includes(env.MODO) ? env.MODO : 'real';
 try {
   await correr({ almacen, publico, llave: env.METAR_ON, modo, tope: env.TOPE, desdeMs: fecha(env.DESDE, false), hastaMs: fecha(env.HASTA, true) });
 } catch (e) {
-  console.error(`metar: falló (${e.message})`);
+  console.error(`metar: falló (${String(e.message || e).replace(/https?:\/\/\S+/g, '<url>').slice(0, 120)})`);   // sin URLs en el registro público
   process.exit(1);
 }
