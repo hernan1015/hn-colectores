@@ -125,3 +125,7 @@ El mismo criterio de los casos del 13/11, 14/11 y 16/11: una celda **destacada**
 **Cómo correrlo:**
 - **Con el workflow que ya está instalado** (sin tocar nada): Actions → colector-metar → `modo: relleno`, `tope` vacío. Cada corrida hace ~8 min (unos 60-70 tramos) y corta prolija; **repetirla hasta que diga `0 tramos … por pedir`** (unas 4 veces).
 - **Con el workflow nuevo** (una corrida sola de hasta 45 min): `cp metar/metar.workflow.yml.txt .github/workflows/metar.yml` desde una sesión con el permiso `workflow`, y la misma corrida a mano.
+
+**2.ª vuelta (Codex n3-317b-relleno-1711):**
+- **El test del corte no medía lo que decía; no era un bug.** El granizo de Río Cuarto (18:25 y 18:45 UTC) cae en el **tercer** tramo (18–21), justo el que el test cortaba, así que tras la primera corrida no podía estar indexado. Ahora el corte es en el 4.º tramo y se comprueba **antes de reanudar** que el granizo ya está en el índice. Control negativo: cortando en el 3.º no está, y al reanudar entra adoptando los partes que ya estaban escritos.
+- **La marca ya no se pisa entre corridas:** `guardarMarca()` relee `relleno.json` justo antes de escribir y combina (la unión de los tramos; «hecho» gana a «truncado»). El workflow además las serializa: `concurrency: colector-metar` (sin cancelar) a nivel del workflow entero, que cubre los jobs `colectar` y `rellenar`.

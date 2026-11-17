@@ -549,21 +549,31 @@ test('[317b] un pedido que se CUELGA se aborta a los plazoMs, se reintenta una v
   assert.equal(r4.reintentos, 0); assert.equal(r4.tramos, 4);
 });
 
+/* R2 «se cae» al guardar el índice del tramo N: la corrida sale en rojo (como un timeout de Actions a mitad de camino) */
+const cortarEnIndice = (base, n) => { let i = 0; return { ...base, escribir: (k, b, o) => { if (/indice\.json$/.test(k) && ++i === n) throw new Error('R2 escribir: HTTP 500'); return base.escribir(k, b, o); }, leer: (k) => base.leer(k), listar: (p) => base.listar(p) }; };
+const conGranizo = async (alm) => { const b = await alm.leer('metar/2026/11/16/indice.json'); return b ? Object.values(JSON.parse(b.toString('utf8')).obs).filter((o) => o.granizo).length : 0; };
+
 test('[317b] cada tramo se GUARDA apenas llega: una corrida cortada a mitad deja lo hecho y la siguiente arranca donde quedó', async () => {
+  // [n3-317b] el granizo de Río Cuarto (18:25 y 18:45 UTC) cae en el TERCER tramo (18–21). Se corta en el índice del 4.º: los
+  // tres primeros, con el granizo, tienen que estar en el índice DESPUÉS DE LA PRIMERA corrida, antes de reanudar.
   const base = almacenCarpeta(carpeta());
-  // R2 «se cae» al guardar el índice del 3.er tramo: la corrida sale en rojo (como un timeout de Actions)
-  let indices = 0;
-  const roto = { ...base, escribir: (k, b, o) => { if (/indice\.json$/.test(k) && ++indices === 3) throw new Error('R2 escribir: HTTP 500'); return base.escribir(k, b, o); }, leer: (k) => base.leer(k), listar: (p) => base.listar(p) };
-  await assert.rejects(rellenar({ almacen: roto, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) }), /R2/);
-  const prog = await leerJ(base, 'metar/relleno.json');
-  assert.deepEqual(Object.keys(prog.tramos).sort(), ['2026111615', '2026111618'], 'los dos primeros quedaron guardados');
+  await assert.rejects(rellenar({ almacen: cortarEnIndice(base, 4), fetchFn: api((u) => ({ cuerpo: porTramo(u) })) }), /R2/);
+  assert.deepEqual(Object.keys((await leerJ(base, 'metar/relleno.json')).tramos).sort(), ['2026111615', '2026111618', '2026111621'], 'los tres primeros quedaron guardados');
+  assert.equal(await conGranizo(base), 2, 'el granizo ya está indexado tras la primera corrida (antes de reanudar)');
   const f = api((u) => ({ cuerpo: porTramo(u) }));
   const r = await rellenar({ almacen: base, fetchFn: f });
-  assert.equal(new URL(f.pedidos[0].url).searchParams.get('date'), '20261116_2100', 'arranca en el 3.º');
-  assert.equal(r.tramos, 2);
+  assert.equal(new URL(f.pedidos[0].url).searchParams.get('date'), '20261117_0000', 'arranca en el 4.º');
+  assert.equal(r.tramos, 1);
   assert.equal(Object.keys((await leerJ(base, 'metar/relleno.json')).tramos).length, 4);
-  // el granizo de Río Cuarto (tramo 18-21) está en el índice del 16 desde la PRIMERA corrida
-  assert.ok(Object.values((await leerJ(base, 'metar/2026/11/16/indice.json')).obs).some((o) => o.granizo));
+  // control negativo: cortando en el índice del 3.º (el del granizo), tras la primera corrida el granizo NO está (su tramo no
+  // terminó) y la marca no lo da por hecho; al reanudar entra, adoptando los partes que ya habían quedado escritos
+  const b2 = almacenCarpeta(carpeta());
+  await assert.rejects(rellenar({ almacen: cortarEnIndice(b2, 3), fetchFn: api((u) => ({ cuerpo: porTramo(u) })) }), /R2/);
+  assert.equal(await conGranizo(b2), 0);
+  assert.deepEqual(Object.keys((await leerJ(b2, 'metar/relleno.json')).tramos).sort(), ['2026111615', '2026111618']);
+  const r2 = await rellenar({ almacen: b2, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) });
+  assert.equal(await conGranizo(b2), 2);
+  assert.ok(r2.recuperados > 0, 'los partes escritos antes del corte se adoptan, no se reescriben');
   // control negativo: sin corte, una sola corrida hace los 4 y la siguiente no pide nada
   const alm = almacenCarpeta(carpeta());
   await rellenar({ almacen: alm, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) });
@@ -613,4 +623,32 @@ test('[317b] los partes de un tramo se escriben en paralelo, de a 8 como mucho',
   assert.equal(r.guardados, 94);
   assert.equal(max, 8);
   assert.equal(C.ESCRITURAS_PARALELAS, 8);
+});
+
+test('[n3-317b] dos corridas intercaladas no pierden ningún «hecho» de la marca (se relee y se combina antes de escribir)', async () => {
+  const alm = almacenCarpeta(carpeta());
+  // A: sólo el tramo 12–15, con la API lenta; B: sólo el 15–18, rápida. Las dos leen la marca vacía al empezar; B escribe primero.
+  const lenta = api(async (u) => { await new Promise((r) => setTimeout(r, 80)); return { cuerpo: porTramo(u) }; });
+  const rapida = api((u) => ({ cuerpo: porTramo(u) }));
+  const [a, b] = await Promise.all([
+    rellenar({ almacen: alm, fetchFn: lenta, desdeMs: Date.parse('2026-11-16T12:00:00Z'), hastaMs: Date.parse('2026-11-16T15:00:00Z') }),
+    rellenar({ almacen: alm, fetchFn: rapida, desdeMs: Date.parse('2026-11-16T15:00:00Z'), hastaMs: Date.parse('2026-11-16T18:00:00Z') }),
+  ]);
+  assert.equal(a.tramos, 1); assert.equal(b.tramos, 1);
+  assert.deepEqual((await leerJ(alm, 'metar/relleno.json')).tramos, { 2026111615: 'hecho', 2026111618: 'hecho' });
+  // «hecho» gana a «truncado»: una corrida vieja con el tramo truncado no le baja el estado a uno que otra completó
+  await C.guardarMarca(alm, { tramos: { 2026111618: 'truncado', 2026111621: 'truncado' } }, AHORA_R);
+  assert.deepEqual((await leerJ(alm, 'metar/relleno.json')).tramos, { 2026111615: 'hecho', 2026111618: 'hecho', 2026111621: 'truncado' });
+  // control negativo: escribiendo la marca leída al empezar (sin combinar), A habría borrado el «hecho» de B
+  const pisada = { v: 1, tramos: { 2026111615: 'hecho' } };
+  assert.notDeepEqual(pisada.tramos, (await leerJ(alm, 'metar/relleno.json')).tramos);
+});
+
+test('[n3-317b] el workflow serializa el relleno con la corrida real: concurrency del workflow entero, sin cancelar', () => {
+  const y = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'metar.workflow.yml.txt'), 'utf8');
+  const top = y.slice(0, y.indexOf('\njobs:') + 1);
+  assert.match(top, /\nconcurrency:\n  group: colector-metar\n  cancel-in-progress: false\n/);
+  assert.match(y, /\n  rellenar:\n/); assert.match(y, /\n  colectar:\n/);
+  // control: los dos jobs están en ESTE workflow (el grupo los cubre a los dos); no hay otro concurrency por job que lo afloje
+  assert.equal((y.match(/concurrency:/g) || []).length, 1);
 });

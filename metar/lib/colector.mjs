@@ -213,6 +213,21 @@ async function publicar({ almacen, publico, ahoraMs, log, completo }) {
   return pub;
 }
 
+/**
+ * [n3-317b] La marca de avance, sin pisar la de otra corrida: se relee `relleno.json` JUSTO antes de escribir y se combina (la
+ * unión de los tramos; «hecho» gana a «truncado»). Así, si dos corridas se cruzan (el workflow las serializa con su concurrency,
+ * pero el colector no depende de eso), ninguna borra un «hecho» de la otra. Devuelve lo combinado.
+ */
+export async function guardarMarca(almacen, prog, ahoraMs) {
+  const actual = (await leerJSON(almacen, CLAVE_RELLENO)) || { v: 1, tramos: {} };
+  const tramos = { ...(actual.tramos || {}) };
+  for (const [k, v] of Object.entries(prog.tramos || {})) if (tramos[k] !== 'hecho') tramos[k] = v;
+  const out = { v: 1, tramos, actualizado: iso(ahoraMs) };
+  await almacen.escribir(CLAVE_RELLENO, JSON.stringify(out, null, 1));
+  prog.tramos = tramos;
+  return out;
+}
+
 /** Los tramos de 3 h del relleno, del más viejo al más nuevo, dentro de los 30 días de la API. Cada uno: la hora FINAL en ms. */
 export function tramosRelleno(desdeMs, hastaMs, ahoraMs, hechos = {}) {
   const piso = ahoraMs - DIAS_HISTORIA * 24 * HORA + HORA;            // con una hora de margen: lo de más atrás la API ya no lo tiene
@@ -356,8 +371,7 @@ export async function correr({
       // [317b] cada tramo se guarda APENAS llega: los índices tocados y la marca de avance. Una corrida cortada deja lo hecho.
       res.indices += await guardarIndices(almacen, indices, ahoraMs);
       prog.tramos[iso(fin).slice(0, 13).replace(/[-T]/g, '')] = t.truncado ? 'truncado' : 'hecho';
-      prog.actualizado = iso(ahoraMs);
-      await almacen.escribir(CLAVE_RELLENO, JSON.stringify(prog, null, 1));
+      await guardarMarca(almacen, prog, ahoraMs);
       res.tramos++;
       log(`metar (RELLENO): tramo ${n}/${cola.length} (${tramoTxt(fin)}): ${t.entradas.length} partes · ${res.guardados - antes} nuevos${t.truncado ? ' · TRUNCADO' : ''} · guardado`);
     }
