@@ -128,12 +128,20 @@ export function crc32(buf) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-const CANALES = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };   // tipo de color de PNG → muestras por píxel
+// Profundidades válidas por tipo de color (especificación PNG, tabla 11.1).
+export const PROFUNDIDADES = Object.freeze({ 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] });
 
 /**
- * null si sirve; si no, el motivo. Se valida el PNG DE VERDAD (311b, P1 de Codex): firma, cada chunk con su CRC,
- * IHDR primero y de 678×678, IEND último y sin nada después, PLTE si es con paleta, y que el IDAT entero se
- * descomprima con zlib y dé exactamente alto × (1 + bytes por fila), con un filtro válido (0 a 4) en cada fila.
+ * null si sirve; si no, el motivo. Se valida el PNG según la especificación, para lo que trae SLIDER: color con PALETA
+ * (tipo 3; las teselas de GREMLIN son de 8 bits). 311b, 2.ª y 3.ª vuelta de Codex:
+ *  - firma; cada chunk entero, con nombre legible y su CRC; un chunk crítico desconocido es inválido;
+ *  - IHDR primero, uno solo, de 13 bytes, 678×678, tipo 3 con profundidad válida para el tipo (1, 2, 4 u 8),
+ *    compresión 0, filtro 0, sin entrelazado;
+ *  - PLTE: una sola, ANTES del IDAT, largo múltiplo de 3, entre 1 y min(256, 2^profundidad) entradas;
+ *  - tRNS (si está): después de PLTE y antes del IDAT, una sola, con no más entradas que la PLTE;
+ *  - IDAT: al menos uno, todos seguidos; se descomprime entero con zlib y da justo alto × (1 + bytes por fila);
+ *  - cada fila con filtro 0 a 4; se deshace el filtro y TODOS los índices de píxel son menores que las entradas de la PLTE;
+ *  - IEND último, vacío, y nada después.
  */
 export function motivoTeselaMala(buf) {
   if (!Buffer.isBuffer(buf) || buf.length < 8 + 25 + 12) return 'muy corta';
@@ -143,7 +151,7 @@ export function motivoTeselaMala(buf) {
   if (ancho !== TESELA_PX || alto !== TESELA_PX) return `PNG de ${ancho}×${alto}`;
   if (!buf.subarray(buf.length - 8).equals(FIN_PNG)) return 'PNG cortado (sin IEND)';
   const idat = [];
-  let pos = 8, ihdr = null, plte = false, fin = false;
+  let pos = 8, ihdr = null, entradas = 0, trns = false, idatCerrado = false, fin = false, previo = '';
   while (pos < buf.length) {
     if (pos + 12 > buf.length) return 'PNG con un chunk cortado';
     const largo = buf.readUInt32BE(pos);
@@ -153,22 +161,70 @@ export function motivoTeselaMala(buf) {
     const datos = buf.subarray(pos + 8, pos + 8 + largo);
     if (crc32(buf.subarray(pos + 4, pos + 8 + largo)) !== buf.readUInt32BE(pos + 8 + largo)) return `PNG con el CRC de ${tipo} mal`;
     if (pos === 8 && tipo !== 'IHDR') return 'PNG sin IHDR';
-    if (tipo === 'IHDR') { if (ihdr || largo !== 13) return 'PNG con IHDR raro'; ihdr = datos; }
-    else if (tipo === 'PLTE') plte = true;
-    else if (tipo === 'IDAT') idat.push(datos);
-    else if (tipo === 'IEND') { fin = true; pos += 12 + largo; break; }
+    if (idat.length && previo === 'IDAT' && tipo !== 'IDAT') idatCerrado = true;
+    if (tipo === 'IHDR') {
+      if (ihdr || largo !== 13) return 'PNG con IHDR raro';
+      ihdr = datos;
+      const prof = ihdr[8], color = ihdr[9];
+      if (color !== 3) return `PNG de tipo de color ${color} (se espera paleta, tipo 3)`;
+      if (!PROFUNDIDADES[color].includes(prof)) return `PNG con profundidad ${prof} inválida para el tipo ${color}`;
+      if (ihdr[10] !== 0 || ihdr[11] !== 0) return 'PNG con compresión o filtro desconocidos';
+      if (ihdr[12] !== 0) return 'PNG entrelazado (no se espera)';
+    } else if (tipo === 'PLTE') {
+      if (entradas) return 'PNG con dos PLTE';
+      if (largo === 0 || largo % 3 !== 0) return 'PNG con una PLTE de largo inválido';
+      entradas = largo / 3;
+      if (entradas > Math.min(256, 2 ** ihdr[8])) return `PNG con una PLTE de ${entradas} entradas (de más)`;
+    } else if (tipo === 'tRNS') {
+      if (trns) return 'PNG con dos tRNS';
+      if (!entradas) return 'PNG con tRNS antes de la PLTE';
+      if (idat.length) return 'PNG con tRNS después del IDAT';
+      if (largo > entradas) return 'PNG con más tRNS que entradas de PLTE';
+      trns = true;
+    } else if (tipo === 'IDAT') {
+      if (idatCerrado) return 'PNG con IDAT no consecutivos';
+      if (!entradas) return 'PNG con paleta sin PLTE antes del IDAT';
+      idat.push(datos);
+    } else if (tipo === 'IEND') {
+      if (largo !== 0) return 'PNG con IEND no vacío';
+      fin = true; pos += 12 + largo; break;
+    } else if (tipo.charCodeAt(0) < 97) {
+      return `PNG con un chunk crítico desconocido (${tipo})`;   // mayúscula inicial = crítico
+    }
+    previo = tipo;
     pos += 12 + largo;
   }
   if (!fin || pos !== buf.length) return 'PNG con datos después de IEND';
-  const prof = ihdr[8], color = ihdr[9];
-  if (!(color in CANALES) || ![1, 2, 4, 8, 16].includes(prof) || ihdr[10] !== 0 || ihdr[11] !== 0) return 'PNG con un formato que no se espera';
-  if (ihdr[12] !== 0) return 'PNG entrelazado (no se espera)';
-  if (color === 3 && !plte) return 'PNG con paleta sin PLTE';
   if (!idat.length) return 'PNG sin IDAT';
   let crudo;
   try { crudo = zlib.inflateSync(Buffer.concat(idat)); } catch { return 'PNG con el IDAT corrupto'; }
-  const porFila = 1 + Math.ceil((ancho * CANALES[color] * prof) / 8);
+  const prof = ihdr[8];
+  const bytesFila = Math.ceil((ancho * prof) / 8);
+  const porFila = 1 + bytesFila;
   if (crudo.length !== alto * porFila) return 'PNG con el IDAT de otro largo';
-  for (let f = 0; f < alto; f++) if (crudo[f * porFila] > 4) return 'PNG con un filtro de fila inválido';
+  // deshacer los filtros (con paleta, la unidad del filtro es 1 byte) y mirar cada índice
+  let arriba = Buffer.alloc(bytesFila);
+  const fila = Buffer.alloc(bytesFila);
+  const mascara = (1 << prof) - 1;
+  for (let f = 0; f < alto; f++) {
+    const filtro = crudo[f * porFila];
+    if (filtro > 4) return 'PNG con un filtro de fila inválido';
+    const ent = crudo.subarray(f * porFila + 1, (f + 1) * porFila);
+    for (let i = 0; i < bytesFila; i++) {
+      const a = i > 0 ? fila[i - 1] : 0, b = arriba[i], c = i > 0 ? arriba[i - 1] : 0;
+      let pred = 0;
+      if (filtro === 1) pred = a;
+      else if (filtro === 2) pred = b;
+      else if (filtro === 3) pred = (a + b) >> 1;
+      else if (filtro === 4) { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); pred = pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      fila[i] = (ent[i] + pred) & 0xff;
+    }
+    for (let x = 0; x < ancho; x++) {
+      const bit = x * prof;
+      const indice = prof === 8 ? fila[x] : (fila[bit >> 3] >> (8 - prof - (bit & 7))) & mascara;
+      if (indice >= entradas) return `PNG con un índice de píxel (${indice}) fuera de la PLTE de ${entradas}`;
+    }
+    arriba = Buffer.from(fila);
+  }
   return null;
 }

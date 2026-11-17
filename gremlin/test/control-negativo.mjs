@@ -56,6 +56,22 @@ const MUTANTES = [
   ['sin descomprimir el IDAT', 'slider.mjs', "try { crudo = zlib.inflateSync(Buffer.concat(idat)); } catch { return 'PNG con el IDAT corrupto'; }", "try { crudo = zlib.inflateSync(Buffer.concat(idat)); } catch { crudo = Buffer.alloc(alto * (1 + Math.ceil((ancho * CANALES[color] * prof) / 8))); }"],
   ['no recupera lo que quedó en R2 sin sobre', 'colector.mjs', "if (guardadas.has(nombreTesela(tes)) || !enR2.has(clave)) continue;", 'continue;'],
   ['adopta lo de R2 sin validarlo', 'colector.mjs', '      if (!b || motivoTeselaMala(b)) continue;', '      if (!b) continue;'],
+  // 311b, 3.ª vuelta (n3-311b-v2): el PNG según la especificación
+  ['PLTE de cualquier largo', 'slider.mjs', "if (largo === 0 || largo % 3 !== 0) return 'PNG con una PLTE de largo inválido';", ''],
+  ['PLTE sin tope de entradas', 'slider.mjs', 'if (entradas > Math.min(256, 2 ** ihdr[8])) return', 'if (false) return'],
+  ['PLTE sin tope por profundidad (sólo 256)', 'slider.mjs', 'if (entradas > Math.min(256, 2 ** ihdr[8])) return', 'if (entradas > 256) return'],
+  ['dos PLTE aceptadas', 'slider.mjs', "if (entradas) return 'PNG con dos PLTE';", ''],
+  ['tRNS sin tope', 'slider.mjs', "if (largo > entradas) return 'PNG con más tRNS que entradas de PLTE';", ''],
+  ['tRNS antes de PLTE aceptado', 'slider.mjs', "if (!entradas) return 'PNG con tRNS antes de la PLTE';", ''],
+  ['tRNS después del IDAT aceptado', 'slider.mjs', "if (idat.length) return 'PNG con tRNS después del IDAT';", ''],
+  ['profundidad sin mirar el tipo', 'slider.mjs', 'if (!PROFUNDIDADES[color].includes(prof)) return', 'if (![1, 2, 4, 8, 16].includes(prof)) return'],
+  ['cualquier tipo de color', 'slider.mjs', 'if (color !== 3) return', 'if (false) return'],
+  ['sin mirar los índices', 'slider.mjs', 'if (indice >= entradas) return', 'if (false) return'],
+  ['índices sin deshacer el filtro', 'slider.mjs', 'fila[i] = (ent[i] + pred) & 0xff;', 'fila[i] = ent[i];'],
+  ['Paeth mal (elige c antes que b)', 'slider.mjs', 'pred = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;', 'pred = pa <= pb && pa <= pc ? a : pc <= pb ? c : b;'],
+  ['índices de profundidad < 8 mal leídos', 'slider.mjs', '(fila[bit >> 3] >> (8 - prof - (bit & 7))) & mascara', '(fila[bit >> 3] >> (bit & 7)) & mascara'],
+  ['chunk crítico desconocido aceptado', 'slider.mjs', '} else if (tipo.charCodeAt(0) < 97) {', '} else if (false) {'],
+  ['IDAT no consecutivos aceptados', 'slider.mjs', "if (idatCerrado) return 'PNG con IDAT no consecutivos';", ''],
   ['SLIDER caído escribe igual', 'colector.mjs', "    return { ...res, estado: 'slider-caido' };", '    tiempos = [];'],
 ];
 

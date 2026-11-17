@@ -44,7 +44,7 @@ Una tesela es un PNG de 678×678 con paleta de 8 bits (la de `mrms_merged_base_r
    - Una tesela se guarda sólo si cumple todo esto:
      - HTTP 200;
      - el tamaño coincide con el anunciado;
-     - es un **PNG válido de verdad**: 678×678, cada chunk con su CRC, IHDR primero, IEND último, y el IDAT se descomprime entero con zlib, con el largo justo (311b).
+     - es un **PNG válido según la especificación, para paleta** (tipo 3, lo que trae SLIDER). Ver «Qué valida el PNG», abajo.
    - Si no, queda en `faltantes` con el motivo, y **en su clave no se escribe nada**.
    - Escribe el sobre del tiempo y actualiza el índice del día.
 5. **Resumen:** imprime sólo cantidades (el registro de Actions es público).
@@ -141,14 +141,37 @@ gremlin (SECO): 100 tiempos en SLIDER · 95 por bajar · 9 teselas por tiempo ·
 
 - **[P1] PNG de verdad.** El validador ahora mira el CRC de cada chunk y descomprime el IDAT. Un IDAT corrupto, aunque tenga el mismo largo y el mismo IEND, queda faltante.
 - **[P1] Corte a mitad.** La corrida siguiente adopta de R2 las teselas ya guardadas que validan, con su sha256, y baja sólo las que faltan.
+- **[P1, 2.ª vuelta, n3-311b-v2] La paleta.** Una PLTE vacía pasaba. Ahora se valida todo lo de «Qué valida el PNG»:
+  - hay un test por cada caso inválido (20 casos);
+  - de esos 20, el validador de la v2 (2976a887) dejaba pasar 16.
 - **Visibilidad del disco:** se compara `sx·(H − sx)` (antes decía `H·(H − sx)`). El test usa un punto a 81,4° del subsatélite.
+
+## Qué valida el PNG (`motivoTeselaMala`, en lib/slider.mjs)
+
+- **Firma y chunks:** cada chunk entero, con un nombre legible y su CRC. Un chunk crítico desconocido (con mayúscula inicial) lo invalida.
+- **IHDR:**
+  - primero, uno solo y de 13 bytes;
+  - 678×678;
+  - **tipo de color 3 (paleta)**, con una profundidad válida para ese tipo (1, 2, 4 u 8);
+  - compresión 0, filtro 0 y sin entrelazado.
+- **PLTE:**
+  - una sola, **antes del IDAT**;
+  - con un largo múltiplo de 3;
+  - con entre 1 y min(256, 2^profundidad) entradas.
+- **tRNS (si está):** una sola, después de la PLTE y antes del IDAT, con **no más entradas que la PLTE**.
+- **IDAT:**
+  - al menos uno, y todos seguidos;
+  - se descomprime entero con zlib y da justo alto × (1 + bytes por fila);
+  - cada fila trae un filtro de 0 a 4;
+  - **se deshace el filtro, y todos los índices de píxel tienen que ser menores que la cantidad de entradas de la PLTE.**
+- **IEND:** último, vacío, y nada después.
 
 ## Tests
 
 ```bash
 cd gremlin
-npm test                          # 22 tests, sin red: SLIDER de mentira y almacén en carpeta
-node test/control-negativo.mjs    # 40 de 40 mutantes detectados
+npm test                          # 44 tests, sin red: SLIDER de mentira y almacén en carpeta
+node test/control-negativo.mjs    # 55 de 55 mutantes detectados
 ```
 
 Qué cubren:
@@ -172,6 +195,6 @@ Qué cubren:
 - **El workflow:** nace apagado, a mano corre en seco y usa los 4 secretos R2.
 
 **Control negativo contado:** `node test/control-negativo.mjs`.
-- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 40 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
+- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 55 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
 - Cada mutante tiene que hacer fallar al menos un test.
 - Antes corre la copia sin romper, que tiene que pasar entera.

@@ -103,3 +103,46 @@ export function tiemposHasta(ultimoMs, n) {
 
 export const sinEspera = async () => {};
 export const callado = () => {};
+
+// ---------- 311b, 3.ª vuelta: PNG armados a mano (cada chunk con su CRC correcto) ----------
+/** Los chunks de un PNG: [{ tipo, datos }]. */
+export function trozos(png) {
+  const out = [];
+  let pos = 8;
+  while (pos < png.length) {
+    const largo = png.readUInt32BE(pos);
+    out.push({ tipo: png.toString('latin1', pos + 4, pos + 8), datos: Buffer.from(png.subarray(pos + 8, pos + 8 + largo)) });
+    pos += 12 + largo;
+  }
+  return out;
+}
+
+/** Arma un PNG con la firma y los chunks dados, cada uno con su CRC bien calculado. */
+export function armar(lista) {
+  const partes = [Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])];
+  for (const { tipo, datos } of lista) {
+    const t = Buffer.concat([Buffer.from(tipo, 'latin1'), datos]);
+    const l = Buffer.alloc(4); l.writeUInt32BE(datos.length);
+    const c = Buffer.alloc(4); c.writeUInt32BE(S.crc32(t));
+    partes.push(l, t, c);
+  }
+  return Buffer.concat(partes);
+}
+
+/** IHDR de 678×678 con la profundidad y el tipo de color dados. */
+export function ihdr(prof = 8, color = 3) {
+  const d = Buffer.alloc(13);
+  d.writeUInt32BE(678, 0); d.writeUInt32BE(678, 4); d[8] = prof; d[9] = color;
+  return { tipo: 'IHDR', datos: d };
+}
+
+/** IDAT de 678 filas; `fila(f)` devuelve [filtro, ...bytes] (lo que falte va en 0). Bytes por fila según la profundidad. */
+export function idat(fila = () => [0], prof = 8) {
+  const porFila = 1 + Math.ceil((678 * prof) / 8);
+  const crudo = Buffer.alloc(678 * porFila);
+  for (let f = 0; f < 678; f++) { const v = fila(f); for (let i = 0; i < v.length; i++) crudo[f * porFila + i] = v[i]; }
+  return { tipo: 'IDAT', datos: zlib.deflateSync(crudo) };
+}
+
+export const plte = (n) => ({ tipo: 'PLTE', datos: Buffer.alloc(n * 3, 7) });
+export const iend = () => ({ tipo: 'IEND', datos: Buffer.alloc(0) });

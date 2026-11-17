@@ -2,7 +2,7 @@
 // Correr: npm test (dentro de gremlin/). El control negativo está en control-negativo.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { S, C, ALM, carpetaTemporal, sliderFalso, tiemposHasta, pngFalso, idatCorrupto, crcMal, leerDato, sinEspera, callado } from './falsos.mjs';
+import { S, C, ALM, carpetaTemporal, sliderFalso, tiemposHasta, pngFalso, idatCorrupto, crcMal, trozos, armar, ihdr, idat, plte, iend, leerDato, sinEspera, callado } from './falsos.mjs';
 
 const AHORA = Date.UTC(2026, 10, 17, 0, 55);                 // 17/11/2026 00:55 UTC
 const ULT = Date.UTC(2026, 10, 17, 0, 30);                   // último tiempo de SLIDER: 00:30 UTC
@@ -352,4 +352,67 @@ test('[311b] una tesela rota que quedó en R2 sin sobre no se adopta: se vuelve 
   assert.equal(sl.teselasPedidas().length, 8);
   assert.ok(sl.teselasPedidas().some((p) => p.url.endsWith('005_003.png')));
   assert.equal(S.motivoTeselaMala(await alm.leer(C.claveTesela(T, { fila: 5, col: 3 }))), null, 'quedó la buena');
+});
+
+// ---------- 311b, 3.ª vuelta (n3-311b-v2): el PNG según la especificación, para paleta (tipo 3) ----------
+const REAL = leerDato('tesela_20261117003000_005_005.png');
+const conReemplazo = (tipo, nuevos) => armar(trozos(REAL).flatMap((x) => (x.tipo === tipo ? nuevos : [x])));
+const INVALIDOS = [
+  ['la de Codex: PLTE vacía (CRC bien, IDAT que descomprime)', () => conReemplazo('PLTE', [{ tipo: 'PLTE', datos: Buffer.alloc(0) }]), 'PNG con una PLTE de largo inválido'],
+  ['PLTE de largo no múltiplo de 3', () => conReemplazo('PLTE', [{ tipo: 'PLTE', datos: Buffer.alloc(10) }]), 'PNG con una PLTE de largo inválido'],
+  ['PLTE de 257 entradas', () => armar([ihdr(), plte(257), idat(), iend()]), 'PNG con una PLTE de 257 entradas (de más)'],
+  ['PLTE de 5 entradas con profundidad 2 (máximo 4)', () => armar([ihdr(2), plte(5), idat(undefined, 2), iend()]), 'PNG con una PLTE de 5 entradas (de más)'],
+  ['PLTE después del IDAT', () => armar([ihdr(), idat(), plte(4), iend()]), 'PNG con paleta sin PLTE antes del IDAT'],
+  ['sin PLTE', () => armar([ihdr(), idat(), iend()]), 'PNG con paleta sin PLTE antes del IDAT'],
+  ['dos PLTE', () => armar([ihdr(), plte(4), plte(4), idat(), iend()]), 'PNG con dos PLTE'],
+  ['tRNS con más entradas que la PLTE', () => armar([ihdr(), plte(4), { tipo: 'tRNS', datos: Buffer.alloc(5) }, idat(), iend()]), 'PNG con más tRNS que entradas de PLTE'],
+  ['tRNS antes de la PLTE', () => armar([ihdr(), { tipo: 'tRNS', datos: Buffer.alloc(2) }, plte(4), idat(), iend()]), 'PNG con tRNS antes de la PLTE'],
+  ['tRNS después del IDAT', () => armar([ihdr(), plte(4), idat(), { tipo: 'tRNS', datos: Buffer.alloc(2) }, iend()]), 'PNG con tRNS después del IDAT'],
+  ['profundidad 16 con paleta', () => armar([ihdr(16), plte(4), idat(), iend()]), 'PNG con profundidad 16 inválida para el tipo 3'],
+  ['profundidad 3', () => armar([ihdr(3), plte(4), idat(), iend()]), 'PNG con profundidad 3 inválida para el tipo 3'],
+  ['color verdadero (tipo 2) en vez de paleta', () => armar([ihdr(8, 2), idat(), iend()]), 'PNG de tipo de color 2 (se espera paleta, tipo 3)'],
+  ['índice fuera de la PLTE (la real con una PLTE de 1 entrada)', () => conReemplazo('PLTE', [plte(1)]), /^PNG con un índice de píxel \(\d+\) fuera de la PLTE de 1$/],
+  ['índice fuera de la PLTE sólo después de deshacer el filtro Sub', () => armar([ihdr(), plte(4), idat((f) => (f === 300 ? [1, 2, 2] : [0])), iend()]), 'PNG con un índice de píxel (4) fuera de la PLTE de 4'],
+  ['índice fuera de la PLTE con filtro Up', () => armar([ihdr(), plte(4), idat((f) => (f === 0 ? [0, 3] : f === 1 ? [2, 1] : [0])), iend()]), 'PNG con un índice de píxel (4) fuera de la PLTE de 4'],
+  ['índice fuera de la PLTE con profundidad 2 (el 3 con 3 entradas)', () => armar([ihdr(2), plte(3), idat(() => [0, 0b11100100], 2), iend()]), 'PNG con un índice de píxel (3) fuera de la PLTE de 3'],
+  // Paeth con empate pb = pc (a=0, b=3, c=1): la especificación elige b → 1 + 3 = 4, fuera de una PLTE de 4
+  ['índice fuera de la PLTE con filtro Paeth (empate entre b y c)', () => armar([ihdr(), plte(4), idat((f) => (f === 0 ? [0, 1, 3] : f === 1 ? [4, 255, 1] : [0])), iend()]), 'PNG con un índice de píxel (4) fuera de la PLTE de 4'],
+  ['un chunk crítico desconocido', () => armar([ihdr(), plte(4), { tipo: 'ABCD', datos: Buffer.alloc(1) }, idat(), iend()]), 'PNG con un chunk crítico desconocido (ABCD)'],
+  ['IDAT no consecutivos', () => { const d = idat().datos; return armar([ihdr(), plte(4), { tipo: 'IDAT', datos: d.subarray(0, 10) }, { tipo: 'tEXt', datos: Buffer.from('a\0b') }, { tipo: 'IDAT', datos: d.subarray(10) }, iend()]); }, 'PNG con IDAT no consecutivos'],
+];
+for (const [nombre, armarlo, motivo] of INVALIDOS) {
+  test(`[311b v3] inválido: ${nombre}`, () => {
+    const m = S.motivoTeselaMala(armarlo());
+    if (motivo instanceof RegExp) assert.match(String(m), motivo); else assert.equal(m, motivo);
+  });
+}
+
+test('[311b v3] controles válidos: la real, la sintética, tRNS justo, un chunk auxiliar, filtros 1 a 4 dentro de la PLTE, profundidad 2', () => {
+  assert.equal(S.motivoTeselaMala(REAL), null);
+  assert.equal(S.motivoTeselaMala(pngFalso()), null);
+  assert.equal(S.motivoTeselaMala(armar([ihdr(), plte(4), { tipo: 'tRNS', datos: Buffer.alloc(4) }, idat(), iend()])), null);
+  assert.equal(S.motivoTeselaMala(armar([ihdr(), plte(4), { tipo: 'tEXt', datos: Buffer.from('a\0b') }, idat(), iend()])), null);
+  for (const filtro of [1, 2, 3, 4]) assert.equal(S.motivoTeselaMala(armar([ihdr(), plte(4), idat((f) => (f === 0 ? [0, 1, 2] : f === 1 ? [filtro, 1, 0] : [0])), iend()])), null, `filtro ${filtro}`);
+  assert.equal(S.motivoTeselaMala(armar([ihdr(2), plte(4), idat(() => [0, 0b11100100], 2), iend()])), null, 'profundidad 2: 4 índices (3,2,1,0) en un byte');
+  // profundidad 2: 678 px = 169,5 bytes; la mitad baja del último byte es relleno y no es un píxel (se ignora)
+  const relleno = Array(171).fill(0); relleno[170] = 0b00000011;
+  assert.equal(S.motivoTeselaMala(armar([ihdr(2), plte(3), idat(() => relleno, 2), iend()])), null, 'el relleno del final de la fila no cuenta');
+});
+
+test('[311b v3] en la corrida: una PLTE vacía (la de Codex) queda faltante, no se guarda ni se adopta, y el tiempo no queda completo', async () => {
+  const mala = conReemplazo('PLTE', [{ tipo: 'PLTE', datos: Buffer.alloc(0) }]);
+  const alm = nuevo();
+  const sl = sliderFalso({ tiempos: [T], tesela: () => mala });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn });
+  assert.equal(r.teselas, 0);
+  const s = await leerJ(alm, C.claveSobre(T));
+  assert.equal(s.estado, 'incompleto');
+  assert.equal(s.faltantes.length, 9);
+  assert.ok(s.faltantes.every((x) => x.motivo === 'PNG con una PLTE de largo inválido'));
+  const alm2 = nuevo();
+  await alm2.escribir(C.claveTesela(T, { fila: 5, col: 3 }), mala);
+  const sl2 = sliderFalso({ tiempos: [T] });
+  const r2 = await correr({ almacen: alm2, fetchFn: sl2.fetchFn });
+  assert.equal(r2.recuperadas, 0);
+  assert.equal(sl2.teselasPedidas().length, 9);
 });
