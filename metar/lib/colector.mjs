@@ -255,8 +255,12 @@ export async function correr({
     // [n3-317col P7] un 200 que no es una lista JSON también es una falla, y cuenta para el corte
     const invalida = (motivo) => { fallasSeguidas++; if (!cortar && fallasSeguidas >= FALLAS_SEGUIDAS_CORTE) cortar = `${fallasSeguidas} fallas seguidas`; return { ok: false, motivo }; };
     let j;
-    try { j = r.texto.trim() ? JSON.parse(r.texto) : []; } catch { return invalida('la respuesta no es JSON'); }
+    // [n3-317col-v2 P3] un 200 vacío (o con una lista vacía, cuando se pidieron 93 estaciones) es una FALLA: no inventa faltantes
+    // ni deja el tramo del relleno como hecho. «Sin partes» es sólo el 204.
+    if (!r.texto.trim()) return invalida('respuesta vacía');
+    try { j = JSON.parse(r.texto); } catch { return invalida('la respuesta no es JSON'); }
     if (!Array.isArray(j)) return invalida('la respuesta no es una lista');
+    if (!j.length) return invalida('lista vacía con HTTP 200');
     fallasSeguidas = 0;
     if (j.length >= TOPE_API) {
       if (ids.length > 1 && res.pedidos + 2 <= maxPedidos && !cortar) {

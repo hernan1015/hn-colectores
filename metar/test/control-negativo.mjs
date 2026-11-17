@@ -46,6 +46,12 @@ const MUTANTES = [
   ['un 200 inválido no cuenta como falla', 'colector.mjs', 'const invalida = (motivo) => { fallasSeguidas++;', 'const invalida = (motivo) => { fallasSeguidas += 0;'],
   ['truncado se publica como completo', 'colector.mjs', 'const pub = armarPublico(inds, ahoraMs, { completo });', 'const pub = armarPublico(inds, ahoraMs, { completo: true });'],
   ['el relleno publica', 'colector.mjs', "if (publico && modo === 'real') {", 'if (publico) {'],
+  // [n3-317col-v2] la cobertura del ojo en la celda del aeropuerto y el 200 vacío
+  ['validación: sin celda del aeropuerto igual es útil', 'validacion.mjs', "return !!s && s.motivo === 'despejado';", 'return true;'],
+  ['validación: sin_pixel cuenta como dato', 'validacion.mjs', "return !!s && s.motivo === 'despejado';", 'return !!s;'],
+  ['validación: una celda incompleta es útil', 'validacion.mjs', 'if (c) return !c.incompleta && c.patas != null;', 'if (c) return true;'],
+  ['un 200 vacío es «sin partes»', 'colector.mjs', "if (!r.texto.trim()) return invalida('respuesta vacía');", "if (!r.texto.trim()) return { ok: true, entradas: [] };"],
+  ['un 200 con lista vacía es «sin partes»', 'colector.mjs', "if (!j.length) return invalida('lista vacía con HTTP 200');", ''],
   ['validación: un barrido parcial da pérdida', 'validacion.mjs', "m.utiles === 0 ? 'SIN DATO' : 'PÉRDIDA'", "m.barridos === 0 ? 'SIN DATO' : 'PÉRDIDA'"],
   ['relleno sin el piso de 30 días', 'colector.mjs', 'const piso = ahoraMs - DIAS_HISTORIA * 24 * HORA + HORA;', 'const piso = 0;'],
   ['relleno repide lo hecho', 'colector.mjs', "if (hechos[k] === 'hecho') continue;", ''],

@@ -91,7 +91,7 @@ El mismo criterio de los casos del 13/11, 14/11 y 16/11: una celda **destacada**
 
 ## Tests
 
-`npm test` (dentro de `metar/`): **32 tests**, sin red (ver la 2.ª vuelta).
+`npm test` (dentro de `metar/`): **34 tests**, sin red (ver la 2.ª y la 3.ª vuelta).
 - **El parser:** GR, GS, `+TSGR`, `+TSSHGRRA` y `REGR` reales de Río Cuarto (16/11), `VCTS` real de San Rafael, `RE TSRA` y `COR` reales de San Luis, la tendencia real de Córdoba, el ejemplo de `rawOb` de la OpenAPI de la API (KORD … RMK AO2 SLP162 VIRGA OHD …) y las RMK de granizo del FMH-1. Los 213 partes reales de los fixtures.
 - **El colector:** el pedido único con las 93 estaciones, el UA, las claves, la idempotencia (dos corridas, el COR y la corrida cortada), los faltantes (y el que llega tarde), los descartados, el tope de 400 (partir o truncar sin faltantes falsos), la API caída, el 429, la pausa, la llave, el seco, el relleno y el derivado público.
 - **La validación:** ACIERTO, PÉRDIDA y SIN DATO con ±30 min y ≤ 30 km, la ventana del `REGR` y las «no confirmadas».
@@ -104,3 +104,8 @@ El mismo criterio de los casos del 13/11, 14/11 y 16/11: una celda **destacada**
 - **Validación:** un barrido cuenta para PÉRDIDA sólo si es **útil** para el aeropuerto (no parcial, y no todas sus celdas a ≤ 30 km incompletas). Uno parcial puede dar ACIERTO, nunca PÉRDIDA. La tabla del 16/11 no cambia (5 y 8 barridos útiles: 2 pérdidas).
 - **El workflow de validación** baja las releases del día argentino anterior, del día y del siguiente (un scan de 01:00 UTC es del día argentino anterior).
 - **El mutante «la API caída igual escribe el índice»** ahora escribe de verdad. Tests: **32**; mutantes: **42 de 42**.
+
+## 3.ª vuelta (Codex n3-317col-v2-1611, NO ENTRA → arreglado)
+- **PÉRDIDA exige dato útil del ojo EN la celda del aeropuerto** (`coberturaUtil`): la celda leída entera (patas no null, no incompleta) o un «despejado» confirmado. Sin la celda, o con `sin_pixel`, `altura_invalida` u otro motivo: SIN DATO del ojo. Una destacada a ≤ 30 km sigue dando ACIERTO. La tabla del 16/11 no cambia (5 y 8 barridos útiles).
+- **Un 200 vacío, con espacios o con una lista vacía es una falla:** no revisa horas (no inventa faltantes), cuenta para el corte y el tramo del relleno queda pendiente. «Sin partes» es sólo el 204.
+- Tests: **34**; mutantes: **47 de 47**.

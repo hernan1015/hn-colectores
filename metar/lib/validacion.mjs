@@ -51,10 +51,24 @@ export function barridoDe(sobre) {
   if (!c || c.ok === false || !Array.isArray(c.celdas)) return null;
   const ms = Date.parse(c.scan_t || sobre.scan_t || '');
   if (!Number.isFinite(ms)) return null;
-  return { ms, zona: c.zona || null, parcial: !!c.parcial, celdas: c.celdas };
+  return { ms, zona: c.zona || null, parcial: !!c.parcial, celdas: c.celdas, sin_dato: Array.isArray(c.sin_dato) ? c.sin_dato : [], celda_grados: Number(c.celda_grados) || 0.2 };
 }
 const enZona = (z, lat, lon) => !z || (lat >= z.latMin && lat <= z.latMax && lon >= z.lonMin && lon <= z.lonMax);
 
+/**
+ * [n3-317col-v2 P2] ¿El ojo tuvo dato ÚTIL en la celda del aeropuerto en ese barrido? Se busca la celda del aeropuerto (la entrada
+ * de `celdas` o de `sin_dato` más cercana, a menos de media celda en cada eje). Útil sólo si es una celda leída entera (patas no
+ * null, no incompleta) o un «despejado» confirmado. Sin la celda, o con «sin_pixel», «altura_invalida» o cualquier otro motivo:
+ * NO útil. Ante la duda, «sin dato del ojo», nunca PÉRDIDA.
+ */
+export function coberturaUtil(b, est) {
+  const m = (b.celda_grados || 0.2) / 2 + 1e-9;
+  const en = (x) => Math.abs(x.lat - est.lat) <= m && Math.abs(x.lon - est.lon) <= m;
+  const c = b.celdas.filter(en)[0];
+  if (c) return !c.incompleta && c.patas != null;
+  const s = (b.sin_dato || []).filter(en)[0];
+  return !!s && s.motivo === 'despejado';
+}
 /** La ventana de búsqueda del ojo para un parte con granizo */
 export function ventana(p) {
   const ini = p.granizo && !p.granizo.observado && p.granizo.reciente ? p.ms - RECIENTE_MIN * MIN : p.ms;
@@ -68,8 +82,7 @@ function mirar(barridos, est, v) {
   for (const b of en) {
     // [n3-317col P5] un barrido cuenta para PÉRDIDA sólo si es útil para el aeropuerto: completo (no parcial) y sin que todas
     // sus celdas a ≤ 30 km estén incompletas. Uno parcial igual puede dar un ACIERTO (una destacada vale), nunca una pérdida.
-    const cerca = b.celdas.filter((c) => distanciaKm(est.lat, est.lon, c.lat, c.lon) <= RADIO_KM);
-    if (!b.parcial && !(cerca.length && cerca.every((c) => c.incompleta))) utiles++;
+    if (!b.parcial && coberturaUtil(b, est)) utiles++;
     for (const c of b.celdas) {
       const d = distanciaKm(est.lat, est.lon, c.lat, c.lon);
       if (d > RADIO_KM) continue;

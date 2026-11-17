@@ -372,6 +372,8 @@ test('el DERIVADO PÚBLICO para SATCHI: el granizo de las últimas 24 h y la úl
 
 // ───────────────────────── la validación del ojo ─────────────────────────
 const celda = (lat, lon, destacada, patas) => ({ lat, lon, destacada, patas });
+/* la celda del aeropuerto de Río Cuarto (SAOC −33,095 −64,273), leída entera y sin señal: el ojo TUVO dato ahí [n3-317col-v2 P2] */
+const AERO = celda(-33.1, -64.3, false, 0);
 const barr = (iso, celdas, zona = { latMin: -38, latMax: -22, lonMin: -66, lonMax: -56 }) => ({ cuerpo: JSON.stringify({ ok: true, scan_t: iso, zona, celdas }) });
 
 test('validación: Río Cuarto 16/11 contra barridos sintéticos — ACIERTO, PÉRDIDA y SIN DATO, con ±30 min y ≤ 30 km', () => {
@@ -382,9 +384,9 @@ test('validación: Río Cuarto 16/11 contra barridos sintéticos — ACIERTO, P�
   assert.equal(solo([barr('2026-11-16T18:15:21Z', [celda(-33.1, -64.15, true, 3)])]).filas[0].resultado, 'ACIERTO');
   // control negativo: la misma a 40 min → PÉRDIDA; a 45 km → PÉRDIDA; con 2 patas → PÉRDIDA
   assert.equal(solo([barr('2026-11-16T17:44:00Z', [celda(-33.1, -64.15, true, 3)])]).filas[0].resultado, 'SIN DATO', 'fuera de ±30 min no hay barrido en la ventana');
-  assert.equal(solo([barr('2026-11-16T17:44:00Z', [celda(-33.1, -64.15, true, 3)]), barr('2026-11-16T18:20:21Z', [])]).filas[0].resultado, 'PÉRDIDA');
-  assert.equal(solo([barr('2026-11-16T18:20:21Z', [celda(-33.1, -63.79, true, 3)])]).filas[0].resultado, 'PÉRDIDA', '~45 km');
-  const dos = solo([barr('2026-11-16T18:20:21Z', [celda(-33.1, -64.15, false, 2)])]).filas[0];
+  assert.equal(solo([barr('2026-11-16T17:44:00Z', [celda(-33.1, -64.15, true, 3)]), barr('2026-11-16T18:20:21Z', [AERO])]).filas[0].resultado, 'PÉRDIDA');
+  assert.equal(solo([barr('2026-11-16T18:20:21Z', [AERO, celda(-33.1, -63.79, true, 3)])]).filas[0].resultado, 'PÉRDIDA', '~45 km');
+  const dos = solo([barr('2026-11-16T18:20:21Z', [AERO, celda(-33.1, -64.15, false, 2)])]).filas[0];
   assert.equal(dos.mejor.patas, 2); assert.equal(dos.resultado, 'PÉRDIDA', '2 patas no es destacada');
   // sin barridos, o con el aeropuerto fuera de la zona del ojo: SIN DATO (nunca pérdida)
   assert.equal(solo([]).filas[0].resultado, 'SIN DATO');
@@ -459,7 +461,7 @@ test('[n3 P7] tres 200 que no son una lista JSON seguidos cortan el relleno', as
   const g = api(() => ({ status: 200, cuerpo: { no: 'lista' } }));
   assert.equal((await correr({ almacen: almacenCarpeta(carpeta()), fetchFn: g, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-12T00:00:00Z') })).estado, 'cortada');
   // control negativo: dos malas y después buenas no cortan (el contador se reinicia)
-  const h = api((u, k) => (k <= 2 ? { status: 200, cuerpo: '<html>' } : { cuerpo: [] }));
+  const h = api((u, k) => (k <= 2 ? { status: 200, cuerpo: '<html>' } : { status: 204, cuerpo: '' }));
   const r3 = await correr({ almacen: almacenCarpeta(carpeta()), fetchFn: h, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-11T00:00:00Z') });
   assert.equal(r3.estado, 'ok'); assert.equal(h.pedidos.length, 8);
 });
@@ -471,10 +473,10 @@ test('[n3 P5] validación: un barrido sin información útil para el aeropuerto 
   assert.equal(r([parcial([])]).resultado, 'SIN DATO');
   assert.match(r([parcial([])]).motivo, /no sirven/);
   assert.equal(r([parcial([celda(-33.1, -64.15, true, 3)])]).resultado, 'ACIERTO');
-  const inc = [{ lat: -33.1, lon: -64.15, patas: null, patas_min: 1, destacada: false, incompleta: true }];
-  assert.equal(r([barr('2026-11-16T18:20:21Z', inc)]).resultado, 'SIN DATO', 'completo pero con las celdas cercanas incompletas');
+  const inc = [{ lat: -33.1, lon: -64.3, patas: null, patas_min: 1, destacada: false, incompleta: true }];
+  assert.equal(r([barr('2026-11-16T18:20:21Z', inc)]).resultado, 'SIN DATO', 'completo pero con la celda del aeropuerto incompleta');
   // control negativo: un barrido completo sin destacadas sí es PÉRDIDA
-  assert.equal(r([barr('2026-11-16T18:20:21Z', [celda(-33.1, -64.15, false, 1)])]).resultado, 'PÉRDIDA');
+  assert.equal(r([barr('2026-11-16T18:20:21Z', [celda(-33.1, -64.3, false, 1)])]).resultado, 'PÉRDIDA');
 });
 
 test('[n3 P6] el workflow de validación baja las releases del día argentino anterior, del día y del siguiente', () => {
@@ -482,4 +484,39 @@ test('[n3 P6] el workflow de validación baja las releases del día argentino an
   assert.match(y, /for r in "\$\(date -u -d "\$d - 1 day" \+%F\)" "\$d" "\$\(date -u -d "\$d \+ 1 day" \+%F\)"; do/);
   // control: un scan del 16/11 01:00 UTC es del 15/11 argentino (la release granizo-2026-11-15)
   assert.equal(new Date(Date.parse('2026-11-16T01:00:00Z') - 3 * 3600e3).toISOString().slice(0, 10), '2026-11-15');
+});
+
+// ───────────────────────── 3.ª vuelta: n3-317col-v2-1611 (Codex) ─────────────────────────
+test('[n3-v2 P2] PÉRDIDA exige dato útil del ojo EN la celda del aeropuerto: sin la celda, «sin_pixel» o «altura_invalida» es SIN DATO', () => {
+  const partes = V.partesDe({ api: HIST }).filter((p) => p.granizo && p.granizo.observado);
+  const con = (celdas, sin_dato) => ({ cuerpo: JSON.stringify({ ok: true, parcial: false, scan_t: '2026-11-16T18:20:21Z', zona: { latMin: -38, latMax: -22, lonMin: -66, lonMax: -56 }, celda_grados: 0.2, celdas, sin_dato }) });
+  const r = (b) => V.validar({ partes, barridos: [V.barridoDe(b)] }).filas[0];
+  // el caso de Codex: completo, sin celdas, y la celda del aeropuerto en sin_dato por «sin_pixel»
+  assert.equal(r(con([], [{ lat: -33.1, lon: -64.3, motivo: 'sin_pixel' }])).resultado, 'SIN DATO');
+  assert.equal(r(con([], [{ lat: -33.1, lon: -64.3, motivo: 'altura_invalida' }])).resultado, 'SIN DATO');
+  assert.equal(r(con([], [])).resultado, 'SIN DATO', 'la celda del aeropuerto no aparece en ningún lado: ante la duda, sin dato');
+  assert.equal(r(con([celda(-33.1, -64.1, false, 1)], [])).resultado, 'SIN DATO', 'una celda vecina (a 16 km) no es la del aeropuerto');
+  assert.equal(r(con([celda(-33.1, -64.1, true, 3)], [{ lat: -33.1, lon: -64.3, motivo: 'sin_pixel' }])).resultado, 'ACIERTO', 'una destacada a ≤ 30 km sí acierta');
+  // control negativo: un «despejado» confirmado o la celda leída entera sí son dato útil → PÉRDIDA
+  assert.equal(r(con([], [{ lat: -33.1, lon: -64.3, motivo: 'despejado' }])).resultado, 'PÉRDIDA');
+  assert.equal(r(con([celda(-33.1, -64.3, false, 0)], [])).resultado, 'PÉRDIDA');
+  assert.equal(V.coberturaUtil(V.barridoDe(con([celda(-33.1, -64.3, false, 0)], [])), E.POR_ID.SAOC), true);
+});
+
+test('[n3-v2 P3] un 200 vacío, con espacios o con una lista vacía es una FALLA: no inventa faltantes ni marca el tramo como hecho; el 204 sí es «sin partes»', async () => {
+  for (const cuerpo of ['', '   ', []]) {
+    const alm = contado(almacenCarpeta(carpeta()));
+    const r = await correr({ almacen: alm, fetchFn: api(() => ({ status: 200, cuerpo })) });
+    assert.equal(r.estado, 'api-caida', JSON.stringify(cuerpo)); assert.equal(r.horas_revisadas, 0); assert.equal(r.faltantes, 0);
+    assert.deepEqual(alm.c.claves, ['metar/alertas.txt']);
+  }
+  const alm = almacenCarpeta(carpeta());
+  const f = api(() => ({ status: 200, cuerpo: '   ' }));
+  const r = await correr({ almacen: alm, fetchFn: f, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-11T00:00:00Z') });
+  assert.equal(f.pedidos.length, 3); assert.equal(r.estado, 'cortada'); assert.equal(r.tramos, 0); assert.equal(r.faltantes, 0);
+  assert.deepEqual((await leerJ(alm, 'metar/relleno.json')).tramos, {}, 'ningún tramo queda como hecho');
+  // control negativo: el 204 es una respuesta sin partes, el tramo sí queda hecho
+  const alm2 = almacenCarpeta(carpeta());
+  const r2 = await correr({ almacen: alm2, fetchFn: api(() => ({ status: 204, cuerpo: '' })), modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-10T06:00:00Z') });
+  assert.equal(r2.tramos, 2); assert.equal((await leerJ(alm2, 'metar/relleno.json')).tramos['2026111003'], 'hecho');
 });
