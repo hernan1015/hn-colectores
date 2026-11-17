@@ -109,6 +109,20 @@ con la paleta continua DESPUÉS (el método de `_v795` de HN AGRO). El contrato 
 - **Los tests:** `test/test_valores.py`. El control negativo suma 15 mutantes de la v2 en `test/control_negativo.py`.
 - **La v2 está aislada del v1** (Codex n3-312c-col): se arma aparte en `Fuente._v2`, y si no se puede, el v1 sale igual y la hora va a `valores_fallan` del sobre. Leer la v2 al recuperar un cuadro tampoco tumba la corrida.
 
+## [312d · 17/11] El viento (u y v), sólo v2
+
+Para el viento animado de MODELOS en SATCHI (el método de `_v795` de HN AGRO). El contrato está en
+[CONTRATO-R2-v2.md §8](CONTRATO-R2-v2.md).
+
+- **Qué se baja:** u y v de 10 m, 850 hPa y 250 hPa de las 3 fuentes. ECMWF y GFS por rango del índice que ya se bajó para el
+  v1, cada 6 h; ICON un `.bz2` por componente, nivel y hora, **cada 12 h** por el peso (~240 MB por corrida; cada 6 h serían ~460).
+- **Qué se publica:** `v2/{f}/{cc}/viento10m|viento850|viento250/{fff}.val.png` (gris de 16 bits, 125 × 330: u arriba y v abajo,
+  `(q − 32768) × 0,1` m/s) y su `.val.json`. El sobre suma `viento` y `viento_fallan`.
+- **El v1 sale siempre:** el viento es una segunda fase, cuando el v1 de todas las fuentes ya está publicado; cada cuadro y la fase
+  entera tienen su try; topes de 3 fallas seguidas, 20 min y 3 pasadas por corrida.
+- **La llave:** `MODELOS_VIENTO` (variable del repo; vacía = las mismas fuentes, `no` lo apaga, o una lista).
+- **Los tests:** `test/test_viento.py` (19). El control negativo suma 17 mutantes del viento.
+
 ## Idempotencia, reintentos y retención
 
 - **Una corrida terminada no se rehace.** Terminada quiere decir `completa`, o `parcial` con 3 intentos.

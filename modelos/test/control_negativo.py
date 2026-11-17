@@ -80,6 +80,24 @@ MUTANTES = [
     ('v2: la fallida no se anota', 'tuberia.py', "                    sobre['valores_fallan'][variable].append(h)\n", "                    pass\n"),
     ('v2: la retención no la borra', 'tuberia.py', 'for pre in (V, valores.V2):', 'for pre in (V,):'),
     ('v2: no se recupera al perder el sobre', 'tuberia.py', "                    if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):", '                    if False:'),
+    # [312d] el viento (u y v, sólo v2)
+    ('viento: u y v cruzadas en el PNG', 'valores.py', '    for c in (u, v):', '    for c in (v, u):'),
+    ('viento: sin el cero (los negativos se cortan)', 'valores.py', 'q = np.rint(np.where(nan, 0.0, a) / ESCALA_VIENTO) + CERO_VIENTO', 'q = np.rint(np.where(nan, 0.0, a) / ESCALA_VIENTO)'),
+    ('viento: el NaN no se marca', 'valores.py', '        out.append(np.where(nan, SIN_DATO, q).astype(np.uint16))', '        out.append(q)'),
+    ('viento: GFS toma otro nivel', 'fuentes.py', "'10 m above ground' if nivel == 'viento10m' else '%s mb' % nivel[6:],", "'10 m above ground' if nivel == 'viento10m' else '500 mb',"),
+    ('viento: ECMWF no mira el levelist', 'fuentes.py', "\n                     and str(x.get('levelist')) == nivel[6:]]", ']'),
+    ('viento: no mira el nivel del GRIB', 'fuentes.py', "'viento250': ((100, 25000.0), (255, None))}", "'viento250': ((100, None), (255, None))}"),
+    ('viento: sin control de unidades', 'fuentes.py', 'if np.abs(a).max() > VIENTO_MAX:', 'if False:'),
+    ('viento: ICON a la malla del PNG v1', 'fuentes.py', "        return M.a_v2(c['valores'], c['malla']['uuid'])\n", "        return M.a_salida(c['valores'], c['malla']['uuid'])\n"),
+    ('viento: un error de un cuadro corta todo el viento', 'tuberia.py', '            except Exception as e:       # cualquier cosa: el viento NUNCA tumba nada', '            except ValueError as e:       # cualquier cosa: el viento NUNCA tumba nada'),
+    ('viento: la fase sin su propio try (tumba el índice del v1)', 'tuberia.py', '        except Exception as e:           # ni siquiera un error inesperado del viento frena el índice del v1', '        except KeyError as e:           # ni siquiera un error inesperado del viento frena el índice del v1'),
+    ('viento: sin tope de tiempo', 'tuberia.py', 'if hasta is not None and reloj() > hasta:', 'if False:'),
+    ('viento: sin tope de intentos', 'tuberia.py', "if not sobre or sobre.get('viento_intentos', 0) >= VIENTO_MAX_INTENTOS:", 'if not sobre:'),
+    ('viento: no se corta tras 3 fallas', 'tuberia.py', 'if seguidas >= CORTE_FALLAS_VIENTO:', 'if False:'),
+    ('viento: pisa lo ya publicado', 'tuberia.py', "    if not almacen.escribir(kwp, png, 'image/png', CACHE_CUADRO, si_no_existe=True):", "    if not almacen.escribir(kwp, png, 'image/png', CACHE_CUADRO):"),
+    ('viento: el colector no lo pasa', '../colector.py', 'tuberia.correr(red, almacen, llave=llave, fuentes=fs, viento=viento_de(env, fs))', 'tuberia.correr(red, almacen, llave=llave, fuentes=fs)'),
+    ('viento: apagado por defecto', '../colector.py', "    if not x or x in ('si', 'sí', 'todas'):", "    if not x:\n        return ()\n    if x in ('si', 'sí', 'todas'):"),
+    ('viento: ICON cada 6 h (el peso)', 'fuentes.py', '    horas_viento = tuple(range(0, 121, 12))', '    horas_viento = tuple(range(0, 121, 6))'),
 ]
 
 

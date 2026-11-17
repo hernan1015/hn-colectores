@@ -8,12 +8,17 @@
 - Orden de escritura: PNG → JSON del cuadro → sobre de la corrida → índice → (retención) borrado de lo viejo.
   Quien lee el índice nunca encuentra una corrida a medias.
 - Una fuente que falla no frena a las otras. Si fallan 3 pedidos seguidos a una fuente, esa fuente se corta por esta vez.
+- [312d] EL VIENTO (u y v, sólo v2) va en una SEGUNDA FASE, cuando el v1 de TODAS las fuentes ya está publicado y su sobre escrito:
+  cualquier error del viento (bajar, armar, publicar, hasta uno inesperado) queda adentro de su propio try y sólo lo anota
+  (`viento_fallan`); nunca toca un cuadro v1 ni su sobre. Tiene un tope de tiempo y de intentos por corrida, para que un viento
+  lento no demore nunca el índice (el que hace visible el v1) más que el tope.
 """
 import json
+import time
 from datetime import datetime, timezone
 
 from . import paleta, valores
-from .fuentes import FUENTES, ErrorFuente
+from .fuentes import FUENTES, NIVELES_VIENTO, ErrorFuente
 from .red import ErrorRed
 
 V = 'v1'
@@ -25,6 +30,9 @@ CORTE_FALLAS_SEGUIDAS = 3
 CACHE_CUADRO = 'public, max-age=86400, immutable'
 CACHE_SOBRE_COMPLETA = 'public, max-age=3600'
 CACHE_CORTA = 'public, max-age=300'
+VIENTO_MAX_INTENTOS = 3          # [312d] pasadas que prueban el viento de una corrida (después queda como está)
+VIENTO_TOPE_S = 20 * 60          # [312d] tope de la fase del viento por pasada (el workflow tiene 60 min)
+CORTE_FALLAS_VIENTO = 3          # [312d] cuadros de viento fallidos seguidos → se corta el viento de esa fuente por esta vez
 
 
 def iso(d):
@@ -119,6 +127,104 @@ def publicar_valores(almacen, fuente, cc, variable, h, meta, info):
     return True
 
 
+# ── [312d] EL VIENTO: la segunda fase ───────────────────────────────────────────────────────────────────────────────────────
+def meta_viento(fuente, corrida, nivel, h, u, v, png, info):
+    """el JSON del cuadro de viento (v2): lo común del cuadro (fuente, corrida, horas, caja, cita, aviso) + la codificación"""
+    import numpy as np
+    from . import malla
+    from .grib import valida
+    vel = np.hypot(np.asarray(u, dtype='f8'), np.asarray(v, dtype='f8'))
+    N = valores.NIVELES_VIENTO[nivel]
+    return {
+        'v': 2, 'fuente': fuente.id, 'modelo': fuente.modelo, 'corrida': clave_corrida(corrida), 'corrida_iso': iso(corrida),
+        'hora_pronostico': h, 'valida_iso': iso(valida(corrida, h)), 'variable': nivel, 'nombre': N['nombre'], 'nivel': dict(N['nivel']),
+        'unidades': 'm/s', 'componentes': 'u = hacia el este, v = hacia el norte (m/s); el rumbo «de dónde viene» es atan2(−u, −v)',
+        'periodo': None, 'cape_tipo': None, 'parametro_fuente': info['parametro_fuente'], 'caja': dict(malla.CAJA),
+        'resolucion_fuente': fuente.resolucion, 'paleta': valores.PALETA_VIENTO,
+        'valores': {'png': '%03d.val.png' % h, 'tipo': 'PNG gris 16 bits (big-endian), sin filtro; filas 0-164 = u, 165-329 = v',
+                    'escala': valores.ESCALA_VIENTO, 'cero': valores.CERO_VIENTO, 'sin_dato': valores.SIN_DATO,
+                    'componentes': ['u', 'v'], 'formula': 'valor = (q − cero) × escala; q = sin_dato → NaN'},
+        'grilla': malla.grilla_v2(), 'regrillado': info.get('regrillado'),
+        'estadisticas': {'vel_max': round(float(np.nanmax(vel)), 2), 'vel_media': round(float(np.nanmean(vel)), 3),
+                         'sin_dato': int(np.isnan(vel).sum())},
+        'cita': dict(fuente.cita, texto=fuente.cita['texto'].replace('%(anio)d', str(corrida.year))),
+        'aviso': 'PRONÓSTICO del modelo %s, corrida %s %02d UTC: no es observación ni aviso oficial.' % (
+            fuente.nombre, corrida.strftime('%d/%m'), corrida.hour),
+        'firma': paleta.firma(png),
+    }
+
+
+def publicar_viento(almacen, fuente, corrida, nivel, h, u, v, info):
+    """el cuadro de viento: PNG y después JSON, con If-None-Match: * (nunca se pisa; si ya estaba, sólo sigue si es el MISMO)"""
+    cc = clave_corrida(corrida)
+    png = valores.png16(valores.codificar_viento(u, v))
+    m = meta_viento(fuente, corrida, nivel, h, u, v, png, info)
+    kwp, kwj = k_valores(fuente.id, cc, nivel, h, 'png'), k_valores(fuente.id, cc, nivel, h, 'json')
+    if not almacen.escribir(kwp, png, 'image/png', CACHE_CUADRO, si_no_existe=True):
+        viejo = almacen.leer(kwp)
+        if viejo is None or paleta.firma(viejo) != m['firma']:
+            raise ValueError('ya hay otro viento publicado en %s: no se pisa' % kwp)
+    if not almacen.escribir(kwj, _json(m), 'application/json', CACHE_CUADRO, si_no_existe=True):
+        if _firma_publicada(almacen, kwj) != m['firma']:
+            raise ValueError('ya hay otro JSON de viento publicado en %s: no se pisa' % kwj)
+    return m
+
+
+def viento_pendiente(fuente, sobre):
+    """¿le falta viento a esta corrida y le quedan intentos?"""
+    if not sobre or sobre.get('viento_intentos', 0) >= VIENTO_MAX_INTENTOS:
+        return False
+    hechos = sobre.get('viento') or {}
+    return any(h not in (hechos.get(n) or []) for n in NIVELES_VIENTO for h in fuente.horas_viento)
+
+
+def procesar_viento(fuente, corrida, sobre, red, almacen, log, hasta=None, reloj=time.monotonic):
+    """el viento de una corrida cuyo v1 ya está publicado. Anota en el sobre `viento` (lo publicado) y `viento_fallan`. TODO error
+    queda acá adentro: el que llama sólo vuelve a escribir el sobre (el del v1 ya estaba escrito antes de empezar)."""
+    cc = clave_corrida(corrida)
+    sobre['viento_intentos'] = sobre.get('viento_intentos', 0) + 1
+    hechos = sobre.setdefault('viento', {})
+    fallan = sobre.setdefault('viento_fallan', {})
+    for n in NIVELES_VIENTO:
+        hechos.setdefault(n, [])
+        fallan.setdefault(n, [])
+    seguidas, nuevos, cortado = 0, 0, ''
+    for nivel in NIVELES_VIENTO:
+        for h in fuente.horas_viento:
+            if h in hechos[nivel]:
+                continue
+            if hasta is not None and reloj() > hasta:
+                cortado = 'tope de tiempo'
+                break
+            try:
+                if _firma_publicada(almacen, k_valores(fuente.id, cc, nivel, h, 'json')):   # ya estaba (una pasada sin sobre)
+                    hechos[nivel].append(h)
+                    continue
+                u, v, info = fuente.viento(red, corrida, nivel, h)
+                publicar_viento(almacen, fuente, corrida, nivel, h, u, v, info)
+                hechos[nivel].append(h)
+                seguidas, nuevos = 0, nuevos + 1
+            except Exception as e:       # cualquier cosa: el viento NUNCA tumba nada
+                fallan[nivel].append(h)
+                seguidas += 1
+                log('  %s %s %s +%d h: sin viento (%s: %s)' % (fuente.id, cc, nivel, h, type(e).__name__, e))
+                if seguidas >= CORTE_FALLAS_VIENTO:
+                    cortado = '%d fallas seguidas' % seguidas
+                    break
+        if cortado:
+            break
+    for n in NIVELES_VIENTO:
+        hechos[n] = sorted(set(hechos[n]))
+        fallan[n] = sorted(set(fallan[n]) - set(hechos[n]))
+    log('  %s %s: viento, %d cuadros nuevos%s' % (fuente.id, cc, nuevos, (' (cortado: %s)' % cortado) if cortado else ''))
+    return sobre
+
+
+def escribir_sobre(almacen, fuente, cc, sobre):
+    almacen.escribir(k_sobre(fuente.id, cc), _json(sobre), 'application/json',
+                     CACHE_SOBRE_COMPLETA if sobre['estado'] == 'completa' else CACHE_CORTA)
+
+
 def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
     cc = clave_corrida(corrida)
     if sobre is None:
@@ -188,8 +294,7 @@ def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
     sobre['pedidos'] = sobre.get('pedidos', 0) + red.pedidos - p0
     sobre['bytes_bajados'] = sobre.get('bytes_bajados', 0) + red.bytes - b0
     sobre['generado'] = iso(ahora)
-    almacen.escribir(k_sobre(fuente.id, cc), _json(sobre), 'application/json',
-                     CACHE_SOBRE_COMPLETA if sobre['estado'] == 'completa' else CACHE_CORTA)
+    escribir_sobre(almacen, fuente, cc, sobre)
     log('  %s %s: %s, %d cuadros nuevos, %d recuperados, %d pedidos, %.1f MB' % (
         fuente.id, cc, sobre['estado'], hechos, recuperados, red.pedidos - p0, (red.bytes - b0) / 1e6))
     return sobre
@@ -229,7 +334,9 @@ def actualizar_indice(indice, fid, corrida, sobre, retener):
     return [c for c in todas if c not in quedan]
 
 
-def correr(red, almacen, ahora=None, llave='', fuentes=None, retener=RETENER, log=print):
+def correr(red, almacen, ahora=None, llave='', fuentes=None, retener=RETENER, log=print, viento=(), viento_tope_s=VIENTO_TOPE_S,
+           reloj=time.monotonic):
+    """viento: las fuentes a las que además se les arma el viento (la segunda fase; vacío = ninguna). Lo decide el colector."""
     if (llave or '').strip().lower() != 'si':
         log('llave apagada (MODELOS_ON != «si»): no se hace nada')
         return {'hecho': False}
@@ -238,7 +345,7 @@ def correr(red, almacen, ahora=None, llave='', fuentes=None, retener=RETENER, lo
     previo = _leer_json(almacen, K_INDICE)
     indice = previo if previo and previo.get('v') == 1 else indice_vacio()
     antes = _json(dict(indice, actualizado=None))
-    salen, errores = {}, []
+    salen, errores, hechas = {}, [], []
     for f in fuentes:
         log('%s:' % f.id)
         try:
@@ -249,6 +356,23 @@ def correr(red, almacen, ahora=None, llave='', fuentes=None, retener=RETENER, lo
         except IOError as e:
             errores.append('%s: %s' % (f.id, e))   # R2: la corrida queda en rojo
             continue
+        hechas.append((f, c, sobre))
+    # [312d] LA SEGUNDA FASE, EL VIENTO: el v1 de todas las fuentes ya está publicado (cuadros y sobre). El índice se escribe
+    # después, para que el sobre que ve el front (y que la caché del borde guarda) ya traiga el viento; el tope de tiempo y el de
+    # intentos por corrida acotan cuánto puede demorarse el índice.
+    hasta = reloj() + viento_tope_s
+    for f, c, sobre in hechas:
+        if f.id not in (viento or ()) or c is None or sobre is None or not viento_pendiente(f, sobre):
+            continue
+        try:
+            p0, b0 = red.pedidos, red.bytes
+            procesar_viento(f, c, sobre, red, almacen, log, hasta=hasta, reloj=reloj)
+            sobre['pedidos_viento'] = sobre.get('pedidos_viento', 0) + red.pedidos - p0
+            sobre['bytes_viento'] = sobre.get('bytes_viento', 0) + red.bytes - b0
+            escribir_sobre(almacen, f, clave_corrida(c), sobre)
+        except Exception as e:           # ni siquiera un error inesperado del viento frena el índice del v1
+            log('  %s: el viento no se pudo guardar (%s: %s); el v1 queda' % (f.id, type(e).__name__, e))
+    for f, c, sobre in hechas:
         salen[f.id] = actualizar_indice(indice, f.id, c, sobre, retener)
     if _json(dict(indice, actualizado=None)) != antes or previo is None:
         indice['actualizado'] = iso(ahora)
