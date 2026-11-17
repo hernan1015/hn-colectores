@@ -1,0 +1,11 @@
+{
+  "name": "hn-colector-gremlin",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · GREMLIN (CIRA/RAMMB SLIDER, GOES-19) recortado a la Argentina, en R2, cada 10 min",
+  "scripts": {
+    "colectar": "node gremlin.mjs",
+    "test": "node --test test/gremlin.test.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

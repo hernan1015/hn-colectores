@@ -1,0 +1,295 @@
+// Tests del colector de GREMLIN (311). Sin red: SLIDER de mentira y almacén en carpeta temporal (ver falsos.mjs).
+// Correr: npm test (dentro de gremlin/). El control negativo está en control-negativo.mjs.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { S, C, ALM, carpetaTemporal, sliderFalso, tiemposHasta, pngFalso, leerDato, sinEspera, callado } from './falsos.mjs';
+
+const AHORA = Date.UTC(2026, 10, 17, 0, 55);                 // 17/11/2026 00:55 UTC
+const ULT = Date.UTC(2026, 10, 17, 0, 30);                   // último tiempo de SLIDER: 00:30 UTC
+const T = '20261117003000';
+const ARGENTINA = ['005_003', '005_004', '005_005', '006_003', '006_004', '006_005', '007_003', '007_004', '007_005'];
+
+const nuevo = () => ALM.almacenCarpeta(carpetaTemporal());
+const leerJ = async (alm, k) => JSON.parse((await alm.leer(k)).toString('utf8'));
+const correr = (o) => C.correr({ llave: 'si', ahoraMs: AHORA, esperar: sinEspera, log: callado, ...o });
+
+// ---------- nombres, URLs y claves ----------
+test('URLs de SLIDER: las mismas que se probaron a mano el 16/11', () => {
+  assert.equal(S.urlTiempos(), 'https://slider.cira.colostate.edu/data/json/goes-19/full_disk/gremlin/latest_times.json');
+  assert.equal(S.urlTesela(T, 6, 4), 'https://slider.cira.colostate.edu/data/imagery/2026/11/17/goes-19---full_disk/gremlin/20261117003000/03/006_004.png');
+  assert.equal(S.ZOOM, 3, 'zoom nativo de GREMLIN: max_zoom_level 5 − zoom_level_adjust 2 = 3 (2 km)');
+  assert.equal(S.UA, 'hn-colector/1.0');
+});
+
+test('claves: una carpeta por tiempo (día UTC del propio tiempo), la tesela con zoom y fila_col, el sobre y el índice del día', () => {
+  assert.equal(C.claveTesela(T, { fila: 6, col: 4 }), 'gremlin/2026/11/17/20261117003000/03/006_004.png');
+  assert.equal(C.claveSobre(T), 'gremlin/2026/11/17/20261117003000/sobre.json');
+  assert.equal(C.claveIndiceDia(T), 'gremlin/2026/11/17/indice.json');
+  // control negativo: las 23:50 UTC del 16 van al 16 (no al día argentino ni al de la corrida), y fila ≠ columna
+  assert.equal(C.claveIndiceDia('20261116235000'), 'gremlin/2026/11/16/indice.json');
+  assert.notEqual(C.claveTesela(T, { fila: 4, col: 6 }), C.claveTesela(T, { fila: 6, col: 4 }));
+  assert.notEqual(C.claveTesela('20261117002000', { fila: 6, col: 4 }), C.claveTesela(T, { fila: 6, col: 4 }));
+  assert.throws(() => C.claveTesela('2026111700300', { fila: 6, col: 4 }), /tiempo inválido/);
+  assert.throws(() => C.claveSobre('20261317003000'), /tiempo inválido/, 'mes 13');
+});
+
+test('latest_times.json real (17/11 00:30): 100 tiempos válidos, del más viejo al más nuevo; basura afuera', () => {
+  const t = S.parsearTiempos(JSON.parse(leerDato('latest_times_20261117T0030Z.json').toString('utf8')));
+  assert.equal(t.length, 100);
+  assert.equal(t[0], '20261116060000');
+  assert.equal(t.at(-1), T);
+  assert.deepEqual(t, [...t].sort());
+  // control negativo: repetidos, cortos, fechas imposibles y texto no pasan
+  assert.deepEqual(S.parsearTiempos({ timestamps_int: [T, Number(T), 2026111700, 20261117256000, 'hola', null] }), [T]);
+  assert.throws(() => S.parsearTiempos({ times: [] }), /timestamps_int/);
+});
+
+// ---------- el recorte ----------
+test('recorte: la caja Argentina toca exactamente 9 teselas al zoom 3 (filas 5-7, columnas 3-5)', () => {
+  assert.deepEqual(S.teselasCaja().map(C.nombreTesela), ARGENTINA);
+  const en = (lat, lon) => { const t = S.teselaDe(lat, lon); return t && C.nombreTesela(t); };
+  assert.equal(en(-31.4, -64.2), '006_004', 'Córdoba');
+  assert.equal(en(-54.8, -68.3), '007_004', 'Ushuaia');
+  assert.equal(en(-22.1, -65.6), '005_004', 'La Quiaca');
+  assert.equal(en(-25.6, -54.6), '005_005', 'Iguazú');
+  assert.equal(en(-27.08, -61.08), '006_004', 'Las Breñas');
+  // control negativo: lo de afuera de la caja cae en otras teselas, y del otro lado de la Tierra no hay tesela
+  assert.ok(!ARGENTINA.includes(en(-12.0, -77.0)), 'Lima');
+  assert.ok(!ARGENTINA.includes(en(25.8, -80.2)), 'Miami');
+  assert.equal(S.teselaDe(40.4, -3.7 + 180), null, 'antípoda: fuera del disco');
+  assert.ok(S.teselasCaja({ lat_min: -35, lat_max: -34, lon_min: -59, lon_max: -58 }).length < 9, 'una caja chica toca menos');
+});
+
+test('recorte en la corrida: se piden sólo las 9 teselas de la caja, al zoom 3', async () => {
+  const sl = sliderFalso({ tiempos: [T] });
+  await correr({ almacen: nuevo(), fetchFn: sl.fetchFn });
+  const pedidas = sl.teselasPedidas().map((p) => p.url.match(/\/(\d{2})\/(\d{3}_\d{3})\.png$/));
+  assert.deepEqual(pedidas.map((m) => m[2]).sort(), ARGENTINA);
+  assert.ok(pedidas.every((m) => m[1] === '03'));
+});
+
+// ---------- el sobre y el índice ----------
+test('sobre: producto, tiempo, caja, zoom, teselas (con bytes y sha256), faltantes y fuente con cita; índice del día', async () => {
+  const alm = nuevo();
+  const sl = sliderFalso({ tiempos: [T] });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn });
+  assert.equal(r.completos, 1);
+  const s = await leerJ(alm, C.claveSobre(T));
+  assert.equal(s.producto, 'gremlin');
+  assert.equal(s.titulo, 'GREMLIN (CIRA)');
+  assert.equal(s.satelite, 'goes-19');
+  assert.equal(s.sector, 'full_disk');
+  assert.equal(s.tiempo, '2026-11-17T00:30:00Z');
+  assert.equal(s.tiempo_slider, T);
+  assert.deepEqual(s.caja, { lat_min: -56.5, lat_max: -20, lon_min: -76.5, lon_max: -52 });
+  assert.equal(s.zoom, 3);
+  assert.equal(s.resolucion, '2 km');
+  assert.equal(s.estado, 'completo');
+  assert.deepEqual(s.faltantes, []);
+  assert.deepEqual(s.teselas.map(C.nombreTesela), ARGENTINA);
+  for (const x of s.teselas) {
+    const b = await alm.leer(x.clave);
+    assert.ok(b, `existe ${x.clave}`);
+    assert.equal(x.bytes, b.length);
+    assert.match(x.sha256, /^[0-9a-f]{64}$/);
+  }
+  assert.match(s.fuente.cita, /GOES-19 · NOAA · imágenes CIRA\/RAMMB SLIDER/);
+  assert.match(s.fuente.cita, /GREMLIN \(CIRA\)/);
+  assert.match(s.fuente.aclaracion, /no es radar/);
+  assert.match(s.fuente.url_teselas, /goes-19---full_disk\/gremlin\/AAAAMMDDhhmmss\/03\/FFF_CCC\.png$/);
+  const ind = await leerJ(alm, C.claveIndiceDia(T));
+  assert.equal(ind.producto, 'gremlin');
+  assert.deepEqual(ind.teselas_esperadas, ARGENTINA);
+  assert.deepEqual(ind.tiempos[T], { estado: 'completo', n: 9, faltantes: [], intentos: 1, sobre: C.claveSobre(T) });
+});
+
+// ---------- idempotencia ----------
+test('idempotencia: la segunda corrida con los mismos tiempos sólo pide latest_times y no escribe nada', async () => {
+  const alm = nuevo();
+  const tiempos = tiemposHasta(ULT, 3);
+  const sl1 = sliderFalso({ tiempos });
+  const r1 = await correr({ almacen: alm, fetchFn: sl1.fetchFn });
+  assert.equal(r1.guardados, 3);
+  assert.equal(sl1.teselasPedidas().length, 27);
+  const antes = await alm.listar('gremlin/');
+  const sl2 = sliderFalso({ tiempos });
+  const r2 = await correr({ almacen: alm, fetchFn: sl2.fetchFn, ahoraMs: AHORA + 600000 });
+  assert.equal(r2.pedidos, 1);
+  assert.equal(r2.guardados, 0);
+  assert.equal(sl2.teselasPedidas().length, 0);
+  assert.deepEqual(await alm.listar('gremlin/'), antes);
+  // y con un tiempo nuevo, se baja sólo ése
+  const sl3 = sliderFalso({ tiempos: [...tiempos, '20261117004000'] });
+  const r3 = await correr({ almacen: alm, fetchFn: sl3.fetchFn, ahoraMs: AHORA + 1200000 });
+  assert.equal(r3.guardados, 1);
+  assert.ok(sl3.teselasPedidas().every((p) => p.url.includes('/20261117004000/')));
+});
+
+// ---------- faltantes ----------
+test('una tesela que falla queda como faltante, no se guarda nada en su clave y se reintenta (sólo ella) en la corrida siguiente', async () => {
+  const alm = nuevo();
+  const sl1 = sliderFalso({ tiempos: [T], tesela: (t, f, c) => (f === 6 && c === 4 ? { status: 404 } : null) });
+  const r1 = await correr({ almacen: alm, fetchFn: sl1.fetchFn });
+  assert.equal(r1.incompletos, 1);
+  let s = await leerJ(alm, C.claveSobre(T));
+  assert.equal(s.estado, 'incompleto');
+  assert.deepEqual(s.faltantes, [{ fila: 6, col: 4, motivo: 'HTTP 404' }]);
+  assert.equal(s.teselas.length, 8);
+  assert.equal(await alm.leer(C.claveTesela(T, { fila: 6, col: 4 })), null, 'sin basura en la clave');
+  assert.deepEqual((await leerJ(alm, C.claveIndiceDia(T))).tiempos[T].faltantes, ['006_004']);
+
+  const sl2 = sliderFalso({ tiempos: [T] });
+  const r2 = await correr({ almacen: alm, fetchFn: sl2.fetchFn, ahoraMs: AHORA + 600000 });
+  assert.equal(r2.completos, 1);
+  assert.deepEqual(sl2.teselasPedidas().map((p) => p.url.slice(-11)), ['006_004.png'], 'no vuelve a bajar las 8 que ya estaban');
+  s = await leerJ(alm, C.claveSobre(T));
+  assert.equal(s.estado, 'completo');
+  assert.equal(s.intentos, 2);
+  assert.deepEqual(s.teselas.map(C.nombreTesela), ARGENTINA);
+  assert.ok(await alm.leer(C.claveTesela(T, { fila: 6, col: 4 })));
+});
+
+test('sin basura: un 200 que no es PNG, un PNG cortado, uno de otro tamaño o uno más corto que lo anunciado quedan faltantes', async () => {
+  const alm = nuevo();
+  const real = leerDato('tesela_20261117003000_005_005.png');
+  assert.equal(S.motivoTeselaMala(real), null, 'la tesela real de SLIDER pasa');
+  const malas = {
+    '005_003': { cuerpo: '<html><body>SLIDER en mantenimiento, vuelva más tarde</body></html>', tipo: 'text/html' },
+    '005_004': { cuerpo: real.subarray(0, real.length - 100) },
+    '005_005': pngFalso(256, 256),
+    '006_003': { cuerpo: real, largo: real.length + 10 },
+  };
+  const sl = sliderFalso({ tiempos: [T], tesela: (t, f, c) => malas[C.nombreTesela({ fila: f, col: c })] ?? real });
+  await correr({ almacen: alm, fetchFn: sl.fetchFn });
+  const s = await leerJ(alm, C.claveSobre(T));
+  assert.deepEqual(s.faltantes.map((x) => `${C.nombreTesela(x)} ${x.motivo}`), [
+    '005_003 no es PNG', '005_004 PNG cortado (sin IEND)', '005_005 PNG de 256×256', '006_003 tamaño distinto del anunciado',
+  ]);
+  for (const n of Object.keys(malas)) {
+    const [f, c] = n.split('_').map(Number);
+    assert.equal(await alm.leer(C.claveTesela(T, { fila: f, col: c })), null, `nada guardado en ${n}`);
+  }
+  assert.equal(s.teselas.length, 5);
+  // control negativo: el validador sí rechaza cada una por separado
+  assert.equal(S.motivoTeselaMala(Buffer.from('<html>')), 'muy corta');
+  assert.equal(S.motivoTeselaMala(pngFalso()), null);
+});
+
+test(`un tiempo incompleto se deja de reintentar a los ${4} intentos (y uno que SLIDER ya no lista no se pide más)`, async () => {
+  const alm = nuevo();
+  const siempre404 = (t, f, c) => (f === 7 && c === 3 ? { status: 404 } : null);
+  for (let i = 0; i < C.MAX_INTENTOS; i++) {
+    const sl = sliderFalso({ tiempos: [T], tesela: siempre404 });
+    await correr({ almacen: alm, fetchFn: sl.fetchFn, ahoraMs: AHORA + i * 600000 });
+    assert.equal(sl.teselasPedidas().length, i === 0 ? 9 : 1);
+  }
+  assert.equal((await leerJ(alm, C.claveSobre(T))).intentos, C.MAX_INTENTOS);
+  const sl = sliderFalso({ tiempos: [T], tesela: siempre404 });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn, ahoraMs: AHORA + 9 * 600000 });
+  assert.equal(r.pendientes, 0);
+  assert.equal(sl.teselasPedidas().length, 0);
+});
+
+test('ventana: no pide tiempos de más de 18 h ni del futuro', () => {
+  const viejo = '20261116063000';            // 18 h 25 min antes de AHORA
+  const borde = '20261116070000';            // 17 h 55 min
+  const futuro = '20261117020000';
+  assert.deepEqual(C.pendientes([viejo, borde, T, futuro], new Map(), AHORA), [borde, T]);
+});
+
+// ---------- tope y cortesía ----------
+test('tope: nunca más pedidos que el tope, y un tiempo entra entero o queda para la próxima', async () => {
+  const alm = nuevo();
+  const sl = sliderFalso({ tiempos: tiemposHasta(ULT, 20) });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn, tope: 30 });
+  assert.ok(sl.pedidos.length <= 30, `pidió ${sl.pedidos.length}`);
+  assert.equal(r.pedidos, 28, '1 + 3 tiempos × 9');
+  assert.equal(r.guardados, 3);
+  const sobres = (await alm.listar('gremlin/')).filter((k) => k.endsWith('sobre.json'));
+  assert.equal(sobres.length, 3);
+  assert.ok(sobres[0].includes(tiemposHasta(ULT, 20)[0]), 'empieza por el más viejo (el primero que SLIDER borra)');
+  // el tope se acota: ni menos de 10 (un tiempo entero) ni más de 300
+  assert.equal(C.acotarTope('5'), 10);
+  assert.equal(C.acotarTope('5000'), 300);
+  assert.equal(C.acotarTope(''), C.TOPE_DEFECTO);
+  assert.equal(C.TOPE_DEFECTO, 60);
+});
+
+test('cortesía: UA hn-colector/1.0 en cada pedido y una pausa de 1 s entre pedidos', async () => {
+  const pausas = [];
+  const sl = sliderFalso({ tiempos: [T] });
+  await C.correr({ almacen: nuevo(), fetchFn: sl.fetchFn, llave: 'si', ahoraMs: AHORA, log: callado, esperar: async (ms) => { pausas.push(ms); } });
+  assert.equal(sl.pedidos.length, 10);
+  assert.ok(sl.pedidos.every((p) => p.ua === 'hn-colector/1.0'));
+  assert.deepEqual(pausas, Array(9).fill(1000));
+});
+
+test('un 429 de SLIDER corta la corrida en el acto; lo no pedido queda faltante y la alerta anotada', async () => {
+  const alm = nuevo();
+  const sl = sliderFalso({ tiempos: tiemposHasta(ULT, 3), tesela: (t, f, c) => (f === 5 && c === 5 ? { status: 429 } : null) });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn });
+  assert.equal(r.estado, 'cortada');
+  assert.equal(sl.teselasPedidas().length, 3, '005_003, 005_004 y la del 429');
+  assert.equal(r.guardados, 1);
+  const s = await leerJ(alm, C.claveSobre(tiemposHasta(ULT, 3)[0]));
+  assert.equal(s.faltantes.length, 7);
+  assert.match((await alm.leer(C.CLAVE_ALERTAS)).toString(), /SLIDER respondió 429/);
+});
+
+test('tres fallas de red seguidas cortan la corrida', async () => {
+  const alm = nuevo();
+  const sl = sliderFalso({ tiempos: [T], tesela: () => 'red' });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn });
+  assert.equal(r.estado, 'cortada');
+  assert.equal(sl.teselasPedidas().length, C.FALLAS_SEGUIDAS_CORTE);
+  assert.equal((await leerJ(alm, C.claveSobre(T))).faltantes.length, 9);
+});
+
+test('SLIDER caído (latest_times 503 o sin red): no se guarda ningún tiempo, sólo la alerta', async () => {
+  for (const tiempoStatus of [503, 'red']) {
+    const alm = nuevo();
+    const sl = sliderFalso({ tiempos: [T], tiempoStatus });
+    const r = await correr({ almacen: alm, fetchFn: sl.fetchFn });
+    assert.equal(r.estado, 'slider-caido');
+    assert.equal(sl.pedidos.length, 1, 'un pedido, sin reintentos');
+    assert.deepEqual(await alm.listar('gremlin/'), [C.CLAVE_ALERTAS]);
+  }
+});
+
+// ---------- la llave ----------
+test('llave apagada: no pide nada a SLIDER ni toca el almacén', async () => {
+  for (const llave of [undefined, '', 'no', 'SI', 'true']) {
+    const sl = sliderFalso({ tiempos: [T] });
+    const alm = nuevo();
+    let tocado = 0;
+    const espia = { leer: async (k) => { tocado++; return alm.leer(k); }, escribir: async (...a) => { tocado++; return alm.escribir(...a); }, listar: alm.listar };
+    const r = await C.correr({ almacen: espia, fetchFn: sl.fetchFn, llave, ahoraMs: AHORA, esperar: sinEspera, log: callado });
+    assert.equal(r.estado, 'apagado', `llave ${JSON.stringify(llave)}`);
+    assert.equal(sl.pedidos.length, 0);
+    assert.equal(tocado, 0);
+  }
+  // control negativo: con «si» sí pide
+  const sl = sliderFalso({ tiempos: [T] });
+  await correr({ almacen: nuevo(), fetchFn: sl.fetchFn, llave: 'si' });
+  assert.equal(sl.pedidos.length, 10);
+});
+
+test('seco: un solo pedido (latest_times), cuenta lo pendiente y no guarda nada', async () => {
+  const alm = nuevo();
+  const sl = sliderFalso({ tiempos: tiemposHasta(ULT, 5) });
+  const r = await correr({ almacen: alm, fetchFn: sl.fetchFn, modo: 'seco' });
+  assert.equal(r.estado, 'seco');
+  assert.equal(r.pendientes, 5);
+  assert.equal(sl.pedidos.length, 1);
+  assert.deepEqual(await alm.listar(''), []);
+});
+
+test('el workflow nace apagado: schedule sólo con vars.GREMLIN_ON == «si», a mano en seco, y los secretos R2 de siempre', async () => {
+  const fs = await import('node:fs');
+  const y = fs.readFileSync(new URL('../gremlin.workflow.yml.txt', import.meta.url), 'utf8');
+  assert.match(y, /if: \$\{\{ github\.event_name == 'workflow_dispatch' \|\| vars\.GREMLIN_ON == 'si' \}\}/);
+  assert.match(y, /default: seco/);
+  for (const s of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']) assert.match(y, new RegExp(`${s}: \\$\\{\\{ secrets\\.${s} \\}\\}`));
+  assert.match(y, /cron: '4,14,24,34,44,54 \* \* \* \*'/);
+  assert.match(y, /timeout-minutes: 9/);
+});

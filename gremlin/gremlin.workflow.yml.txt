@@ -1,0 +1,53 @@
+# HN AGRO · colector de GREMLIN (CIRA/RAMMB SLIDER, GOES-19, full_disk) sobre la Argentina, en R2 (311). Ver gremlin/LEEME.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/gremlin.yml (viene como .txt porque el token de pc-nanci no
+# tiene el permiso «workflow», igual que rayos-hora, granizo-archivo e imerg-pendientes).
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo GREMLIN_ON vale «si».
+# A mano: Actions → colector-gremlin → Run workflow (seco = 1 pedido a SLIDER y cuenta; real = baja y guarda).
+# Cada 10 min: 1 pedido a latest_times.json y las 9 teselas de la caja de cada tiempo nuevo, con 1 s entre pedidos y
+# un tope por corrida. GitHub atrasa o saltea cron: no pasa nada, la corrida siguiente baja lo que falte (SLIDER guarda ~17 h).
+# El registro de Actions es PÚBLICO: se imprimen sólo cantidades.
+name: colector-gremlin
+on:
+  schedule:
+    - cron: '4,14,24,34,44,54 * * * *'   # cada 10 min, lejos de la hora en punto
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = pide la lista de tiempos y cuenta, sin bajar teselas ni guardar · real = baja y guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+      tope:
+        description: 'pedidos por corrida (10 a 300; 60 por defecto)'
+        required: false
+        default: '60'
+permissions:
+  contents: read
+concurrency:
+  group: colector-gremlin
+  cancel-in-progress: false
+jobs:
+  colectar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.GREMLIN_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 9                    # nunca se pisa con la corrida siguiente
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            rayos-hora/lib
+            gremlin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Colectar
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # a mano, la corrida vale como llave prendida (para la prueba en seco y la primera real); por cron, la variable
+          GREMLIN_ON: ${{ github.event_name == 'workflow_dispatch' && 'si' || vars.GREMLIN_ON }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          TOPE: ${{ github.event_name == 'schedule' && '60' || inputs.tope }}
+        run: node gremlin/gremlin.mjs

@@ -17,5 +17,6 @@ Lo que bajan se guarda en un repositorio privado (permiso limitado a ese reposit
 | granizo-archivo | cada 10 min (apagado hasta que la variable GRANIZO_ARCHIVO_ON sea «si»; ver granizo-archivo/PRENDER.md) | SATCHI público (granizo en vivo): cada barrido, entero, a una release diaria del repo privado |
 | granizo-frescura | cada 20 min (con la misma variable) | el archivo de granizo: manda un mail si en 40 min no se guardó nada |
 | granizo-beta-fase-b | a mano, un caso por corrida (apagado hasta GRANIZO_BETA_B_ON=si; ver granizo-beta-fase-b/LEEME.md) | medición 226 (P2 del granizo β) con GOES de S3 de NOAA: sólo métricas por celda e instante, como artefacto; nada a la app |
+| colector-gremlin | cada 10 min (apagado hasta que la variable GREMLIN_ON sea «si»; ver gremlin/LEEME.md) | GREMLIN (CIRA/RAMMB SLIDER, GOES-19): radar sintético, no es radar. Las 9 teselas de la Argentina al zoom nativo (2 km), a R2 privado, para validarlo contra el granizo y el radar |
 
 Los registros de cada corrida muestran sólo cantidades.
