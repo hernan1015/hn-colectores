@@ -283,9 +283,9 @@ test('TOPE de la API (400): se parte la lista en dos; sin lugar en el tope queda
   assert.equal(r3.pedidos, 1); assert.equal(r3.partidos, 0);
 });
 
-test('acotarTope: normal 1 a 10 (3 por defecto), relleno hasta 120 (30 por defecto)', () => {
+test('acotarTope: normal 1 a 10 (3 por defecto), relleno hasta 300 (300 por defecto: 30 días en una corrida)', () => {
   assert.equal(C.acotarTope(undefined), 3); assert.equal(C.acotarTope('500'), 10); assert.equal(C.acotarTope('0'), 1);
-  assert.equal(C.acotarTope(undefined, 'relleno'), 30); assert.equal(C.acotarTope('999', 'relleno'), 120);
+  assert.equal(C.acotarTope(undefined, 'relleno'), 300); assert.equal(C.acotarTope('999', 'relleno'), 300);
   assert.equal(C.acotarTope('abc'), 3);
 });
 
@@ -514,9 +514,141 @@ test('[n3-v2 P3] un 200 vacío, con espacios o con una lista vacía es una FALLA
   const f = api(() => ({ status: 200, cuerpo: '   ' }));
   const r = await correr({ almacen: alm, fetchFn: f, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-11T00:00:00Z') });
   assert.equal(f.pedidos.length, 3); assert.equal(r.estado, 'cortada'); assert.equal(r.tramos, 0); assert.equal(r.faltantes, 0);
-  assert.deepEqual((await leerJ(alm, 'metar/relleno.json')).tramos, {}, 'ningún tramo queda como hecho');
+  const prog0 = await alm.leer('metar/relleno.json');   // [317b] la marca se escribe por tramo hecho: sin ninguno, ni existe
+  assert.ok(!prog0 || Object.keys(JSON.parse(prog0.toString('utf8')).tramos).length === 0, 'ningún tramo queda como hecho');
   // control negativo: el 204 es una respuesta sin partes, el tramo sí queda hecho
   const alm2 = almacenCarpeta(carpeta());
   const r2 = await correr({ almacen: alm2, fetchFn: api(() => ({ status: 204, cuerpo: '' })), modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-10T06:00:00Z') });
   assert.equal(r2.tramos, 2); assert.equal((await leerJ(alm2, 'metar/relleno.json')).tramos['2026111003'], 'hecho');
+});
+
+// ───────────────────────── 317b: el relleno que no avanzaba (runs 44121469479 y 44123550584) ─────────────────────────
+const DESDE_R = Date.parse('2026-11-16T12:00:00Z'), HASTA_R = Date.parse('2026-11-17T00:00:00Z'), AHORA_R = Date.parse('2026-11-17T03:00:00Z');
+const porTramo = (u) => { const d = new URL(u).searchParams.get('date'); const fin = Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${d.slice(9, 11)}:00:00Z`); return HIST.filter((e) => { const r = Date.parse(e.reportTime); return r > fin - 3 * 3600e3 && r <= fin; }); };
+const rellenar = (o) => C.correr({ llave: 'si', ahoraMs: AHORA_R, modo: 'relleno', desdeMs: DESDE_R, hastaMs: HASTA_R, esperar: sinEspera, log: callado, reintentoMs: 0, ...o });
+
+test('[317b] un pedido que se CUELGA se aborta a los plazoMs, se reintenta una vez y el relleno sigue', { timeout: 15000 }, async () => {
+  let n = 0;
+  const f = api((u) => { n++; if (n === 1) return new Promise(() => {}); return { cuerpo: porTramo(u) }; });   // el 1.º no contesta nunca
+  const t0 = Date.now();
+  const r = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: f, plazoMs: 80 });
+  assert.ok(Date.now() - t0 < 3000, 'no se quedó esperando');
+  assert.equal(r.reintentos, 1); assert.equal(r.tramos, 4); assert.equal(r.estado, 'ok');
+  // también si se cuelga el CUERPO (las cabeceras llegaron)
+  let m = 0;
+  const g = async (u) => { m++; if (m === 1) return { status: 200, text: () => new Promise(() => {}) }; return { status: 200, text: async () => JSON.stringify(porTramo(u)) }; };
+  const r2 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: g, plazoMs: 80 });
+  assert.equal(r2.reintentos, 1); assert.equal(r2.tramos, 4);
+  // dos colgados seguidos: el tramo queda pendiente (falló) y los demás siguen
+  let k = 0;
+  const h = api((u) => { k++; if (k <= 2) return new Promise(() => {}); return { cuerpo: porTramo(u) }; });
+  const r3 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: h, plazoMs: 50 });
+  assert.equal(r3.tramos_fallidos, 1); assert.equal(r3.tramos, 3);
+  // control negativo: sin cuelgues, ningún reintento
+  const r4 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => ({ cuerpo: porTramo(u) })), plazoMs: 80 });
+  assert.equal(r4.reintentos, 0); assert.equal(r4.tramos, 4);
+});
+
+/* R2 «se cae» al guardar el índice del tramo N: la corrida sale en rojo (como un timeout de Actions a mitad de camino) */
+const cortarEnIndice = (base, n) => { let i = 0; return { ...base, escribir: (k, b, o) => { if (/indice\.json$/.test(k) && ++i === n) throw new Error('R2 escribir: HTTP 500'); return base.escribir(k, b, o); }, leer: (k) => base.leer(k), listar: (p) => base.listar(p) }; };
+const conGranizo = async (alm) => { const b = await alm.leer('metar/2026/11/16/indice.json'); return b ? Object.values(JSON.parse(b.toString('utf8')).obs).filter((o) => o.granizo).length : 0; };
+
+test('[317b] cada tramo se GUARDA apenas llega: una corrida cortada a mitad deja lo hecho y la siguiente arranca donde quedó', async () => {
+  // [n3-317b] el granizo de Río Cuarto (18:25 y 18:45 UTC) cae en el TERCER tramo (18–21). Se corta en el índice del 4.º: los
+  // tres primeros, con el granizo, tienen que estar en el índice DESPUÉS DE LA PRIMERA corrida, antes de reanudar.
+  const base = almacenCarpeta(carpeta());
+  await assert.rejects(rellenar({ almacen: cortarEnIndice(base, 4), fetchFn: api((u) => ({ cuerpo: porTramo(u) })) }), /R2/);
+  assert.deepEqual(Object.keys((await leerJ(base, 'metar/relleno.json')).tramos).sort(), ['2026111615', '2026111618', '2026111621'], 'los tres primeros quedaron guardados');
+  assert.equal(await conGranizo(base), 2, 'el granizo ya está indexado tras la primera corrida (antes de reanudar)');
+  const f = api((u) => ({ cuerpo: porTramo(u) }));
+  const r = await rellenar({ almacen: base, fetchFn: f });
+  assert.equal(new URL(f.pedidos[0].url).searchParams.get('date'), '20261117_0000', 'arranca en el 4.º');
+  assert.equal(r.tramos, 1);
+  assert.equal(Object.keys((await leerJ(base, 'metar/relleno.json')).tramos).length, 4);
+  // control negativo: cortando en el índice del 3.º (el del granizo), tras la primera corrida el granizo NO está (su tramo no
+  // terminó) y la marca no lo da por hecho; al reanudar entra, adoptando los partes que ya habían quedado escritos
+  const b2 = almacenCarpeta(carpeta());
+  await assert.rejects(rellenar({ almacen: cortarEnIndice(b2, 3), fetchFn: api((u) => ({ cuerpo: porTramo(u) })) }), /R2/);
+  assert.equal(await conGranizo(b2), 0);
+  assert.deepEqual(Object.keys((await leerJ(b2, 'metar/relleno.json')).tramos).sort(), ['2026111615', '2026111618']);
+  const r2 = await rellenar({ almacen: b2, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) });
+  assert.equal(await conGranizo(b2), 2);
+  assert.ok(r2.recuperados > 0, 'los partes escritos antes del corte se adoptan, no se reescriben');
+  // control negativo: sin corte, una sola corrida hace los 4 y la siguiente no pide nada
+  const alm = almacenCarpeta(carpeta());
+  await rellenar({ almacen: alm, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) });
+  const g = api(() => ({ cuerpo: [] }));
+  await rellenar({ almacen: alm, fetchFn: g });
+  assert.equal(g.pedidos.length, 0);
+});
+
+test('[317b] el PRESUPUESTO de tiempo corta prolijo antes de un tramo y deja la marca; la siguiente sigue', async () => {
+  let t = 0;
+  const reloj = () => (t += 100e3);   // cada vez que se mira, pasaron 100 s
+  const alm = almacenCarpeta(carpeta());
+  const logs = [];
+  const r = await rellenar({ almacen: alm, fetchFn: api((u) => ({ cuerpo: porTramo(u) })), reloj, presupuestoS: 250, log: (s) => logs.push(s) });
+  assert.equal(r.presupuesto, true); assert.equal(r.estado, 'ok');
+  assert.ok(r.tramos >= 1 && r.tramos < 4, String(r.tramos));
+  assert.ok(logs.some((s) => /presupuesto de 4 min cumplido; corto prolijo, quedan \d+ tramos/.test(s)));
+  assert.equal(Object.keys((await leerJ(alm, 'metar/relleno.json')).tramos).length, r.tramos);
+  const r2 = await rellenar({ almacen: alm, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) });
+  assert.equal(r.tramos + r2.tramos, 4);
+  // control negativo: con presupuesto de sobra no corta
+  const r3 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => ({ cuerpo: porTramo(u) })), reloj: () => 0, presupuestoS: 250 });
+  assert.equal(r3.presupuesto, false); assert.equal(r3.tramos, 4);
+});
+
+test('[317b] un log por tramo: «tramo X/Y (desde–hasta UTC): N partes · K nuevos · guardado»; el que falla dice «queda pendiente»', async () => {
+  const logs = [];
+  await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => ({ cuerpo: porTramo(u) })), log: (s) => logs.push(s) });
+  const t = logs.filter((s) => /tramo \d+\/\d+/.test(s));
+  assert.equal(t.length, 4);
+  assert.match(t[0], /^metar \(RELLENO\): tramo 1\/4 \(11-16 12:00–15:00 UTC\): \d+ partes · \d+ nuevos · guardado$/);
+  assert.match(t[1], /tramo 2\/4 \(11-16 15:00–18:00 UTC\): \d+ partes/);
+  // control negativo: un tramo que falla no dice «guardado»
+  const l2 = [];
+  let n = 0;
+  await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => (++n <= 2 ? { status: 503 } : { cuerpo: porTramo(u) })), log: (s) => l2.push(s) });
+  assert.match(l2.find((s) => /tramo 1\/4/.test(s)), /falló \(HTTP 503\) · queda pendiente$/);
+  assert.doesNotMatch(l2.find((s) => /tramo 1\/4/.test(s)), /guardado/);
+});
+
+test('[317b] los partes de un tramo se escriben en paralelo, de a 8 como mucho', async () => {
+  const base = almacenCarpeta(carpeta());
+  let vivos = 0, max = 0;
+  const lento = { ...base, leer: (k) => base.leer(k), listar: (p) => base.listar(p),
+    escribir: async (k, b, o) => { if (!/\/S[A-Z]{3}\//.test(k)) return base.escribir(k, b, o); vivos++; max = Math.max(max, vivos); await new Promise((r) => setTimeout(r, 5)); vivos--; return base.escribir(k, b, o); } };
+  const r = await correr({ almacen: lento, fetchFn: api(() => ({ cuerpo: ACTUAL })) });
+  assert.equal(r.guardados, 94);
+  assert.equal(max, 8);
+  assert.equal(C.ESCRITURAS_PARALELAS, 8);
+});
+
+test('[n3-317b] dos corridas intercaladas no pierden ningún «hecho» de la marca (se relee y se combina antes de escribir)', async () => {
+  const alm = almacenCarpeta(carpeta());
+  // A: sólo el tramo 12–15, con la API lenta; B: sólo el 15–18, rápida. Las dos leen la marca vacía al empezar; B escribe primero.
+  const lenta = api(async (u) => { await new Promise((r) => setTimeout(r, 80)); return { cuerpo: porTramo(u) }; });
+  const rapida = api((u) => ({ cuerpo: porTramo(u) }));
+  const [a, b] = await Promise.all([
+    rellenar({ almacen: alm, fetchFn: lenta, desdeMs: Date.parse('2026-11-16T12:00:00Z'), hastaMs: Date.parse('2026-11-16T15:00:00Z') }),
+    rellenar({ almacen: alm, fetchFn: rapida, desdeMs: Date.parse('2026-11-16T15:00:00Z'), hastaMs: Date.parse('2026-11-16T18:00:00Z') }),
+  ]);
+  assert.equal(a.tramos, 1); assert.equal(b.tramos, 1);
+  assert.deepEqual((await leerJ(alm, 'metar/relleno.json')).tramos, { 2026111615: 'hecho', 2026111618: 'hecho' });
+  // «hecho» gana a «truncado»: una corrida vieja con el tramo truncado no le baja el estado a uno que otra completó
+  await C.guardarMarca(alm, { tramos: { 2026111618: 'truncado', 2026111621: 'truncado' } }, AHORA_R);
+  assert.deepEqual((await leerJ(alm, 'metar/relleno.json')).tramos, { 2026111615: 'hecho', 2026111618: 'hecho', 2026111621: 'truncado' });
+  // control negativo: escribiendo la marca leída al empezar (sin combinar), A habría borrado el «hecho» de B
+  const pisada = { v: 1, tramos: { 2026111615: 'hecho' } };
+  assert.notDeepEqual(pisada.tramos, (await leerJ(alm, 'metar/relleno.json')).tramos);
+});
+
+test('[n3-317b] el workflow serializa el relleno con la corrida real: concurrency del workflow entero, sin cancelar', () => {
+  const y = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'metar.workflow.yml.txt'), 'utf8');
+  const top = y.slice(0, y.indexOf('\njobs:') + 1);
+  assert.match(top, /\nconcurrency:\n  group: colector-metar\n  cancel-in-progress: false\n/);
+  assert.match(y, /\n  rellenar:\n/); assert.match(y, /\n  colectar:\n/);
+  // control: los dos jobs están en ESTE workflow (el grupo los cubre a los dos); no hay otro concurrency por job que lo afloje
+  assert.equal((y.match(/concurrency:/g) || []).length, 1);
 });

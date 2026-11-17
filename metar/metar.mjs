@@ -31,7 +31,8 @@ const fecha = (s, fin) => {
 };
 const modo = ['seco', 'relleno'].includes(env.MODO) ? env.MODO : 'real';
 try {
-  await correr({ almacen, publico, llave: env.METAR_ON, modo, tope: env.TOPE, desdeMs: fecha(env.DESDE, false), hastaMs: fecha(env.HASTA, true) });
+  await correr({ almacen, publico, llave: env.METAR_ON, modo, tope: env.TOPE, desdeMs: fecha(env.DESDE, false), hastaMs: fecha(env.HASTA, true),
+    presupuestoS: env.PRESUPUESTO_S });   // [317b] el tiempo del relleno (s): 480 por defecto; el job propio del relleno pasa 2400
 } catch (e) {
   console.error(`metar: falló (${String(e.message || e).replace(/https?:\/\/\S+/g, '<url>').slice(0, 120)})`);   // sin URLs en el registro público
   process.exit(1);

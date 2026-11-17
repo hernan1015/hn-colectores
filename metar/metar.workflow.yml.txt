@@ -18,7 +18,7 @@ on:
         options: [seco, real, relleno]
         default: seco
       tope:
-        description: 'pedidos por corrida (real: 1 a 10, 3 por defecto · relleno: hasta 120, 30 por defecto)'
+        description: 'pedidos por corrida (real: 1 a 10, 3 por defecto · relleno: hasta 300, 300 por defecto = los 30 días en una corrida)'
         required: false
         default: ''
       desde:
@@ -36,7 +36,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   colectar:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.METAR_ON == 'si' }}
+    # [317b] el relleno va en su propio job (rellenar, abajo), con más tiempo
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.modo != 'relleno') || (github.event_name == 'schedule' && vars.METAR_ON == 'si') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -66,6 +67,44 @@ jobs:
           METAR_ON: ${{ github.event_name == 'workflow_dispatch' && 'si' || vars.METAR_ON }}
           MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
           TOPE: ${{ github.event_name == 'schedule' && '3' || inputs.tope }}
+          DESDE: ${{ inputs.desde }}
+          HASTA: ${{ inputs.hasta }}
+        run: node metar/metar.mjs
+  rellenar:
+    # [317b] SÓLO a mano con modo relleno: 30 días de a 3 h (~240 pedidos, 2 s entre pedidos, los partes de a 8 a R2) ~25-30 min.
+    # Corta PROLIJO a los 45 min (PRESUPUESTO_S) antes del timeout de 50; cada tramo queda guardado al llegar, así que si hace falta
+    # se vuelve a correr y sigue desde donde quedó (lo más viejo primero).
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.modo == 'relleno' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            rayos-hora/lib
+            metar
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests (sin red)
+        run: node --test metar/test/metar.test.mjs
+      - name: Colectar
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # el derivado público para SATCHI (metar/v1/ultimas.json): los secretos de opera-mosaico-diario y rayos-hora
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+          METAR_DEPOSITO_PUBLICO: ${{ vars.METAR_DEPOSITO_PUBLICO || 'satchi-metar' }}
+          # a mano, la corrida vale como llave prendida (para la prueba en seco y la primera real); por cron, la variable
+          METAR_ON: si
+          MODO: relleno
+          TOPE: ${{ inputs.tope }}
+          PRESUPUESTO_S: '2700'
           DESDE: ${{ inputs.desde }}
           HASTA: ${{ inputs.hasta }}
         run: node metar/metar.mjs

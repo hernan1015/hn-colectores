@@ -22,7 +22,11 @@ export const HORAS_NORMAL = 3;          // cada corrida mira 3 h: cubre los atra
 export const HORAS_TRAMO = 3;           // el relleno pide de a 3 h (93 estaciones × 3 h ≈ 150-300 partes < 400)
 export const DIAS_HISTORIA = 30;        // «up to the previous 30 days of data» (aviationweather.gov/data/api/)
 export const TOPE_DEFECTO = 3, TOPE_MIN = 1, TOPE_MAX = 10;
-export const TOPE_RELLENO_DEFECTO = 30, TOPE_RELLENO_MAX = 120;
+export const TOPE_RELLENO_DEFECTO = 300, TOPE_RELLENO_MAX = 300;   // [317b] 30 días = 240 tramos: entra en UNA corrida de relleno (con reintentos)
+export const PLAZO_PEDIDO_MS = 30000;   // [317b] cada pedido a la API, como mucho 30 s (después se aborta)
+export const REINTENTO_MS = 5000;       // [317b] UN reintento corto, 5 s después, si el pedido se colgó, falló la red o dio 5xx
+export const ESCRITURAS_PARALELAS = 8;  // [317b] los partes de un tramo se escriben en R2 de a 8 (antes, de a uno: ~30 s por tramo)
+export const PRESUPUESTO_DEFECTO_S = 480; // [317b] el relleno corta PROLIJO a los 8 min (el job normal tiene 10); el job propio del relleno pasa 2400
 export const PAUSA_MS = 2000;           // la API pide no pasar de 100 pedidos por minuto: acá, como mucho 30
 export const FALLAS_SEGUIDAS_CORTE = 3;
 export const VENTANA_PUBLICA_H = 24;    // el derivado público trae las últimas 24 h
@@ -108,6 +112,9 @@ export function horasRevisables(desdeMs, hastaMs, ahoraMs) {
 /** Guarda los partes nuevos (una vez cada uno) y revisa las horas del tramo. Devuelve los índices tocados. */
 async function ingerir({ almacen, entradas, horas, ahoraMs, res, indices }) {
   const cargar = async (k) => { if (!indices.has(k)) indices.set(k, { ind: (await leerJSON(almacen, k)), cambio: false }); return indices.get(k); };
+  // [317b] primero se arma la lista de lo nuevo; después se escribe en R2 de a ESCRITURAS_PARALELAS, y recién con el parte escrito
+  // entra al índice (si R2 falla, la corrida sale en rojo y el índice no dice que está lo que no está)
+  const porEscribir = [], vistos = new Set();
   for (const e of entradas) {
     const x = normalizar(e);
     if (x.descartado) { res.descartados++; continue; }
@@ -115,15 +122,22 @@ async function ingerir({ almacen, entradas, horas, ahoraMs, res, indices }) {
     const c = await cargar(ki);
     if (!c.ind) { c.ind = indiceVacio(x.ms); c.cambio = true; }
     const id = idParte(x.est, x.tipo, x.ms, x.crudo);
-    if (c.ind.obs[id]) { res.repetidos++; continue; }               // idempotencia: ya está en el índice, no se escribe nada
+    if (c.ind.obs[id] || vistos.has(id)) { res.repetidos++; continue; }   // idempotencia: ya está en el índice (o repetido en la misma respuesta)
+    vistos.add(id);
     const clave = claveParte(x.est, x.tipo, x.ms, x.crudo);
     const sobre = { v: 1, estacion: x.est, nombre: POR_ID[x.est].nombre, lat: POR_ID[x.est].lat, lon: POR_ID[x.est].lon, tipo: x.tipo,
       hora: iso(x.ms), recibido: x.api.receiptTime || null, crudo: x.crudo, parseado: x.parseado, api: x.api, fuente: CITA, guardado: iso(ahoraMs) };
-    const nuevo = await almacen.escribir(clave, JSON.stringify(sobre), { soloSiNoExiste: true });
-    if (nuevo) res.guardados++; else res.recuperados++;               // ya estaba (una corrida cortada antes de escribir el índice)
-    c.ind.obs[id] = { ...resumenIndice(x), clave };
-    c.cambio = true;
-    if (x.parseado.granizo.alguno) res.con_granizo++;
+    porEscribir.push({ c, id, x, clave, sobre });
+  }
+  for (let i = 0; i < porEscribir.length; i += ESCRITURAS_PARALELAS) {
+    const lote = porEscribir.slice(i, i + ESCRITURAS_PARALELAS);
+    const hechos = await Promise.all(lote.map((p) => almacen.escribir(p.clave, JSON.stringify(p.sobre), { soloSiNoExiste: true })));
+    lote.forEach((p, k) => {
+      if (hechos[k]) res.guardados++; else res.recuperados++;          // ya estaba (una corrida cortada antes de escribir el índice)
+      p.c.ind.obs[p.id] = { ...resumenIndice(p.x), clave: p.clave };
+      p.c.cambio = true;
+      if (p.x.parseado.granizo.alguno) res.con_granizo++;
+    });
   }
   // los faltantes: por hora cerrada, qué estaciones no tienen ningún parte. Lo que ya tenía dato no se borra nunca.
   for (const h of horas) {
@@ -199,6 +213,21 @@ async function publicar({ almacen, publico, ahoraMs, log, completo }) {
   return pub;
 }
 
+/**
+ * [n3-317b] La marca de avance, sin pisar la de otra corrida: se relee `relleno.json` JUSTO antes de escribir y se combina (la
+ * unión de los tramos; «hecho» gana a «truncado»). Así, si dos corridas se cruzan (el workflow las serializa con su concurrency,
+ * pero el colector no depende de eso), ninguna borra un «hecho» de la otra. Devuelve lo combinado.
+ */
+export async function guardarMarca(almacen, prog, ahoraMs) {
+  const actual = (await leerJSON(almacen, CLAVE_RELLENO)) || { v: 1, tramos: {} };
+  const tramos = { ...(actual.tramos || {}) };
+  for (const [k, v] of Object.entries(prog.tramos || {})) if (tramos[k] !== 'hecho') tramos[k] = v;
+  const out = { v: 1, tramos, actualizado: iso(ahoraMs) };
+  await almacen.escribir(CLAVE_RELLENO, JSON.stringify(out, null, 1));
+  prog.tramos = tramos;
+  return out;
+}
+
 /** Los tramos de 3 h del relleno, del más viejo al más nuevo, dentro de los 30 días de la API. Cada uno: la hora FINAL en ms. */
 export function tramosRelleno(desdeMs, hastaMs, ahoraMs, hechos = {}) {
   const piso = ahoraMs - DIAS_HISTORIA * 24 * HORA + HORA;            // con una hora de margen: lo de más atrás la API ya no lo tiene
@@ -224,8 +253,10 @@ export function tramosRelleno(desdeMs, hastaMs, ahoraMs, hechos = {}) {
 export async function correr({
   almacen, publico = null, fetchFn = fetch, ahoraMs = Date.now(), llave, modo = 'real', tope, desdeMs = null, hastaMs = null,
   pausaMs = PAUSA_MS, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log,
+  plazoMs = PLAZO_PEDIDO_MS, reintentoMs = REINTENTO_MS, presupuestoS = PRESUPUESTO_DEFECTO_S, reloj = () => Date.now(),
 }) {
-  const res = { estado: 'ok', modo, pedidos: 0, partes_api: 0, guardados: 0, recuperados: 0, repetidos: 0, descartados: 0, con_granizo: 0,
+  const inicio = reloj();
+  const res = { estado: 'ok', modo, pedidos: 0, reintentos: 0, tramos_fallidos: 0, presupuesto: false, partes_api: 0, guardados: 0, recuperados: 0, repetidos: 0, descartados: 0, con_granizo: 0,
     horas_revisadas: 0, faltantes: 0, indices: 0, partidos: 0, truncados: 0, tramos: 0 };
   if (llave !== 'si') {
     log('metar: llave apagada (METAR_ON no vale «si»): no hago nada');
@@ -233,17 +264,37 @@ export async function correr({
   }
   const maxPedidos = acotarTope(tope, modo);
   let fallasSeguidas = 0, cortar = null;
-  const pedir = async (url) => {
+  const unPedido = async (url) => {
     if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs);
     res.pedidos++;
-    let r;
+    // [317b] el plazo cubre TODO el pedido (cabeceras y cuerpo): un pedido colgado se aborta a los plazoMs y la corrida sigue
+    const ctl = new AbortController();
+    let reloj30 = null;
+    const vence = new Promise((_, mal) => { reloj30 = setTimeout(() => { ctl.abort(); mal(new Error('TimeoutError')); }, plazoMs); });
     try {
-      const x = await fetchFn(url, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(30000) });
-      r = { status: x.status, texto: await x.text() };
-    } catch (e) { r = { status: 0, error: String(e?.name || e) }; }
+      return await Promise.race([vence, (async () => {
+        const x = await fetchFn(url, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: ctl.signal });
+        return { status: x.status, texto: await x.text() };
+      })()]);
+    } catch (e) { return { status: 0, error: String(e?.name === 'AbortError' ? 'TimeoutError' : (e?.message === 'TimeoutError' ? 'TimeoutError' : (e?.name || e))) }; }
+    finally { clearTimeout(reloj30); }
+  };
+  const contar = (r) => {
     if (r.status === 0 || r.status >= 500) fallasSeguidas++; else if (r.status !== 200) fallasSeguidas = 0;   // un 200 se juzga después, al leerlo
     if (r.status === 429 || r.status === 403) cortar = `aviationweather respondió ${r.status}`;
     else if (fallasSeguidas >= FALLAS_SEGUIDAS_CORTE) cortar = `${fallasSeguidas} fallas seguidas`;
+  };
+  const pedir = async (url) => {
+    let r = await unPedido(url);
+    contar(r);
+    // [317b] UN reintento corto si se colgó, falló la red o dio 5xx (nunca ante 429/403 ni con la corrida cortada), si el tope lo
+    // deja. Cada intento cuenta para las 3 fallas seguidas.
+    if ((r.status === 0 || r.status >= 500) && !cortar && res.pedidos < maxPedidos) {
+      res.reintentos++;
+      if (reintentoMs > 0) await esperar(reintentoMs);
+      r = await unPedido(url);
+      contar(r);
+    }
     return r;
   };
   /** Un tramo (horas hasta hastaMs, o las últimas): pide, y si llega al tope de 400 parte la lista en dos. */
@@ -298,19 +349,33 @@ export async function correr({
   } else if (modo === 'relleno') {
     const prog = (await leerJSON(almacen, CLAVE_RELLENO)) || { v: 1, tramos: {} };
     const cola = tramosRelleno(desdeMs ?? ahoraMs - DIAS_HISTORIA * 24 * HORA, hastaMs ?? ahoraMs, ahoraMs, prog.tramos);
-    log(`metar (RELLENO): ${cola.length} tramos de ${HORAS_TRAMO} h por pedir (del más viejo al más nuevo), tope ${maxPedidos} pedidos`);
+    const presupuestoMs = Math.max(30, Number(presupuestoS) || PRESUPUESTO_DEFECTO_S) * 1000;
+    log(`metar (RELLENO): ${cola.length} tramos de ${HORAS_TRAMO} h por pedir (del más viejo al más nuevo), tope ${maxPedidos} pedidos, ${Math.round(presupuestoMs / 60000)} min`);
+    const tramoTxt = (fin) => `${iso(fin - HORAS_TRAMO * HORA).slice(5, 16).replace('T', ' ')}–${iso(fin).slice(11, 16)} UTC`;
+    let n = 0;
     for (const fin of cola) {
+      n++;
       if (cortar || res.pedidos >= maxPedidos) break;
+      // [317b] el presupuesto de tiempo: se corta ANTES de empezar un tramo que podría no entrar; lo hecho ya está guardado
+      if (reloj() - inicio >= presupuestoMs) { res.presupuesto = true; log(`metar (RELLENO): presupuesto de ${Math.round(presupuestoMs / 60000)} min cumplido; corto prolijo, quedan ${cola.length - n + 1} tramos para la próxima corrida`); break; }
       const t = await traer(IDS, { horas: HORAS_TRAMO, hastaMs: fin });
-      if (!t.ok) { if (t.motivo === 'tope') break; continue; }       // falló: queda pendiente para la próxima corrida
+      if (!t.ok) {
+        if (t.motivo === 'tope') break;
+        res.tramos_fallidos++;
+        log(`metar (RELLENO): tramo ${n}/${cola.length} (${tramoTxt(fin)}): falló (${t.motivo}) · queda pendiente`);
+        continue;
+      }
       res.partes_api += t.entradas.length;
+      const antes = res.guardados;
       await ingerir({ almacen, entradas: t.entradas, horas: t.truncado ? [] : horasRevisables(fin - HORAS_TRAMO * HORA, fin, ahoraMs), ahoraMs, res, indices });
+      // [317b] cada tramo se guarda APENAS llega: los índices tocados y la marca de avance. Una corrida cortada deja lo hecho.
+      res.indices += await guardarIndices(almacen, indices, ahoraMs);
       prog.tramos[iso(fin).slice(0, 13).replace(/[-T]/g, '')] = t.truncado ? 'truncado' : 'hecho';
+      await guardarMarca(almacen, prog, ahoraMs);
       res.tramos++;
+      log(`metar (RELLENO): tramo ${n}/${cola.length} (${tramoTxt(fin)}): ${t.entradas.length} partes · ${res.guardados - antes} nuevos${t.truncado ? ' · TRUNCADO' : ''} · guardado`);
     }
-    res.indices = await guardarIndices(almacen, indices, ahoraMs);
-    prog.actualizado = iso(ahoraMs);
-    await almacen.escribir(CLAVE_RELLENO, JSON.stringify(prog, null, 1));
+    res.indices += await guardarIndices(almacen, indices, ahoraMs);
   } else {
     throw new Error('modo desconocido: ' + modo);
   }
