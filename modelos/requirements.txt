@@ -1,0 +1,11 @@
+# HN AGRO · 312 · colector de modelos. Versiones FIJAS (todas con más de 2 semanas al 16/11/2026), sólo ruedas binarias.
+# ecCodes viene en ruedas (eccodeslib + eckitlib, manylinux_2_28 x86_64): no hace falta apt ni compilar.
+eccodes==2.50.0
+eccodeslib==2.50.0.33
+eckitlib==2.5.0.33
+findlibs==0.1.4
+cffi==2.1.1
+pycparser==3.12
+attrs==26.1.0
+numpy==2.5.4
+scipy==1.18.1
