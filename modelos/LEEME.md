@@ -94,6 +94,20 @@ con una paleta fija y sube PNG + JSON al depósito público `satchi-modelos`.
   - Se escribe a mano con zlib, así los mismos datos dan los mismos bytes y la firma sólo cambia si cambia el dato.
   - Un valor faltante dentro de la caja hace que **el cuadro no se publique**. Nunca se pinta como «no llueve».
 
+## [312c · 17/11] La grilla de VALORES (contrato R2 v2)
+
+Va **junto** a cada cuadro v1, y el v1 no cambia. Sirve para que SATCHI dibuje el campo **suave**: interpola el valor y pinta
+con la paleta continua DESPUÉS (el método de `_v795` de HN AGRO). El contrato está en [CONTRATO-R2-v2.md](CONTRATO-R2-v2.md).
+
+- **Las claves:** `v2/{f}/{cc}/{var}/{fff}.val.png`, un PNG gris de 16 bits de 125 × 165 con los nodos de 0,25° de la caja,
+  más su `.val.json`.
+- **La codificación:** valor = q × escala (lluvia 0,01 mm; CAPE 1 J/kg). q = 65535 es «sin dato».
+- **ECMWF y GFS:** el valor de la fuente en el nodo, sin remuestreo. **ICON:** el centro de celda más cercano al nodo.
+- **El sobre** suma `valores`: las horas que tienen la v2.
+- **Si falla la v2, el v1 queda.** Nunca se pisa una clave publicada, y la retención también borra `v2/`.
+- **El peso:** ~12 KB por cuadro con datos sintéticos; real, estimado en 15-30 KB.
+- **Los tests:** `test/test_valores.py`. El control negativo suma 11 mutantes de la v2 en `test/control_negativo.py`.
+
 ## Idempotencia, reintentos y retención
 
 - **Una corrida terminada no se rehace.** Terminada quiere decir `completa`, o `parcial` con 3 intentos.

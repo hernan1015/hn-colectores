@@ -61,6 +61,7 @@ class Fuente:
 class Regular(Fuente):
     """fuentes en malla lat-lon 0,25° con índice y rango HTTP (ECMWF y GFS)"""
     regrillado = 'vecino más cercano de la malla 0,25° de la fuente a la del PNG (bloques de 2 × 2 píxeles)'
+    regrillado_v2 = 'ninguno: los nodos de 0,25° de la grilla v2 son los puntos de la malla de la fuente'   # [312c]
 
     def _rango(self, red, corrida, h, clave):
         raise NotImplementedError
@@ -83,11 +84,15 @@ class Regular(Fuente):
             c, sub, la, lo = self._campo(red, corrida, h, 'cape', paso_h=h, parametro=(0, 7, 6), niveles=self.niveles_cape)
             self._validar_cape(c)
             arr = malla.regular_a_salida(sub, la, lo)
-            return self._chequear(arr, variable), {'parametro_fuente': self.param_cape, 'regrillado': self.regrillado}
+            return self._chequear(arr, variable), {'parametro_fuente': self.param_cape, 'regrillado': self.regrillado,
+                                                   'v2': self._chequear(malla.regular_a_v2(sub, la, lo), variable),
+                                                   'regrillado_v2': self.regrillado_v2}
         sub, la, lo = self._lluvia6(red, corrida, h)
         arr = malla.regular_a_salida(sub, la, lo)
         return self._chequear(arr, variable), {'parametro_fuente': self.param_lluvia % {'h': h, 'h0': h - 6},
-                                               'regrillado': self.regrillado}
+                                               'regrillado': self.regrillado,
+                                               'v2': self._chequear(malla.regular_a_v2(sub, la, lo), variable),
+                                               'regrillado_v2': self.regrillado_v2}
 
 
 class Ecmwf(Regular):
@@ -231,6 +236,8 @@ class Icon(Fuente):
     param_lluvia = 'TOT_PREC (kg/m², acumulada desde el inicio): TOT_PREC(+%(h)d h) − TOT_PREC(+%(h0)d h)'
     regrillado = ('malla icosaédrica R03B07 → vecino más cercano sobre la esfera (centros de celda CLAT/CLON del DWD, '
                   'árbol KD), equivalente a cdo remapnn')
+    regrillado_v2 = ('[312c] a cada nodo de 0,25° de la grilla v2, el valor del centro de celda R03B07 más cercano sobre la esfera '
+                     '(el mismo árbol KD; ICON tiene ~13 km: es un muestreo, no un promedio)')
     cita = {
         'texto': ('Fuente: Deutscher Wetterdienst (DWD), modelo ICON global, opendata.dwd.de. Licencia CC BY 4.0. '
                   'Datos regrillados de la malla icosaédrica, recortados, diferenciados y coloreados por HN AGRO.'),
@@ -296,7 +303,9 @@ class Icon(Fuente):
             if c['nivel1'][0] != 192:
                 raise ErrorFuente('el CAPE no es el de capa de mezcla (superficie %d)' % c['nivel1'][0])
             arr = M.a_salida(c['valores'], c['malla']['uuid'])
-            return self._chequear(arr, variable), {'parametro_fuente': self.param_cape, 'regrillado': self.regrillado}
+            return self._chequear(arr, variable), {'parametro_fuente': self.param_cape, 'regrillado': self.regrillado,
+                                                   'v2': self._chequear(M.a_v2(c['valores'], c['malla']['uuid']), variable),
+                                                   'regrillado_v2': self.regrillado_v2}
         b = self._acum(red, corrida, h)
         a = self._acum(red, corrida, h - 6)
         dif = b[0] - (0 if a is None else a[0])          # la diferencia en la malla nativa, después se regrilla
@@ -304,7 +313,9 @@ class Icon(Fuente):
             raise ErrorFuente('las dos acumuladas son de mallas distintas')
         arr = M.a_salida(dif, b[1])
         return self._chequear(arr, variable), {'parametro_fuente': self.param_lluvia % {'h': h, 'h0': h - 6},
-                                               'regrillado': self.regrillado}
+                                               'regrillado': self.regrillado,
+                                               'v2': self._chequear(M.a_v2(dif, b[1]), variable),
+                                               'regrillado_v2': self.regrillado_v2}
 
 
 FUENTES = {'ecmwf': Ecmwf, 'icon': Icon, 'gfs': Gfs}

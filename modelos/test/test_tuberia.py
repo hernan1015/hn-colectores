@@ -192,7 +192,8 @@ class TestSinPisar(Carpeta):
         a1 = AlmacenQueFalla(self.dir)
         with self.assertRaises(IOError):
             tuberia.correr(S.RedFalsa(arch), a1, ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO)
-        self.assertEqual(len([k for k in a1.escritas if k.endswith('.png')]), 41)
+        self.assertEqual(len([k for k in a1.escritas if k.startswith('v1/') and k.endswith('.png')]), 41)
+        self.assertEqual(len([k for k in a1.escritas if k.startswith('v2/') and k.endswith('.val.png')]), 41)   # [312c]
         self.assertIsNone(a1.leer('v1/gfs/2026111612/corrida.json'))
         a2 = AlmacenQueFalla(self.dir, fallar_sobre=False)
         red = S.RedFalsa(arch)
@@ -201,7 +202,8 @@ class TestSinPisar(Carpeta):
         s = _j(a2, 'v1/gfs/2026111612/corrida.json')
         self.assertEqual(s['estado'], 'completa')
         self.assertEqual(len(s['firmas']), 41)
-        self.assertEqual(red.pedidos, 1)                           # sólo la disponibilidad: no se bajó nada
+        self.assertEqual(sum(len(x) for x in s['valores'].values()), 41)   # [312c] la v2 también se recupera
+        self.assertEqual(red.pedidos, 1)                          # sólo la disponibilidad: no se bajó nada
         self.assertEqual(_j(a2, tuberia.K_INDICE)['fuentes']['gfs']['ultima'], '2026111612')
 
     def test_control_negativo_png_distinto_ya_publicado_no_se_pisa(self):
