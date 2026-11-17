@@ -180,7 +180,7 @@ export async function correr({
     if (estado === 'completo') res.completos++; else res.incompletos++;
   }
   // retención (90 días salvo los días con casos): sólo si se pasó la lista (gremlin.mjs siempre la pasa; null = no válida)
-  if (casos !== undefined) res.retencion = await limpiar({ almacen, casos, ahoraMs, log });
+  if (casos !== undefined) res.retencion = await limpiar({ almacen, casos, ahoraMs, masNuevoMs: tiempos.length ? tiempoMs(tiempos.at(-1)) : NaN, log });
   if (cortar) {
     await alertar(almacen, `SLIDER: ${cortar}. Se cortó la corrida; las teselas que faltan se reintentan en la próxima.`, ahoraMs);
     res.estado = 'cortada';
