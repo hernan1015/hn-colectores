@@ -23,7 +23,7 @@ MUTANTES = [
     ('sin control de unidades', 'fuentes.py', 'if np.nanmax(arr) > tope or np.nanmin(arr) < -1:', 'if False:'),
     # el CAPE
     ('GFS toma el CAPE de superficie', 'fuentes.py', "quiero = ('CAPE', '255-0 mb above ground',", "quiero = ('CAPE', 'surface',"),
-    ('ECMWF no verifica que sea MUCAPE', 'fuentes.py', "if c['nivel1'][0] != 17:", 'if False:'),
+    ('ECMWF no verifica que sea MUCAPE', 'fuentes.py', 'niveles_cape = (17, 255)', 'niveles_cape = (1, 255)'),
     # el GRIB
     ('no valida el paso', 'grib.py', "if paso_h is not None and abs(c['paso_h'] - paso_h) > 1e-6:", 'if False:'),
     ('no valida la acumulación', 'grib.py', "if acum_h is not None and (c['acum_h'] is None", "if False and (c['acum_h'] is None"),
@@ -51,7 +51,16 @@ MUTANTES = [
     ('otro User-Agent', 'red.py', "UA = 'hn-colector/1.0'", "UA = 'Python-urllib/3.12'"),
     ('un 404 no es «todavía no está»', 'red.py', 'if e.code == 404:', 'if e.code == 4040:'),
     ('reintenta también los 4xx', 'red.py', 'if intento == 0 and e.code >= 500:', 'if intento == 0:'),
-    ('acepta el archivo entero si se ignora el rango', 'red.py', 'if rango and r.status != 206:', 'if False:'),
+    ('acepta un 200 cuando se pidió un rango', 'red.py', 'if r.status != 206:', 'if False:'),
+    ('no mira el Content-Range', 'red.py', "if not cr.startswith('bytes %d-%d/' % rango):", 'if False:'),
+    ('lee el cuerpo entero aunque sea un rango', 'red.py', 'cuerpo = r.read(n + 1)', 'cuerpo = r.read()'),
+    ('no recupera los cuadros ya publicados', 'tuberia.py', 'previa = _firma_publicada(almacen, kj)', 'previa = None'),
+    ('pisa el PNG ya publicado', 'tuberia.py', "if not almacen.escribir(kp, png, 'image/png', CACHE_CUADRO, si_no_existe=True):", "if not almacen.escribir(kp, png, 'image/png', CACHE_CUADRO):"),
+    ('sigue aunque el PNG publicado sea otro', 'tuberia.py', "if viejo is None or paleta.firma(viejo) != meta['firma']:", 'if False:'),
+    ('la carpeta ignora si_no_existe', 'almacen.py', 'if si_no_existe and os.path.exists(p):', 'if False:'),
+    ('R2 toma el 412 como error', 'almacen.py', 'if si_no_existe and st in (409, 412):', 'if False:'),
+    ('acepta un promedio como acumulación', 'grib.py', "if acum_h is not None and (c['proceso'] != 1 or c['n_rangos'] != 1):", 'if False:'),
+    ('no mira las superficies', 'grib.py', "if niveles is not None and (c['nivel1'][0], c['nivel2'][0]) != tuple(niveles):", 'if False:'),
     ('firma SigV4 mal armada', 'almacen.py', "('AWS4' + secreto).encode()", "('AWS4' + secreto[::-1]).encode()"),
 ]
 

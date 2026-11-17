@@ -36,11 +36,19 @@ class Red:
             self.por_host[host] = self.por_host.get(host, 0) + 1
             try:
                 with self._abrir(req, timeout=self.timeout) as r:
-                    cuerpo = r.read() if metodo == 'GET' else b''
-                    if rango and r.status != 206:
-                        raise ErrorRed('se pidió un rango y no vino 206 (%d)' % r.status)
-                    if rango and len(cuerpo) != rango[1] - rango[0] + 1:
-                        raise ErrorRed('rango cortado: %d de %d bytes' % (len(cuerpo), rango[1] - rango[0] + 1))
+                    if rango:
+                        # [n3-312a 1] ANTES de leer: un 200 (rango ignorado) sería el archivo entero (~100–540 MB)
+                        n = rango[1] - rango[0] + 1
+                        if r.status != 206:
+                            raise ErrorRed('se pidió un rango y no vino 206 (%d): no se lee' % r.status)
+                        cr = (r.headers.get('Content-Range') or '').strip() if r.headers is not None else ''
+                        if not cr.startswith('bytes %d-%d/' % rango):
+                            raise ErrorRed('Content-Range distinto del pedido: no se lee')
+                        cuerpo = r.read(n + 1)          # nunca más que lo pedido (+1 para notar si sobra)
+                        if len(cuerpo) != n:
+                            raise ErrorRed('rango de %d bytes, vinieron %s' % (n, len(cuerpo) if len(cuerpo) <= n else 'más'))
+                    else:
+                        cuerpo = r.read() if metodo == 'GET' else b''
                     self.bytes += len(cuerpo)
                     return cuerpo
             except urllib.error.HTTPError as e:

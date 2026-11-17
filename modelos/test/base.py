@@ -13,5 +13,7 @@ try:
     import eccodes  # noqa: F401
     CON_ECCODES = True
 except Exception:
+    if os.environ.get('MODELOS_EXIGIR_ECCODES') == '1':      # en Actions: la suite corre con ecCodes de verdad, o no corre
+        raise
     CON_ECCODES = False
     os.environ['MODELOS_GRIB_PURO'] = '1'

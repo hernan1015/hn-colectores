@@ -1,6 +1,8 @@
 """HN AGRO · 312 · una pasada de la tubería: por cada fuente, la corrida más nueva que ya está completa en la fuente.
 
 - LLAVE: si no vale «si», no se hace NADA (ni un pedido a una fuente ni una lectura de R2).
+- [n3-312a 2] UN CUADRO PUBLICADO NO SE PISA NUNCA: antes de bajar nada se mira si su JSON ya está (y se recupera); el PNG y
+  el JSON se escriben con If-None-Match: * (si la clave existe, R2 no la toca).
 - IDEMPOTENTE: una corrida con su sobre `completa` (o `parcial` con los intentos agotados) no se toca más; en una `parcial`
   sólo se hacen los cuadros que faltan. Un cuadro publicado no se reescribe nunca (la caché del borde es larga).
 - Orden de escritura: PNG → JSON del cuadro → sobre de la corrida → índice → (retención) borrado de lo viejo.
@@ -89,6 +91,11 @@ def meta_cuadro(fuente, corrida, variable, h, arr, info, png):
     return m
 
 
+def _firma_publicada(almacen, kj):
+    m = _leer_json(almacen, kj)
+    return m.get('firma') if isinstance(m, dict) and isinstance(m.get('firma'), str) and m.get('firma') else None
+
+
 def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
     cc = clave_corrida(corrida)
     if sobre is None:
@@ -97,17 +104,33 @@ def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
     sobre['intentos'] = sobre.get('intentos', 0) + 1
     fuente.nuevo(corrida)
     p0, b0 = red.pedidos, red.bytes
-    seguidas, cortada, hechos = 0, False, 0
+    seguidas, cortada, hechos, recuperados = 0, False, 0, 0
     for variable, horas in HORAS.items():
         for h in horas:
             if h in sobre['cuadros'][variable] or cortada:
+                continue
+            kp, kj = k_cuadro(fuente.id, cc, variable, h, 'png'), k_cuadro(fuente.id, cc, variable, h, 'json')
+            # [n3-312a 2] un cuadro ya publicado (en una pasada que no llegó a guardar el sobre) se RECUPERA, no se rehace:
+            # el JSON se escribe después del PNG, así que si está el JSON están los dos.
+            previa = _firma_publicada(almacen, kj)
+            if previa:
+                sobre['cuadros'][variable].append(h)
+                sobre['firmas']['%s/%03d' % (variable, h)] = previa
+                recuperados += 1
                 continue
             try:
                 arr, info = fuente.cuadro(red, corrida, variable, h)
                 png = paleta.png_indexado(paleta.clasificar(arr, variable), variable)
                 meta = meta_cuadro(fuente, corrida, variable, h, arr, info, png)
-                almacen.escribir(k_cuadro(fuente.id, cc, variable, h, 'png'), png, 'image/png', CACHE_CUADRO)
-                almacen.escribir(k_cuadro(fuente.id, cc, variable, h, 'json'), _json(meta), 'application/json', CACHE_CUADRO)
+                # [n3-312a 2] NUNCA se pisa una clave publicada (If-None-Match: *). Si el PNG ya estaba (falló el JSON),
+                # sólo se sigue si es el MISMO PNG; si no, el cuadro falta: la caché del borde ya tiene el otro.
+                if not almacen.escribir(kp, png, 'image/png', CACHE_CUADRO, si_no_existe=True):
+                    viejo = almacen.leer(kp)
+                    if viejo is None or paleta.firma(viejo) != meta['firma']:
+                        raise ValueError('ya hay otro PNG publicado en %s: no se pisa' % kp)
+                if not almacen.escribir(kj, _json(meta), 'application/json', CACHE_CUADRO, si_no_existe=True):
+                    if _firma_publicada(almacen, kj) != meta['firma']:
+                        raise ValueError('ya hay otro JSON publicado en %s: no se pisa' % kj)
                 sobre['cuadros'][variable].append(h)
                 sobre['firmas']['%s/%03d' % (variable, h)] = meta['firma']
                 seguidas, hechos = 0, hechos + 1
@@ -126,8 +149,8 @@ def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
     sobre['generado'] = iso(ahora)
     almacen.escribir(k_sobre(fuente.id, cc), _json(sobre), 'application/json',
                      CACHE_SOBRE_COMPLETA if sobre['estado'] == 'completa' else CACHE_CORTA)
-    log('  %s %s: %s, %d cuadros nuevos, %d pedidos, %.1f MB' % (
-        fuente.id, cc, sobre['estado'], hechos, red.pedidos - p0, (red.bytes - b0) / 1e6))
+    log('  %s %s: %s, %d cuadros nuevos, %d recuperados, %d pedidos, %.1f MB' % (
+        fuente.id, cc, sobre['estado'], hechos, recuperados, red.pedidos - p0, (red.bytes - b0) / 1e6))
     return sobre
 
 

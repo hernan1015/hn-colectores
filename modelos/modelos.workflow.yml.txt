@@ -50,7 +50,9 @@ jobs:
           set -euo pipefail
           pip install -q --only-binary=:all: -r modelos/requirements.txt
           python -c "import eccodes; print('ecCodes', eccodes.codes_get_api_version())"
-          python -m unittest discover -s modelos/test -t modelos/test
+          # [n3-312a] la suite ENTERA (NumPy, SciPy y ecCodes instalados; sin ecCodes no arranca) antes de colectar:
+          # si un test falla, el paso falla y «Colectar» no corre.
+          MODELOS_EXIGIR_ECCODES=1 python -m unittest discover -v -s modelos/test -t modelos/test 2>&1 | tail -5   # pipefail: si falla la suite, falla el paso
       - name: Colectar
         if: steps.chq.outputs.hay == 'si'
         env:

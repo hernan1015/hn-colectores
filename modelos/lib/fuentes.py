@@ -80,7 +80,7 @@ class Regular(Fuente):
     def cuadro(self, red, corrida, variable, h):
         from . import malla
         if variable == 'cape':
-            c, sub, la, lo = self._campo(red, corrida, h, 'cape', paso_h=h, parametro=(0, 7, 6))
+            c, sub, la, lo = self._campo(red, corrida, h, 'cape', paso_h=h, parametro=(0, 7, 6), niveles=self.niveles_cape)
             self._validar_cape(c)
             arr = malla.regular_a_salida(sub, la, lo)
             return self._chequear(arr, variable), {'parametro_fuente': self.param_cape, 'regrillado': self.regrillado}
@@ -95,6 +95,7 @@ class Ecmwf(Regular):
     modelo = 'ECMWF IFS (open data, 0,25°)'
     resolucion = '0,25° (~28 km)'
     cape_tipo = 'MUCAPE'
+    niveles_cape = (17, 255)     # parcela más inestable, sin segunda superficie
     retraso_h = 6.0
     BASE = 'https://data.ecmwf.int/forecasts'
     param_cape = 'mucape (J/kg, parcela más inestable)'
@@ -136,16 +137,17 @@ class Ecmwf(Regular):
         return (o, o + n - 1)
 
     def _validar_cape(self, c):
-        if c['nivel1'][0] != 17:
-            raise ErrorFuente('el CAPE no es el de la parcela más inestable (superficie %d)' % c['nivel1'][0])
+        pass        # [n3-312a 3] la superficie 17 (parcela más inestable) la exige leer() con niveles_cape
 
     def _tp(self, red, corrida, h):
+        from . import grib
         k = ('tp', h)
         if k not in self._cache:
             if h == 0:
                 self._cache[k] = None          # tp(0) = 0: no se pide
             else:
-                _, sub, la, lo = self._campo(red, corrida, h, 'lluvia', acum_h=(0, h), parametro=(0, 1, 193))
+                _, sub, la, lo = self._campo(red, corrida, h, 'lluvia', acum_h=(0, h), parametro=(0, 1, 193),
+                                             niveles=grib.SUPERFICIE)
                 self._cache[k] = (sub, la, lo)
             self._cache.pop(('tp', h - 12), None)
         return self._cache[k]
@@ -164,6 +166,7 @@ class Gfs(Regular):
     modelo = 'NOAA GFS (0,25°)'
     resolucion = '0,25° (~28 km)'
     cape_tipo = 'MUCAPE'
+    niveles_cape = (108, 108)    # entre 255 hPa sobre el suelo y el suelo (los valores, en _validar_cape)
     retraso_h = 3.5
     BASE = 'https://noaa-gfs-bdp-pds.s3.amazonaws.com'
     param_cape = 'CAPE 255-0 mb above ground (J/kg, parcela más inestable de los 255 hPa de abajo)'
@@ -212,7 +215,9 @@ class Gfs(Regular):
             raise ErrorFuente('el CAPE no es el de 255-0 hPa sobre el suelo')
 
     def _lluvia6(self, red, corrida, h):
-        _, sub, la, lo = self._campo(red, corrida, h, 'lluvia', acum_h=(h - 6, h), parametro=(0, 1, 8))
+        from . import grib
+        _, sub, la, lo = self._campo(red, corrida, h, 'lluvia', acum_h=(h - 6, h), parametro=(0, 1, 8),
+                                     niveles=grib.SUPERFICIE)
         return sub, la, lo
 
 
@@ -277,7 +282,7 @@ class Icon(Fuente):
                 self._cache[k] = None
             else:
                 c = grib.leer(self._bajar(red, self._url(corrida, h, 'TOT_PREC')), corrida=corrida, acum_h=(0, h),
-                              parametro=(0, 1, 52))
+                              parametro=(0, 1, 52), niveles=grib.SUPERFICIE)
                 self._cache[k] = (c['valores'], c['malla']['uuid'])
             self._cache.pop(('tp', h - 12), None)
         return self._cache[k]
@@ -287,7 +292,8 @@ class Icon(Fuente):
         import numpy as np
         M = self._malla(red, corrida)
         if variable == 'cape':
-            c = grib.leer(self._bajar(red, self._url(corrida, h, 'CAPE_ML')), corrida=corrida, paso_h=h, parametro=(0, 7, 6))
+            c = grib.leer(self._bajar(red, self._url(corrida, h, 'CAPE_ML')), corrida=corrida, paso_h=h, parametro=(0, 7, 6),
+                          niveles=(192, 255))
             if c['nivel1'][0] != 192:
                 raise ErrorFuente('el CAPE no es el de capa de mezcla (superficie %d)' % c['nivel1'][0])
             arr = M.a_salida(c['valores'], c['malla']['uuid'])

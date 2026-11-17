@@ -135,10 +135,12 @@ class TestParcialYReintentos(Carpeta):
         self.assertIsNone(i['fuentes']['gfs']['ultima'])          # una parcial nunca es «la última»
         self.assertEqual(i['fuentes']['gfs']['estados'], {'2026111612': 'parcial'})
         red2 = S.RedFalsa(S.servidor(C, fuentes=('gfs',)))
+        l0 = self.alm.lecturas
         tuberia.correr(red2, self.alm, ahora=AHORA + timedelta(hours=1), llave='si', fuentes=[Gfs()], log=SILENCIO)
         s = _j(self.alm, 'v1/gfs/2026111612/corrida.json')
         self.assertEqual((s['estado'], s['intentos']), ('completa', 2))
         self.assertLessEqual(red2.pedidos, 3)                      # disponibilidad + .idx + el mensaje que faltaba
+        self.assertLessEqual(self.alm.lecturas - l0, 6)            # no relee los 40 cuadros que el sobre ya tiene
         self.assertEqual(_j(self.alm, tuberia.K_INDICE)['fuentes']['gfs']['ultima'], '2026111612')
 
     def test_tope_de_intentos(self):
@@ -163,6 +165,68 @@ class TestParcialYReintentos(Carpeta):
         tuberia.correr(red, self.alm, ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO)
         self.assertEqual(self.alm.listar('v1/gfs/'), [])
         self.assertLessEqual(red.pedidos, 5)                       # sólo las preguntas de disponibilidad
+
+
+class AlmacenQueFalla(AlmacenCarpeta):
+    """falla al guardar el sobre (como un corte de R2 a mitad de la pasada) y anota cada escritura"""
+
+    def __init__(self, raiz, fallar_sobre=True):
+        super().__init__(raiz)
+        self.fallar_sobre = fallar_sobre
+        self.escritas = []
+
+    def escribir(self, k, datos, tipo='application/json', cache=None, si_no_existe=False):
+        if self.fallar_sobre and k.endswith('/corrida.json'):
+            raise IOError('R2 escribir: HTTP 500')
+        r = super().escribir(k, datos, tipo, cache, si_no_existe)
+        if r:
+            self.escritas.append(k)
+        return r
+
+
+class TestSinPisar(Carpeta):
+    """[n3-312a 2] un cuadro publicado nunca se reescribe, aunque se haya perdido el sobre"""
+
+    def test_falla_el_sobre_y_la_pasada_siguiente_recupera_sin_reescribir(self):
+        arch = S.servidor(C, fuentes=('gfs',))
+        a1 = AlmacenQueFalla(self.dir)
+        with self.assertRaises(IOError):
+            tuberia.correr(S.RedFalsa(arch), a1, ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO)
+        self.assertEqual(len([k for k in a1.escritas if k.endswith('.png')]), 41)
+        self.assertIsNone(a1.leer('v1/gfs/2026111612/corrida.json'))
+        a2 = AlmacenQueFalla(self.dir, fallar_sobre=False)
+        red = S.RedFalsa(arch)
+        tuberia.correr(red, a2, ahora=AHORA + timedelta(minutes=5), llave='si', fuentes=[Gfs()], log=SILENCIO)
+        self.assertEqual([k for k in a2.escritas if '/cape/' in k or '/lluvia6h/' in k], [])   # ni un PNG ni un JSON
+        s = _j(a2, 'v1/gfs/2026111612/corrida.json')
+        self.assertEqual(s['estado'], 'completa')
+        self.assertEqual(len(s['firmas']), 41)
+        self.assertEqual(red.pedidos, 1)                           # sólo la disponibilidad: no se bajó nada
+        self.assertEqual(_j(a2, tuberia.K_INDICE)['fuentes']['gfs']['ultima'], '2026111612')
+
+    def test_control_negativo_png_distinto_ya_publicado_no_se_pisa(self):
+        k = 'v1/gfs/2026111612/cape/006.png'
+        self.alm.escribir(k, b'otro png ya en la cache del borde')
+        tuberia.correr(S.RedFalsa(S.servidor(C, fuentes=('gfs',))), self.alm, ahora=AHORA, llave='si', fuentes=[Gfs()],
+                       log=SILENCIO)
+        self.assertEqual(self.alm.leer(k), b'otro png ya en la cache del borde')
+        self.assertIsNone(self.alm.leer('v1/gfs/2026111612/cape/006.json'))
+        s = _j(self.alm, 'v1/gfs/2026111612/corrida.json')
+        self.assertEqual((s['estado'], s['faltan']['cape']), ('parcial', [6]))
+
+    def test_png_igual_ya_publicado_sigue_con_el_json(self):
+        a0 = AlmacenCarpeta(tempfile.mkdtemp(prefix='modelos-ref-'))
+        try:
+            tuberia.correr(S.RedFalsa(S.servidor(C, fuentes=('gfs',))), a0, ahora=AHORA, llave='si', fuentes=[Gfs()],
+                           log=SILENCIO)
+            k = 'v1/gfs/2026111612/cape/006.png'
+            self.alm.escribir(k, a0.leer(k))                          # quedó el PNG; falló el JSON
+        finally:
+            shutil.rmtree(a0.raiz, ignore_errors=True)
+        tuberia.correr(S.RedFalsa(S.servidor(C, fuentes=('gfs',))), self.alm, ahora=AHORA, llave='si', fuentes=[Gfs()],
+                       log=SILENCIO)
+        self.assertEqual(_j(self.alm, 'v1/gfs/2026111612/corrida.json')['estado'], 'completa')
+        self.assertIsNotNone(self.alm.leer('v1/gfs/2026111612/cape/006.json'))
 
 
 class TestRetencion(Carpeta):

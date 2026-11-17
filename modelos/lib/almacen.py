@@ -81,14 +81,20 @@ class AlmacenR2:
             raise IOError('R2 leer: HTTP %d' % st)
         return b
 
-    def escribir(self, k, datos, tipo='application/json', cache=None):
+    def escribir(self, k, datos, tipo='application/json', cache=None, si_no_existe=False):
+        """True si escribió; False si si_no_existe y la clave ya estaba (If-None-Match: *, R2 responde 412)"""
         self.escrituras += 1
         h = {'content-type': tipo}
         if cache:
             h['cache-control'] = cache
+        if si_no_existe:
+            h['if-none-match'] = '*'
         st, _ = self._pedido('PUT', k, cuerpo=datos, headers=h)
+        if si_no_existe and st in (409, 412):
+            return False
         if st not in (200, 201):
             raise IOError('R2 escribir: HTTP %d' % st)
+        return True
 
     def borrar(self, k):
         self.borrados += 1
@@ -138,14 +144,17 @@ class AlmacenCarpeta:
         except FileNotFoundError:
             return None
 
-    def escribir(self, k, datos, tipo='application/json', cache=None):
+    def escribir(self, k, datos, tipo='application/json', cache=None, si_no_existe=False):
         self.escrituras += 1
         p = self._p(k)
+        if si_no_existe and os.path.exists(p):
+            return False
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p + '.parte', 'wb') as f:
             f.write(datos)
         os.replace(p + '.parte', p)
         self.cache[k] = cache
+        return True
 
     def borrar(self, k):
         self.borrados += 1

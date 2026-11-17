@@ -89,11 +89,13 @@ def cabecera(m):
         if s4[48] not in UNIDAD_MIN:
             raise ErrorGrib('unidad del rango %d' % s4[48])
         largo_min = int.from_bytes(s4[49:53], 'big') * UNIDAD_MIN[s4[48]]
-        r['proceso'] = s4[46]                       # 1 = acumulación
+        r['proceso'] = s4[46]                       # 1 = acumulación (tabla 4.10); 0 = promedio, 2 = máximo…
+        r['n_rangos'] = s4[41]
         r['acum_h'] = (t_min / 60, (t_min + largo_min) / 60)
         r['paso_h'] = (t_min + largo_min) / 60
     else:
         r['proceso'] = None
+        r['n_rangos'] = 0
         r['acum_h'] = None
         r['paso_h'] = t_min / 60
     r['plantilla5'] = int.from_bytes(s[5][9:11], 'big')
@@ -145,8 +147,13 @@ def valores(m):
     return v
 
 
-def leer(m, corrida=None, paso_h=None, acum_h=None, parametro=None):
-    """cabecera + valores, validando que es lo pedido (corrida, paso, acumulación y parámetro)"""
+SUPERFICIE = (1, 255)        # tipo de superficie 1 (suelo o agua) y sin segunda superficie: la lluvia
+
+
+def leer(m, corrida=None, paso_h=None, acum_h=None, parametro=None, niveles=None):
+    """cabecera + valores, validando que es lo pedido (corrida, paso, acumulación y parámetro).
+    [n3-312a 3] Con acum_h, además: plantilla 4.8 con UN rango de tiempo y proceso 1 (ACUMULACIÓN; un promedio o un
+    máximo con el mismo intervalo no pasa). Con niveles=(tipo1, tipo2): los tipos de la primera y segunda superficie."""
     c = cabecera(m)
     if corrida is not None and c['corrida'] != corrida:
         raise ErrorGrib('corrida %s, se pidió %s' % (c['corrida'].isoformat(), corrida.isoformat()))
@@ -155,6 +162,10 @@ def leer(m, corrida=None, paso_h=None, acum_h=None, parametro=None):
     if acum_h is not None and (c['acum_h'] is None or abs(c['acum_h'][0] - acum_h[0]) > 1e-6
                                or abs(c['acum_h'][1] - acum_h[1]) > 1e-6):
         raise ErrorGrib('acumulación %s, se pidió %s' % (c['acum_h'], acum_h))
+    if acum_h is not None and (c['proceso'] != 1 or c['n_rangos'] != 1):
+        raise ErrorGrib('no es una acumulación (proceso %s, %s rangos)' % (c['proceso'], c['n_rangos']))
+    if niveles is not None and (c['nivel1'][0], c['nivel2'][0]) != tuple(niveles):
+        raise ErrorGrib('superficies %s/%s, se pidió %s/%s' % (c['nivel1'][0], c['nivel2'][0], niveles[0], niveles[1]))
     if parametro is not None and (c['disciplina'], c['categoria'], c['numero']) != parametro:
         raise ErrorGrib('parámetro %s' % ((c['disciplina'], c['categoria'], c['numero']),))
     v = valores(m)

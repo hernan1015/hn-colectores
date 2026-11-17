@@ -24,7 +24,7 @@ def _sec(n, cuerpo):
 
 
 def mensaje(valores, malla, corrida, cat, num, disciplina=0, centro=98, paso=0, unidad=1, acum=None,
-            nivel1=(1, 0), nivel2=(255, None), decimales=3, faltantes=None):
+            nivel1=(1, 0), nivel2=(255, None), decimales=3, faltantes=None, proceso=1):
     """un mensaje GRIB2. malla: {'tipo':'latlon', Ni, Nj, la1, lo1, di, dj, scan} o {'tipo':'icosaedrica'}.
     acum = (desde, largo) en `unidad` → plantilla 4.8 (acumulación); si no, 4.0 con `paso`."""
     v = np.asarray(valores, dtype='f8').ravel()
@@ -52,7 +52,7 @@ def mensaje(valores, malla, corrida, cat, num, disciplina=0, centro=98, paso=0, 
         desde, largo = acum
         s4 = struct.pack('>HH', 0, 8) + cab + struct.pack('>I', desde) + nivel(nivel1) + nivel(nivel2)
         s4 += struct.pack('>HBBBBB', corrida.year, corrida.month, corrida.day, corrida.hour, 0, 0)
-        s4 += bytes([1]) + b'\x00' * 4 + bytes([1, 2, unidad]) + struct.pack('>I', largo) + bytes([unidad]) + b'\x00' * 4
+        s4 += bytes([1]) + b'\x00' * 4 + bytes([proceso, 2, unidad]) + struct.pack('>I', largo) + bytes([unidad]) + b'\x00' * 4
     mapa = None
     if faltantes is not None:
         mapa = ~np.asarray(faltantes, bool).ravel()

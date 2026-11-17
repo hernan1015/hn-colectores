@@ -165,6 +165,62 @@ class TestLluvia6h(unittest.TestCase):
             E.cuadro(S.RedFalsa(A), C, 'lluvia6h', 6)
 
 
+class TestProcesoYNivel(unittest.TestCase):
+    """[n3-312a 3] la lluvia tiene que ser una ACUMULACIÓN en SUPERFICIE; el CAPE, en su nivel"""
+
+    def _gfs_con(self, **kw):
+        A = S.servidor(C, fuentes=('gfs',), horas=(12,))
+        G = Gfs()
+        LA, LO = S.coords_regular(S.MALLA_GFS)
+        m = S.mensaje(S.lluvia_total(LA, LO, 12) - S.lluvia_total(LA, LO, 6), S.MALLA_GFS, C, 1, 8, centro=7,
+                      acum=(6, 6), **kw)
+        A[G._url(C, 12)] = m + S.relleno(S.MALLA_GFS)
+        A[G._url(C, 12, '.idx')] = b'1:0:d=x:APCP:surface:6-12 hour acc fcst:\n2:%d:d=x:CIN:x:x:' % len(m)
+        G.nuevo(C)
+        return G, S.RedFalsa(A)
+
+    def test_la_buena_pasa(self):
+        G, red = self._gfs_con()
+        a, _ = G.cuadro(red, C, 'lluvia6h', 12)
+        self.assertGreater(a.max(), 0)
+
+    def test_control_negativo_promedio_no_es_acumulacion(self):
+        G, red = self._gfs_con(proceso=0)                     # mismo intervalo 6-12, pero PROMEDIO
+        with self.assertRaises(grib.ErrorGrib):
+            G.cuadro(red, C, 'lluvia6h', 12)
+
+    def test_control_negativo_otro_nivel(self):
+        for n1, n2 in (((100, 85000), (255, None)), ((1, 0), (1, 0))):   # isobárico; o con segunda superficie
+            G, red = self._gfs_con(nivel1=n1, nivel2=n2)
+            with self.assertRaises(grib.ErrorGrib):
+                G.cuadro(red, C, 'lluvia6h', 12)
+
+    def test_control_negativo_icon_y_ecmwf(self):
+        la, lo = S.celdas_icon()
+        A = S.servidor(C, fuentes=('icon',), horas=(6,))
+        I = Icon()
+        A[I._url(C, 6, 'TOT_PREC')] = bz2.compress(S.mensaje(S.lluvia_total(la, lo, 6), {'tipo': 'icosaedrica'}, C, 1, 52,
+                                                             centro=78, unidad=0, acum=(0, 360), proceso=0))
+        I.nuevo(C)
+        with self.assertRaises(grib.ErrorGrib):
+            I.cuadro(S.RedFalsa(A), C, 'lluvia6h', 6)
+        A[I._url(C, 6, 'CAPE_ML')] = bz2.compress(S.mensaje(S.cape(la, lo, 6), {'tipo': 'icosaedrica'}, C, 7, 6, centro=78,
+                                                            unidad=0, paso=360, nivel1=(192, 0), nivel2=(1, 0)))
+        I.nuevo(C)
+        with self.assertRaises(grib.ErrorGrib):
+            I.cuadro(S.RedFalsa(A), C, 'cape', 6)
+        A = S.servidor(C, fuentes=('ecmwf',), horas=(6,))
+        E = Ecmwf()
+        LA, LO = S.coords_regular(S.MALLA_ECMWF)
+        m = S.mensaje(S.lluvia_total(LA, LO, 6) / 1000.0, S.MALLA_ECMWF, C, 1, 193, acum=(0, 6), decimales=6,
+                      nivel1=(103, 2))
+        A[E._url(C, 6, 'grib2')] = m
+        A[E._url(C, 6, 'index')] = b'{"param":"tp","levtype":"sfc","_offset":0,"_length":%d}' % len(m)
+        E.nuevo(C)
+        with self.assertRaises(grib.ErrorGrib):
+            E.cuadro(S.RedFalsa(A), C, 'lluvia6h', 6)
+
+
 class TestCape(unittest.TestCase):
     def test_cada_fuente_su_cape(self):
         red = S.RedFalsa(S.servidor(C, horas=(0, 6)))
@@ -184,7 +240,7 @@ class TestCape(unittest.TestCase):
         A[E._url(C, 6, 'grib2')] = m
         A[E._url(C, 6, 'index')] = b'{"param":"mucape","levtype":"sfc","_offset":0,"_length":%d}' % len(m)
         E.nuevo(C)
-        with self.assertRaises(ErrorFuente):
+        with self.assertRaises((ErrorFuente, grib.ErrorGrib)):
             E.cuadro(S.RedFalsa(A), C, 'cape', 6)
 
     def test_control_negativo_gfs_no_toma_el_cape_de_superficie(self):

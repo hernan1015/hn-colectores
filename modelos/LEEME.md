@@ -98,7 +98,11 @@ con una paleta fija y sube PNG + JSON al depósito público `satchi-modelos`.
 
 - **Una corrida terminada no se rehace.** Terminada quiere decir `completa`, o `parcial` con 3 intentos.
 - En una `parcial` se hacen sólo los cuadros que faltan, en corridas distintas del workflow.
-- Un cuadro publicado no se reescribe nunca: por eso la caché del borde puede ser de 7 días.
+- **Un cuadro publicado no se reescribe nunca** (por eso la caché del borde puede ser de 7 días). [n3-312a 2] Eso no depende del sobre:
+  - antes de bajar nada, se mira si el JSON del cuadro ya está en R2; si está, el cuadro se **recupera** (su firma va al sobre)
+    sin bajar ni escribir. Así, si una pasada publicó cuadros y falló al guardar el sobre, la siguiente no los rehace;
+  - el PNG y el JSON se escriben con `If-None-Match: *`: si la clave ya existe, R2 no la toca (412). Si el PNG que quedó es
+    el mismo (falló sólo el JSON), se completa el JSON; si es otro, el cuadro queda faltante y no se pisa.
 - Si nada cambió, el índice no se reescribe.
 - **Corte por fallas:**
   - Si fallan 3 cuadros seguidos de una fuente, se corta esa fuente por esta pasada; las otras siguen.
@@ -142,7 +146,7 @@ con una paleta fija y sube PNG + JSON al depósito público `satchi-modelos`.
 
 ## Tests
 
-`python -m unittest discover -s modelos/test -t modelos/test` corre 48 tests con GRIB **sintéticos**:
+`python -m unittest discover -s modelos/test -t modelos/test` corre 58 tests con GRIB **sintéticos**:
 - tienen las mismas plantillas, parámetros, niveles y acumulaciones que se midieron en los archivos reales;
 - van con empaquetado simple, para poder leerlos también sin ecCodes;
 - se sirven con una red de mentira que imita los `.index`, los `.idx` y los `.bz2`.
@@ -159,6 +163,9 @@ Qué cubren, cada uno con su control negativo adentro:
   - ECMWF e ICON por diferencia, y GFS con el balde directo;
   - la acumulada total no pasa por la de 6 h;
   - una acumulación equivocada (360–720 en vez de 0–720) no se publica;
+  - [n3-312a 3] un **promedio** (proceso 0) con el mismo intervalo no pasa por acumulación: se exige plantilla 4.8 con un
+    rango y proceso 1; la lluvia tiene que estar en **superficie** (tipo 1, sin segunda superficie) y cada CAPE en la suya
+    (ECMWF 17, ICON 192, GFS 108/108 con 25500–0 Pa); un APCP isobárico o con segunda superficie se rechaza;
   - un tp en mm en vez de m se rechaza.
 - **El CAPE:** cada fuente el suyo. El GFS no toma el de superficie aunque venga antes en el `.idx`.
 - **El regrillado de ICON:**
@@ -177,11 +184,17 @@ Qué cubren, cada uno con su control negativo adentro:
   - **Retención:** se guardan 8 corridas y la novena sale de R2. Sin corrida nueva no se borra nada.
   - **Chequeo:** dice «hay trabajo» y después «nada», con 0 pedidos.
 - **R2 y la red:** SigV4 contra el ejemplo publicado por AWS; el cliente R2 contra un servidor de mentira; el UA; los rangos;
-  un 404 sin reintento; un 4xx sin reintento; un solo reintento; un servidor que ignora el rango.
+  un 404 sin reintento; un 4xx sin reintento; un solo reintento.
+  - [n3-312a 1] **un servidor que ignora el rango se corta ANTES de leer** (0 bytes leídos de un 200 de 1 MB): se exige 206 y
+    un `Content-Range` igual al pedido, y se lee como mucho el largo pedido + 1.
+- **Sin pisar:** si falla guardar el sobre, la pasada siguiente recupera los 41 cuadros sin bajar ni escribir nada; un PNG
+  distinto ya publicado no se pisa; R2 manda `If-None-Match: *` y un 412 es «ya estaba».
+- **En Actions** la suite corre ENTERA antes de colectar, con `MODELOS_EXIGIR_ECCODES=1` (sin ecCodes no arranca, nunca
+  cae al lector puro); si un test falla, «Colectar» no corre.
 
 **Control negativo contado:** `python modelos/test/control_negativo.py`. Rompe una cosa por vez en una copia de `lib/` y
 `colector.py` y corre la suite: cada mutante tiene que hacerla fallar. Antes corre la copia sin romper, que tiene que pasar.
-Resultado: **34 de 34 mutantes detectados** (con la copia sin romper en verde).
+Resultado: **43 de 43 mutantes detectados** (con la copia sin romper en verde).
 
 **Verificación con datos reales (una vez, sin subir nada):**
 - GFS 16/11 12 UTC: el balde 6-12 h y el CAPE 255-0 de +12 h, decodificados con GDAL (en esta PC no se puede instalar ecCodes),
