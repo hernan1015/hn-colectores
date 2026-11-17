@@ -1,0 +1,6 @@
+{
+  "nota": "Días ARGENTINOS (AAAA-MM-DD) con casos de granizo: la retención de GREMLIN (90 días) no los borra nunca; se guardan los días UTC D y D+1. Sumar acá cada caso nuevo dentro de los 90 días (ver gremlin/LEEME.md, «Retención»).",
+  "dias": [
+    "2026-11-16"
+  ]
+}
