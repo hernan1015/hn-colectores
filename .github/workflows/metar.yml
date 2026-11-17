@@ -1,0 +1,71 @@
+# HN AGRO · colector de METAR de los aeropuertos argentinos (aviationweather.gov, NOAA) en R2 (317). Ver metar/LEEME.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/metar.yml (viene como .txt porque el token de pc-nanci no
+# tiene el permiso «workflow», igual que rayos-hora, gremlin, granizo-archivo e imerg-pendientes).
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo METAR_ON vale «si».
+# A mano: Actions → colector-metar → Run workflow (seco = 1 pedido y cuenta · real = guarda · relleno = los últimos 30 días, de a 3 h).
+# Cada 30 min: UN pedido con las 93 estaciones juntas y las últimas 3 h (el METAR es horario y los SPECI salen cuando
+# cambia el tiempo: 30 min alcanza y deja margen al cron de GitHub, que se atrasa). Nada se guarda dos veces.
+# El registro de Actions es PÚBLICO: se imprimen sólo cantidades.
+name: colector-metar
+on:
+  schedule:
+    - cron: '12,42 * * * *'   # dos veces por hora, lejos de la hora en punto (el METAR de la hora llega a la API a los ~5 min)
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = 1 pedido y cuenta, sin guardar · real = guarda · relleno = historia de la API (30 días), de a 3 h'
+        type: choice
+        options: [seco, real, relleno]
+        default: seco
+      tope:
+        description: 'pedidos por corrida (real: 1 a 10, 3 por defecto · relleno: hasta 120, 30 por defecto)'
+        required: false
+        default: ''
+      desde:
+        description: 'relleno: UTC AAAA-MM-DD o AAAA-MM-DDTHH (vacío = hace 30 días)'
+        required: false
+        default: ''
+      hasta:
+        description: 'relleno: UTC AAAA-MM-DD o AAAA-MM-DDTHH (vacío = ahora)'
+        required: false
+        default: ''
+permissions:
+  contents: read
+concurrency:
+  group: colector-metar
+  cancel-in-progress: false
+jobs:
+  colectar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.METAR_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            rayos-hora/lib
+            metar
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests (sin red)
+        run: node --test metar/test/metar.test.mjs
+      - name: Colectar
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          # el derivado público para SATCHI (metar/v1/ultimas.json): los secretos de opera-mosaico-diario y rayos-hora
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+          METAR_DEPOSITO_PUBLICO: ${{ vars.METAR_DEPOSITO_PUBLICO || 'satchi-metar' }}
+          # a mano, la corrida vale como llave prendida (para la prueba en seco y la primera real); por cron, la variable
+          METAR_ON: ${{ github.event_name == 'workflow_dispatch' && 'si' || vars.METAR_ON }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          TOPE: ${{ github.event_name == 'schedule' && '3' || inputs.tope }}
+          DESDE: ${{ inputs.desde }}
+          HASTA: ${{ inputs.hasta }}
+        run: node metar/metar.mjs
