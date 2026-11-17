@@ -1,0 +1,52 @@
+# HN AGRO · la tabla de validación del ojo del granizo contra los METAR con GR/GS (317, parte 3). Ver metar/LEEME.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/metar-validacion.yml (el token de pc-nanci no tiene el permiso «workflow»).
+# Sólo a mano: Actions → metar-validacion → Run workflow, con los días UTC (AAAA-MM-DD, separados por coma).
+# Lee: los barridos del ojo de la release granizo-AAAA-MM-DD de hn-radar (RADAR_TOKEN, el del colector del radar; se baja el
+# día y el siguiente, porque la release es por día argentino) y los índices METAR de esos días de R2 (R2_*).
+# Escribe la tabla en R2 privado (metar/validacion/<días>.md y .json). El registro de Actions es PÚBLICO: sólo cantidades.
+name: metar-validacion
+on:
+  workflow_dispatch:
+    inputs:
+      dias:
+        description: 'días UTC, AAAA-MM-DD separados por coma (los METAR tienen que estar en R2: correr antes el relleno)'
+        required: true
+permissions:
+  contents: read
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            rayos-hora/lib
+            metar
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests (sin red)
+        run: node --test metar/test/metar.test.mjs
+      - name: Bajar los barridos del ojo
+        env:
+          GH_TOKEN: ${{ secrets.RADAR_TOKEN }}
+          DIAS: ${{ inputs.dias }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/barridos"
+          for d in $(echo "$DIAS" | tr ',' ' '); do
+            [[ "$d" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "día inválido"; exit 1; }
+            for r in "$d" "$(date -u -d "$d + 1 day" +%F)"; do
+              gh release download "granizo-$r" -R hernan1015/hn-radar -p '*.buena.json.gz' -p '*.parcial.json.gz' -D "$RUNNER_TEMP/barridos" --skip-existing || echo "sin release granizo-$r"
+            done
+          done
+          echo "barridos bajados: $(ls "$RUNNER_TEMP/barridos" | wc -l)"
+      - name: Validar
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DIAS: ${{ inputs.dias }}
+        run: node metar/validar-ojo.mjs --barridos "$RUNNER_TEMP/barridos" --r2-dias "$DIAS" --r2-guardar "$(echo "$DIAS" | tr ',' '_')"
