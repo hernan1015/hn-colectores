@@ -237,6 +237,7 @@ def correr(red, almacen, ahora=None, llave='', fuentes=None, retener=RETENER, lo
     fuentes = fuentes or [FUENTES[f]() for f in FUENTES]
     previo = _leer_json(almacen, K_INDICE)
     indice = previo if previo and previo.get('v') == 1 else indice_vacio()
+    indice['valores'] = valores.anuncio()   # [312c] la grilla v2 (su caja) es un DATO del índice
     antes = _json(dict(indice, actualizado=None))
     salen, errores = {}, []
     for f in fuentes:

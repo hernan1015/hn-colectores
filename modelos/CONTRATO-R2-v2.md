@@ -36,15 +36,20 @@ Son las horas que **además** tienen su grilla v2. Siempre es un subconjunto de 
   - La v2 se arma **aparte y después** del v1: un error de la v2 nunca frena el v1.
   - Al recuperar un cuadro, leer su v2 tampoco tumba la corrida.
 
+**El índice** (`v1/indice.json`, que sigue siendo `v: 1`) suma `valores`: { `v`: 2, `claves`, `grilla` (con su `caja`), `escala`, `sin_dato`, `paletas` }.
+- Es donde el front y el viento de la 312d leen la caja.
+- **Si la grilla cambia algún día,** sube `valores.v` y cambian las claves (`v3/…`); el v1 sigue saliendo igual.
+
 ## 3. La grilla
 
 - **Lat-lon regular de 0,25°** (EPSG:4326). Los **nodos** son:
-  - lat de −15 a −56: 165 filas, **de norte a sur**;
-  - lon de −76 a −45: 125 columnas, de oeste a este.
+  - lat de −5 a −60: 221 filas, **de norte a sur**;
+  - lon de −100 a −20: 321 columnas, de oeste a este.
+- **La caja es un DATO** (`grilla.caja` y `caja` en cada `.val.json`; `valores.grilla` en el índice), no una constante del front ni de la function. Es TODA Sudamérica a escala continente (pedido del maker, 17/11 19:03): del Pacífico al Atlántico y del norte de Bolivia/Brasil al sur de Tierra del Fuego. Es más grande que la del PNG v1 (−15/−56, −76/−45), que no cambia. El viento de la 312d usa la misma.
 - **Cada valor es el del NODO (lat, lon).** Para leerlo:
 
   ```
-  lat = −15 − 0,25 · fila      lon = −76 + 0,25 · columna
+  lat = −5 − 0,25 · fila      lon = −100 + 0,25 · columna
   ```
 
 - **ECMWF y GFS** (0,25°): sus puntos están exactamente en los nodos. El valor es el de la fuente, **sin remuestreo**.
@@ -56,7 +61,7 @@ Son las horas que **además** tienen su grilla v2. Siempre es un subconjunto de 
 
 ## 4. El PNG `.val.png`
 
-- **Formato:** gris de **16 bits** (tipo de color 0, profundidad 16), sin entrelazado, de **125 × 165** (ancho × alto). La fila 0 es la del norte.
+- **Formato:** gris de **16 bits** (tipo de color 0, profundidad 16), sin entrelazado, de **321 × 221** (ancho × alto). La fila 0 es la del norte.
 - **Por fila:** el byte de filtro va en 0 (la tubería escribe filtro 0; el front deshace los 5 filtros por las dudas). Los valores van big-endian.
 - **valor = q × escala:**
 
@@ -71,9 +76,9 @@ Son las horas que **además** tienen su grilla v2. Siempre es un subconjunto de 
 - **El PNG se escribe a mano** (zlib, filtro 0): mismos datos → mismos bytes → misma firma.
 
 **Peso medido:**
-- Con campos sintéticos, ~12 KB por cuadro.
-- Lo real se estima en 15-30 KB. Son 41 cuadros × 3 fuentes × 4 corridas por día, ≈ 5-15 MB por día.
-- Con la retención de 8 corridas por fuente, ≈ 15-30 MB guardados.
+- Con campos sintéticos de la caja grande: lluvia 65-71 KB por cuadro, CAPE 24-70 KB (con y sin textura de modelo real).
+- Son 41 cuadros × 3 fuentes × 4 corridas por día, ≈ 25-35 MB por día. El PNG v1 no cambia (2,6-10 KB).
+- Con la retención de 8 corridas por fuente, ≈ 50-70 MB guardados.
 
 ## 5. El JSON `.val.json`
 
@@ -87,7 +92,8 @@ Lleva lo común con el JSON v1 del mismo cuadro, con los mismos valores:
   "paleta": "lluvia6h-continua-v2",          // o "cape-continua-v2"
   "valores": { "png": "012.val.png", "tipo": "PNG gris 16 bits (big-endian), sin filtro",
                "escala": 0.01, "sin_dato": 65535, "formula": "valor = q × escala; q = sin_dato → NaN" },
-  "grilla": { "lat0": -15.0, "dlat": -0.25, "nlat": 165, "lon0": -76.0, "dlon": 0.25, "nlon": 125,
+  "grilla": { "lat0": -5.0, "dlat": -0.25, "nlat": 221, "lon0": -100.0, "dlon": 0.25, "nlon": 321,
+              "caja": { "oeste": -100.0, "este": -20.0, "sur": -60.0, "norte": -5.0 },
               "orden": "filas de norte a sur, columnas de oeste a este; cada valor es el del NODO (lat, lon)",
               "proyeccion": "EPSG:4326 (lat-lon regular)" },
   "regrillado": "…",

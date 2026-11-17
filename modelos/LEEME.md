@@ -99,13 +99,13 @@ con una paleta fija y sube PNG + JSON al depósito público `satchi-modelos`.
 Va **junto** a cada cuadro v1, y el v1 no cambia. Sirve para que SATCHI dibuje el campo **suave**: interpola el valor y pinta
 con la paleta continua DESPUÉS (el método de `_v795` de HN AGRO). El contrato está en [CONTRATO-R2-v2.md](CONTRATO-R2-v2.md).
 
-- **Las claves:** `v2/{f}/{cc}/{var}/{fff}.val.png`, un PNG gris de 16 bits de 125 × 165 con los nodos de 0,25° de la caja,
+- **Las claves:** `v2/{f}/{cc}/{var}/{fff}.val.png`, un PNG gris de 16 bits de 321 × 221 con los nodos de 0,25° de la caja v2 (lat −5/−60, lon −100/−20: toda Sudamérica; es un dato del JSON y del índice),
   más su `.val.json`.
 - **La codificación:** valor = q × escala (lluvia 0,01 mm; CAPE 1 J/kg). q = 65535 es «sin dato».
 - **ECMWF y GFS:** el valor de la fuente en el nodo, sin remuestreo. **ICON:** el centro de celda más cercano al nodo.
 - **El sobre** suma `valores`: las horas que tienen la v2.
 - **Si falla la v2, el v1 queda.** Nunca se pisa una clave publicada, y la retención también borra `v2/`.
-- **El peso:** ~12 KB por cuadro con datos sintéticos; real, estimado en 15-30 KB.
+- **El peso:** 24-71 KB por cuadro (sintético, caja grande), ≈ 25-35 MB por día. El recorte de la fuente cubre las dos cajas (la descarga del GRIB no cambia: ya es el campo global).
 - **Los tests:** `test/test_valores.py`. El control negativo suma 15 mutantes de la v2 en `test/control_negativo.py`.
 - **La v2 está aislada del v1** (Codex n3-312c-col): se arma aparte en `Fuente._v2`, y si no se puede, el v1 sale igual y la hora va a `valores_fallan` del sobre. Leer la v2 al recuperar un cuadro tampoco tumba la corrida.
 
