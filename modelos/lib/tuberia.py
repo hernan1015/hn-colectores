@@ -105,7 +105,7 @@ def publicar_valores(almacen, fuente, cc, variable, h, meta, info):
     """[312c] la grilla de valores v2 del cuadro, DESPUÉS del v1 (que ya está publicado y no cambia). Las mismas reglas: nunca se
     pisa una clave publicada (If-None-Match: *); si ya estaba, sólo se sigue si es la MISMA. Devuelve True si quedó publicada."""
     if info.get('v2') is None:
-        return False
+        raise ValueError(info.get('v2_error') or 'la fuente no armó la grilla v2')
     vpng = valores.png16(valores.codificar(info['v2'], variable))
     m = valores.meta_valores(meta, info['v2'], variable, vpng, info.get('regrillado_v2'))
     kvp, kvj = k_valores(fuente.id, cc, variable, h, 'png'), k_valores(fuente.id, cc, variable, h, 'json')
@@ -126,6 +126,7 @@ def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
                  'cuadros': {v: [] for v in HORAS}, 'firmas': {}, 'pedidos': 0, 'bytes_bajados': 0}
     sobre['intentos'] = sobre.get('intentos', 0) + 1
     sobre.setdefault('valores', {v: [] for v in HORAS})   # [312c] los cuadros que además tienen su grilla v2
+    sobre.setdefault('valores_fallan', {v: [] for v in HORAS})   # [312c] los que la tienen fallida (el v1 sí está)
     fuente.nuevo(corrida)
     p0, b0 = red.pedidos, red.bytes
     seguidas, cortada, hechos, recuperados = 0, False, 0, 0
@@ -140,8 +141,12 @@ def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
             if previa:
                 sobre['cuadros'][variable].append(h)
                 sobre['firmas']['%s/%03d' % (variable, h)] = previa
-                if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):
-                    sobre['valores'][variable].append(h)   # [312c] su v2 también estaba
+                # [312c · Codex n3-312c-col 2] su v2, si estaba; leerla NUNCA tumba el v1 recuperado
+                try:
+                    if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):
+                        sobre['valores'][variable].append(h)
+                except Exception as e:
+                    log('  %s %s %s +%d h: recuperado sin poder leer su v2 (%s)' % (fuente.id, cc, variable, h, e))
                 recuperados += 1
                 continue
             try:
@@ -160,11 +165,13 @@ def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
                 sobre['cuadros'][variable].append(h)
                 sobre['firmas']['%s/%03d' % (variable, h)] = meta['firma']
                 seguidas, hechos = 0, hechos + 1
-                # [312c] la grilla v2: si falla, el cuadro v1 queda publicado (el front cae al v1 y lo dice)
+                # [312c] la grilla v2: si falla (al armarla o al publicarla), el cuadro v1 queda publicado (el front cae al v1 y
+                # lo dice) y la v2 queda anotada como fallida en el sobre
                 try:
-                    if publicar_valores(almacen, fuente, cc, variable, h, meta, info):
-                        sobre['valores'][variable].append(h)
-                except (ValueError, IOError) as e:
+                    publicar_valores(almacen, fuente, cc, variable, h, meta, info)
+                    sobre['valores'][variable].append(h)
+                except Exception as e:
+                    sobre['valores_fallan'][variable].append(h)
                     log('  %s %s %s +%d h: sin grilla v2 (%s); el v1 queda' % (fuente.id, cc, variable, h, e))
             except (ErrorFuente, ErrorRed, ValueError) as e:
                 log('  %s %s %s +%d h: falta (%s)' % (fuente.id, cc, variable, h, e))
@@ -175,6 +182,7 @@ def procesar_corrida(fuente, corrida, sobre, red, almacen, ahora, log):
     for v in HORAS:
         sobre['cuadros'][v] = sorted(set(sobre['cuadros'][v]))
         sobre['valores'][v] = sorted(set(sobre['valores'].get(v, [])) & set(sobre['cuadros'][v]))
+        sobre['valores_fallan'][v] = sorted(set(sobre['valores_fallan'].get(v, [])) - set(sobre['valores'][v]))
     sobre['faltan'] = {v: [h for h in HORAS[v] if h not in sobre['cuadros'][v]] for v in HORAS}
     sobre['estado'] = 'completa' if not any(sobre['faltan'].values()) else 'parcial'
     sobre['pedidos'] = sobre.get('pedidos', 0) + red.pedidos - p0

@@ -74,9 +74,12 @@ MUTANTES = [
     ('v2: la lluvia en décimas', 'valores.py', "ESCALA = {'lluvia6h': 0.01,", "ESCALA = {'lluvia6h': 0.1,"),
     ('v2: PNG de 8 bits', 'valores.py', "q = np.ascontiguousarray(q, dtype='>u2')", "q = np.ascontiguousarray(q, dtype='u1')"),
     ('v2: pisa la grilla ya publicada', 'tuberia.py', "if not almacen.escribir(kvp, vpng, 'image/png', CACHE_CUADRO, si_no_existe=True):\n        viejo = almacen.leer(kvp)\n        if viejo is None or paleta.firma(viejo) != m['firma']:", "if not almacen.escribir(kvp, vpng, 'image/png', CACHE_CUADRO):\n        viejo = almacen.leer(kvp)\n        if viejo is None or paleta.firma(viejo) != m['firma']:"),
-    ('v2: una falla de la v2 tumba el cuadro v1', 'tuberia.py', "                except (ValueError, IOError) as e:\n                    log('  %s %s %s +%d h: sin grilla v2", "                except KeyError as e:\n                    log('  %s %s %s +%d h: sin grilla v2"),
+    ('v2: una falla de la v2 tumba el cuadro v1', 'tuberia.py', "                except Exception as e:\n                    sobre['valores_fallan'][variable].append(h)", "                except KeyError as e:\n                    sobre['valores_fallan'][variable].append(h)"),
+    ('v2: un error al armarla tumba el v1 (fuentes)', 'fuentes.py', '        except Exception as e:   # cualquier error de la v2 no toca el v1', '        except KeyError as e:   # cualquier error de la v2 no toca el v1'),
+    ('v2: leerla al recuperar tumba la corrida', 'tuberia.py', "                except Exception as e:\n                    log('  %s %s %s +%d h: recuperado sin poder leer su v2", "                except KeyError as e:\n                    log('  %s %s %s +%d h: recuperado sin poder leer su v2"),
+    ('v2: la fallida no se anota', 'tuberia.py', "                    sobre['valores_fallan'][variable].append(h)\n", "                    pass\n"),
     ('v2: la retención no la borra', 'tuberia.py', 'for pre in (V, valores.V2):', 'for pre in (V,):'),
-    ('v2: no se recupera al perder el sobre', 'tuberia.py', "                if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):", '                if False:'),
+    ('v2: no se recupera al perder el sobre', 'tuberia.py', "                    if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):", '                    if False:'),
 ]
 
 

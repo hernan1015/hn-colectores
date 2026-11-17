@@ -106,7 +106,8 @@ con la paleta continua DESPUÉS (el método de `_v795` de HN AGRO). El contrato 
 - **El sobre** suma `valores`: las horas que tienen la v2.
 - **Si falla la v2, el v1 queda.** Nunca se pisa una clave publicada, y la retención también borra `v2/`.
 - **El peso:** ~12 KB por cuadro con datos sintéticos; real, estimado en 15-30 KB.
-- **Los tests:** `test/test_valores.py`. El control negativo suma 11 mutantes de la v2 en `test/control_negativo.py`.
+- **Los tests:** `test/test_valores.py`. El control negativo suma 15 mutantes de la v2 en `test/control_negativo.py`.
+- **La v2 está aislada del v1** (Codex n3-312c-col): se arma aparte en `Fuente._v2`, y si no se puede, el v1 sale igual y la hora va a `valores_fallan` del sobre. Leer la v2 al recuperar un cuadro tampoco tumba la corrida.
 
 ## Idempotencia, reintentos y retención
 

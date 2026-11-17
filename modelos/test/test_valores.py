@@ -176,3 +176,76 @@ class TestIconV2(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestV2Aislada(unittest.TestCase):
+    """[Codex n3-312c-col] la v2 que lanza al ARMARSE (fuentes) o al LEERSE (la recuperación): el v1 se publica igual."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='modelos-v2a-')
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _con(self, regular, icon, fuentes):
+        import lib.malla as M
+        viejos = (M.regular_a_v2, M.MallaIcon.a_v2)
+        M.regular_a_v2, M.MallaIcon.a_v2 = regular, icon
+        try:
+            a = AlmacenCarpeta(self.dir)
+            tuberia.correr(S.RedFalsa(S.servidor(C)), a, ahora=AHORA, llave='si', fuentes=fuentes, log=SILENCIO)
+            return a
+        finally:
+            M.regular_a_v2, M.MallaIcon.a_v2 = viejos
+
+    def _v1_entero(self, a, f):
+        s = _j(a, 'v1/%s/2026111612/corrida.json' % f)
+        self.assertEqual(s['estado'], 'completa', f)
+        self.assertEqual(len([k for k in a.listar('v1/%s/2026111612/' % f) if k.endswith('.png')]), 41, f)
+        self.assertEqual(a.listar('v2/%s/2026111612/' % f), [], f)
+        self.assertEqual(s['valores'], {'lluvia6h': [], 'cape': []}, f)
+        self.assertEqual(s['valores_fallan'], s['cuadros'], f)             # anotada como fallida
+        self.assertEqual(_j(a, tuberia.K_INDICE)['fuentes'][f]['ultima'], '2026111612', f)
+
+    def test_la_v2_lanza_al_armarse_y_el_v1_sale_igual(self):
+        from lib.fuentes import Ecmwf, Icon
+        def corrida(*a):
+            raise ValueError('la malla de la fuente no tiene sus puntos en los nodos de 0,25°')
+        def otra(self, *a):
+            raise ValueError('el campo es de otra malla')
+        a = self._con(corrida, otra, [Ecmwf(), Gfs(), Icon()])
+        for f in ('ecmwf', 'gfs', 'icon'):
+            self._v1_entero(a, f)
+
+    def test_un_nan_en_un_nodo_del_borde_no_frena_el_v1(self):
+        def con_nan(sub, la, lo):
+            from lib import malla as M0
+            la_n, lo_n = M0.nodos_v2()
+            v = np.ones((len(la_n), len(lo_n)))
+            v[0, 0] = np.nan
+            return v
+        a = self._con(con_nan, lambda self, *x: np.ones((165, 125)), [Gfs()])
+        self._v1_entero(a, 'gfs')
+
+    def test_la_lectura_de_la_v2_al_recuperar_no_tumba_la_corrida(self):
+        class SinSobre(AlmacenCarpeta):
+            def escribir(self, k, datos, tipo='application/json', cache=None, si_no_existe=False):
+                if k.endswith('/corrida.json'):
+                    raise IOError('R2 escribir: HTTP 500')
+                return super().escribir(k, datos, tipo, cache, si_no_existe)
+
+        class LeerV2Falla(AlmacenCarpeta):
+            def leer(self, k):
+                if k.startswith('v2/'):
+                    raise IOError('R2 leer: HTTP 500')
+                return super().leer(k)
+        arch = S.servidor(C, fuentes=('gfs',))
+        with self.assertRaises(IOError):
+            tuberia.correr(S.RedFalsa(arch), SinSobre(self.dir), ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO)
+        a = LeerV2Falla(self.dir)
+        tuberia.correr(S.RedFalsa(arch), a, ahora=AHORA + timedelta(minutes=5), llave='si', fuentes=[Gfs()], log=SILENCIO)
+        s = _j(a, 'v1/gfs/2026111612/corrida.json')
+        self.assertEqual(s['estado'], 'completa')
+        self.assertEqual(len(s['firmas']), 41)
+        self.assertEqual(s['valores'], {'lluvia6h': [], 'cape': []})   # sin anunciar una v2 que no se pudo leer
+        self.assertEqual(_j(a, tuberia.K_INDICE)['fuentes']['gfs']['ultima'], '2026111612')

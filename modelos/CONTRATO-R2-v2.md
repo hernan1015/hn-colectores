@@ -32,6 +32,9 @@ v2/{fuente}/{corrida}/{variable}/{fff}.val.json   sus metadatos
 Son las horas que **además** tienen su grilla v2. Siempre es un subconjunto de `cuadros`.
 - El front pide la v2 sólo para esas horas.
 - **Un sobre sin `valores`** (de antes de la v2) quiere decir que esa corrida no tiene v2.
+- **`valores_fallan`** (misma forma) son las horas cuyo v1 está publicado pero cuya v2 no se pudo armar o publicar.
+  - La v2 se arma **aparte y después** del v1: un error de la v2 nunca frena el v1.
+  - Al recuperar un cuadro, leer su v2 tampoco tumba la corrida.
 
 ## 3. La grilla
 

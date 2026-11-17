@@ -57,6 +57,16 @@ class Fuente:
             raise ErrorFuente('valores fuera de rango (%.1f..%.1f): ¿unidades?' % (np.nanmin(arr), np.nanmax(arr)))
         return np.clip(arr, 0, None)
 
+    def _v2(self, info, construir, variable):
+        """[312c · Codex n3-312c-col 1] la grilla v2 se arma APARTE y DESPUÉS del v1: si no se puede (una malla que no cae en los
+        nodos, un faltante en un nodo del borde, otra malla de ICON…), el cuadro v1 sale igual y la v2 queda como fallida."""
+        try:
+            info['v2'] = self._chequear(construir(), variable)
+        except Exception as e:   # cualquier error de la v2 no toca el v1
+            info['v2'], info['v2_error'] = None, '%s: %s' % (type(e).__name__, e)
+        info['regrillado_v2'] = self.regrillado_v2
+        return info
+
 
 class Regular(Fuente):
     """fuentes en malla lat-lon 0,25° con índice y rango HTTP (ECMWF y GFS)"""
@@ -83,16 +93,13 @@ class Regular(Fuente):
         if variable == 'cape':
             c, sub, la, lo = self._campo(red, corrida, h, 'cape', paso_h=h, parametro=(0, 7, 6), niveles=self.niveles_cape)
             self._validar_cape(c)
-            arr = malla.regular_a_salida(sub, la, lo)
-            return self._chequear(arr, variable), {'parametro_fuente': self.param_cape, 'regrillado': self.regrillado,
-                                                   'v2': self._chequear(malla.regular_a_v2(sub, la, lo), variable),
-                                                   'regrillado_v2': self.regrillado_v2}
+            arr = self._chequear(malla.regular_a_salida(sub, la, lo), variable)
+            return arr, self._v2({'parametro_fuente': self.param_cape, 'regrillado': self.regrillado},
+                                 lambda: malla.regular_a_v2(sub, la, lo), variable)
         sub, la, lo = self._lluvia6(red, corrida, h)
-        arr = malla.regular_a_salida(sub, la, lo)
-        return self._chequear(arr, variable), {'parametro_fuente': self.param_lluvia % {'h': h, 'h0': h - 6},
-                                               'regrillado': self.regrillado,
-                                               'v2': self._chequear(malla.regular_a_v2(sub, la, lo), variable),
-                                               'regrillado_v2': self.regrillado_v2}
+        arr = self._chequear(malla.regular_a_salida(sub, la, lo), variable)
+        return arr, self._v2({'parametro_fuente': self.param_lluvia % {'h': h, 'h0': h - 6}, 'regrillado': self.regrillado},
+                             lambda: malla.regular_a_v2(sub, la, lo), variable)
 
 
 class Ecmwf(Regular):
@@ -302,20 +309,17 @@ class Icon(Fuente):
                           niveles=((192, None), (255, None)))
             if c['nivel1'][0] != 192:
                 raise ErrorFuente('el CAPE no es el de capa de mezcla (superficie %d)' % c['nivel1'][0])
-            arr = M.a_salida(c['valores'], c['malla']['uuid'])
-            return self._chequear(arr, variable), {'parametro_fuente': self.param_cape, 'regrillado': self.regrillado,
-                                                   'v2': self._chequear(M.a_v2(c['valores'], c['malla']['uuid']), variable),
-                                                   'regrillado_v2': self.regrillado_v2}
+            arr = self._chequear(M.a_salida(c['valores'], c['malla']['uuid']), variable)
+            return arr, self._v2({'parametro_fuente': self.param_cape, 'regrillado': self.regrillado},
+                                 lambda: M.a_v2(c['valores'], c['malla']['uuid']), variable)
         b = self._acum(red, corrida, h)
         a = self._acum(red, corrida, h - 6)
         dif = b[0] - (0 if a is None else a[0])          # la diferencia en la malla nativa, después se regrilla
         if a is not None and a[1] != b[1]:
             raise ErrorFuente('las dos acumuladas son de mallas distintas')
-        arr = M.a_salida(dif, b[1])
-        return self._chequear(arr, variable), {'parametro_fuente': self.param_lluvia % {'h': h, 'h0': h - 6},
-                                               'regrillado': self.regrillado,
-                                               'v2': self._chequear(M.a_v2(dif, b[1]), variable),
-                                               'regrillado_v2': self.regrillado_v2}
+        arr = self._chequear(M.a_salida(dif, b[1]), variable)
+        return arr, self._v2({'parametro_fuente': self.param_lluvia % {'h': h, 'h0': h - 6}, 'regrillado': self.regrillado},
+                             lambda: M.a_v2(dif, b[1]), variable)
 
 
 FUENTES = {'ecmwf': Ecmwf, 'icon': Icon, 'gfs': Gfs}
