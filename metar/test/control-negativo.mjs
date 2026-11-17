@@ -28,8 +28,8 @@ const MUTANTES = [
   ['tope sin acotar', 'colector.mjs', 'return Math.min(max, Math.max(TOPE_MIN, n));', 'return n;'],
   ['no parte la lista al tope de 400', 'colector.mjs', 'if (j.length >= TOPE_API) {', 'if (false) {'],
   // idempotencia y faltantes
-  ['reescribe lo que ya está en el índice', 'colector.mjs', "if (c.ind.obs[id]) { res.repetidos++; continue; }", ''],
-  ['escribe sin soloSiNoExiste', 'colector.mjs', 'JSON.stringify(sobre), { soloSiNoExiste: true });', 'JSON.stringify(sobre), {}), _x = 0;'],
+  ['reescribe lo que ya está en el índice', 'colector.mjs', "if (c.ind.obs[id] || vistos.has(id)) { res.repetidos++; continue; }", ''],
+  ['escribe sin soloSiNoExiste', 'colector.mjs', 'almacen.escribir(p.clave, JSON.stringify(p.sobre), { soloSiNoExiste: true })', 'almacen.escribir(p.clave, JSON.stringify(p.sobre), {})'],
   ['la clave sin el sha del texto (un COR pisa al original)', 'colector.mjs', '-${tipo}-${sha8(crudo)}.json`', '-${tipo}.json`'],
   ['el día de la clave es el de la corrida', 'colector.mjs', 'const ki = claveIndiceDia(x.ms);', 'const ki = claveIndiceDia(ahoraMs);'],
   ['revisa la hora en curso', 'colector.mjs', 'h + HORA <= Math.min(hastaMs, ahoraMs - 10 * MIN) + 1', 'h <= ahoraMs'],
@@ -46,6 +46,13 @@ const MUTANTES = [
   ['un 200 inválido no cuenta como falla', 'colector.mjs', 'const invalida = (motivo) => { fallasSeguidas++;', 'const invalida = (motivo) => { fallasSeguidas += 0;'],
   ['truncado se publica como completo', 'colector.mjs', 'const pub = armarPublico(inds, ahoraMs, { completo });', 'const pub = armarPublico(inds, ahoraMs, { completo: true });'],
   ['el relleno publica', 'colector.mjs', "if (publico && modo === 'real') {", 'if (publico) {'],
+  ["317b: sin plazo por pedido (un cuelgue frena todo)","colector.mjs","mal(new Error('TimeoutError')); }, plazoMs); });","mal(new Error('TimeoutError')); }, 1e9); });"],
+  ["317b: sin reintento","colector.mjs","if ((r.status === 0 || r.status >= 500) && !cortar && res.pedidos < maxPedidos) {","if (false) {"],
+  ["317b: la marca del relleno recién al final","colector.mjs","      await almacen.escribir(CLAVE_RELLENO, JSON.stringify(prog, null, 1));\n      res.tramos++;","      res.tramos++;"],
+  ["317b: los índices recién al final","colector.mjs","      res.indices += await guardarIndices(almacen, indices, ahoraMs);\n      prog.tramos","      prog.tramos"],
+  ["317b: sin presupuesto de tiempo","colector.mjs","if (reloj() - inicio >= presupuestoMs) {","if (false) {"],
+  ["317b: sin log por tramo","colector.mjs","· ${res.guardados - antes} nuevos${t.truncado ? ' · TRUNCADO' : ''} · guardado`);","`);"],
+  ["317b: escrituras de a una","colector.mjs","export const ESCRITURAS_PARALELAS = 8;","export const ESCRITURAS_PARALELAS = 1;"],
   // [n3-317col-v2] la cobertura del ojo en la celda del aeropuerto y el 200 vacío
   ['validación: sin celda del aeropuerto igual es útil', 'validacion.mjs', "return !!s && s.motivo === 'despejado';", 'return true;'],
   ['validación: sin_pixel cuenta como dato', 'validacion.mjs', "return !!s && s.motivo === 'despejado';", 'return !!s;'],
@@ -68,7 +75,8 @@ const MUTANTES = [
 
 const tmp = fs.mkdtempSync(path.join(process.env.METAR_TMP || os.tmpdir(), 'metar-mut-'));
 const copiar = () => { const d = path.join(tmp, 'lib'); fs.rmSync(d, { recursive: true, force: true }); fs.cpSync(path.join(RAIZ, 'lib'), d, { recursive: true }); return d; };
-const suite = (lib) => spawnSync(process.execPath, ['--test', path.join(RAIZ, 'test', 'metar.test.mjs')], { env: { ...process.env, METAR_LIB: lib }, encoding: 'utf8' });
+// [317b] con tope de tiempo: un mutante que cuelga (sin plazo por pedido) tiene que contar como detectado, no colgar el control
+const suite = (lib) => spawnSync(process.execPath, ['--test', '--test-timeout=20000', path.join(RAIZ, 'test', 'metar.test.mjs')], { env: { ...process.env, METAR_LIB: lib }, encoding: 'utf8', timeout: 120000 });
 
 const base = suite(copiar());
 if (base.status !== 0) { console.error('la copia SIN romper no pasa: no se puede medir nada'); console.error(base.stdout.slice(-3000)); process.exit(1); }
@@ -81,7 +89,7 @@ for (const [nombre, archivo, de, a] of MUTANTES) {
   if (!src.includes(de)) { console.error(`el mutante «${nombre}» no encuentra su texto en ${archivo}`); process.exit(1); }
   fs.writeFileSync(f, src.replace(de, a));
   const r = suite(lib);
-  if (r.status !== 0) detectados++; else vivos.push(nombre);
+  if (r.status !== 0 || r.error) detectados++; else vivos.push(nombre);
 }
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`${detectados} de ${MUTANTES.length} mutantes detectados`);

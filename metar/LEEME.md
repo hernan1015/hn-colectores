@@ -109,3 +109,19 @@ El mismo criterio de los casos del 13/11, 14/11 y 16/11: una celda **destacada**
 - **PÉRDIDA exige dato útil del ojo EN la celda del aeropuerto** (`coberturaUtil`): la celda leída entera (patas no null, no incompleta) o un «despejado» confirmado. Sin la celda, o con `sin_pixel`, `altura_invalida` u otro motivo: SIN DATO del ojo. Una destacada a ≤ 30 km sigue dando ACIERTO. La tabla del 16/11 no cambia (5 y 8 barridos útiles).
 - **Un 200 vacío, con espacios o con una lista vacía es una falla:** no revisa horas (no inventa faltantes), cuenta para el corte y el tramo del relleno queda pendiente. «Sin partes» es sólo el 204.
 - Tests: **34**; mutantes: **47 de 47**.
+
+## 317b · el relleno que no avanzaba (17/11, runs 44121469479 y 44123550584)
+**Qué pasaba:** la API contestaba bien (probado el 17/11: la ventana de 3 h del **19/10** —29 días atrás— con las 93 estaciones devolvió 173 partes en **0,4 s**). Lo lento era nuestro: cada parte se escribía en R2 **de a uno** (~170 PUT por tramo, ~30 s), y el índice y la marca de avance (`metar/relleno.json`) se guardaban **recién al final**. El `timeout-minutes: 10` cortaba antes del final y no quedaba nada: la corrida siguiente volvía a decir 239.
+
+**El arreglo:**
+- **Cada tramo se guarda apenas llega:** los índices de los días tocados y la marca de avance. Una corrida cortada deja lo hecho; la siguiente arranca en el primer tramo pendiente (siempre **del más viejo al más nuevo**: el 3/11 sale de la API el 3/12).
+- **Un log por tramo:** `tramo X/Y (MM-DD hh:mm–hh:mm UTC): N partes · K nuevos · guardado`, o `… falló (motivo) · queda pendiente`.
+- **Los partes de un tramo se escriben en R2 de a 8** (`ESCRITURAS_PARALELAS`).
+- **Un plazo por pedido de 30 s** que cubre cabeceras y cuerpo (un pedido colgado se aborta) y **un reintento corto** (5 s) ante cuelgue, red o 5xx (nunca ante 429/403). Cada intento cuenta para las 3 fallas seguidas.
+- **Un presupuesto de tiempo:** el relleno no empieza un tramo pasados `PRESUPUESTO_S` (480 s por defecto, para el job de 10 min) y corta prolijo, con la marca guardada.
+- **El tope del relleno** pasa a 300 por defecto (los 30 días, ~240 tramos, entran en una corrida).
+- **El workflow** (`metar.workflow.yml.txt`) trae un job propio, `rellenar`, a mano con `modo: relleno`: `timeout-minutes: 50` y `PRESUPUESTO_S=2700` (45 min). Estimado: ~7 s por tramo → ~28 min los 30 días.
+
+**Cómo correrlo:**
+- **Con el workflow que ya está instalado** (sin tocar nada): Actions → colector-metar → `modo: relleno`, `tope` vacío. Cada corrida hace ~8 min (unos 60-70 tramos) y corta prolija; **repetirla hasta que diga `0 tramos … por pedir`** (unas 4 veces).
+- **Con el workflow nuevo** (una corrida sola de hasta 45 min): `cp metar/metar.workflow.yml.txt .github/workflows/metar.yml` desde una sesión con el permiso `workflow`, y la misma corrida a mano.

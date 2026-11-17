@@ -283,9 +283,9 @@ test('TOPE de la API (400): se parte la lista en dos; sin lugar en el tope queda
   assert.equal(r3.pedidos, 1); assert.equal(r3.partidos, 0);
 });
 
-test('acotarTope: normal 1 a 10 (3 por defecto), relleno hasta 120 (30 por defecto)', () => {
+test('acotarTope: normal 1 a 10 (3 por defecto), relleno hasta 300 (300 por defecto: 30 días en una corrida)', () => {
   assert.equal(C.acotarTope(undefined), 3); assert.equal(C.acotarTope('500'), 10); assert.equal(C.acotarTope('0'), 1);
-  assert.equal(C.acotarTope(undefined, 'relleno'), 30); assert.equal(C.acotarTope('999', 'relleno'), 120);
+  assert.equal(C.acotarTope(undefined, 'relleno'), 300); assert.equal(C.acotarTope('999', 'relleno'), 300);
   assert.equal(C.acotarTope('abc'), 3);
 });
 
@@ -514,9 +514,103 @@ test('[n3-v2 P3] un 200 vacío, con espacios o con una lista vacía es una FALLA
   const f = api(() => ({ status: 200, cuerpo: '   ' }));
   const r = await correr({ almacen: alm, fetchFn: f, modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-11T00:00:00Z') });
   assert.equal(f.pedidos.length, 3); assert.equal(r.estado, 'cortada'); assert.equal(r.tramos, 0); assert.equal(r.faltantes, 0);
-  assert.deepEqual((await leerJ(alm, 'metar/relleno.json')).tramos, {}, 'ningún tramo queda como hecho');
+  const prog0 = await alm.leer('metar/relleno.json');   // [317b] la marca se escribe por tramo hecho: sin ninguno, ni existe
+  assert.ok(!prog0 || Object.keys(JSON.parse(prog0.toString('utf8')).tramos).length === 0, 'ningún tramo queda como hecho');
   // control negativo: el 204 es una respuesta sin partes, el tramo sí queda hecho
   const alm2 = almacenCarpeta(carpeta());
   const r2 = await correr({ almacen: alm2, fetchFn: api(() => ({ status: 204, cuerpo: '' })), modo: 'relleno', tope: 50, desdeMs: Date.parse('2026-11-10T00:00:00Z'), hastaMs: Date.parse('2026-11-10T06:00:00Z') });
   assert.equal(r2.tramos, 2); assert.equal((await leerJ(alm2, 'metar/relleno.json')).tramos['2026111003'], 'hecho');
+});
+
+// ───────────────────────── 317b: el relleno que no avanzaba (runs 44121469479 y 44123550584) ─────────────────────────
+const DESDE_R = Date.parse('2026-11-16T12:00:00Z'), HASTA_R = Date.parse('2026-11-17T00:00:00Z'), AHORA_R = Date.parse('2026-11-17T03:00:00Z');
+const porTramo = (u) => { const d = new URL(u).searchParams.get('date'); const fin = Date.parse(`${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}T${d.slice(9, 11)}:00:00Z`); return HIST.filter((e) => { const r = Date.parse(e.reportTime); return r > fin - 3 * 3600e3 && r <= fin; }); };
+const rellenar = (o) => C.correr({ llave: 'si', ahoraMs: AHORA_R, modo: 'relleno', desdeMs: DESDE_R, hastaMs: HASTA_R, esperar: sinEspera, log: callado, reintentoMs: 0, ...o });
+
+test('[317b] un pedido que se CUELGA se aborta a los plazoMs, se reintenta una vez y el relleno sigue', { timeout: 15000 }, async () => {
+  let n = 0;
+  const f = api((u) => { n++; if (n === 1) return new Promise(() => {}); return { cuerpo: porTramo(u) }; });   // el 1.º no contesta nunca
+  const t0 = Date.now();
+  const r = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: f, plazoMs: 80 });
+  assert.ok(Date.now() - t0 < 3000, 'no se quedó esperando');
+  assert.equal(r.reintentos, 1); assert.equal(r.tramos, 4); assert.equal(r.estado, 'ok');
+  // también si se cuelga el CUERPO (las cabeceras llegaron)
+  let m = 0;
+  const g = async (u) => { m++; if (m === 1) return { status: 200, text: () => new Promise(() => {}) }; return { status: 200, text: async () => JSON.stringify(porTramo(u)) }; };
+  const r2 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: g, plazoMs: 80 });
+  assert.equal(r2.reintentos, 1); assert.equal(r2.tramos, 4);
+  // dos colgados seguidos: el tramo queda pendiente (falló) y los demás siguen
+  let k = 0;
+  const h = api((u) => { k++; if (k <= 2) return new Promise(() => {}); return { cuerpo: porTramo(u) }; });
+  const r3 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: h, plazoMs: 50 });
+  assert.equal(r3.tramos_fallidos, 1); assert.equal(r3.tramos, 3);
+  // control negativo: sin cuelgues, ningún reintento
+  const r4 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => ({ cuerpo: porTramo(u) })), plazoMs: 80 });
+  assert.equal(r4.reintentos, 0); assert.equal(r4.tramos, 4);
+});
+
+test('[317b] cada tramo se GUARDA apenas llega: una corrida cortada a mitad deja lo hecho y la siguiente arranca donde quedó', async () => {
+  const base = almacenCarpeta(carpeta());
+  // R2 «se cae» al guardar el índice del 3.er tramo: la corrida sale en rojo (como un timeout de Actions)
+  let indices = 0;
+  const roto = { ...base, escribir: (k, b, o) => { if (/indice\.json$/.test(k) && ++indices === 3) throw new Error('R2 escribir: HTTP 500'); return base.escribir(k, b, o); }, leer: (k) => base.leer(k), listar: (p) => base.listar(p) };
+  await assert.rejects(rellenar({ almacen: roto, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) }), /R2/);
+  const prog = await leerJ(base, 'metar/relleno.json');
+  assert.deepEqual(Object.keys(prog.tramos).sort(), ['2026111615', '2026111618'], 'los dos primeros quedaron guardados');
+  const f = api((u) => ({ cuerpo: porTramo(u) }));
+  const r = await rellenar({ almacen: base, fetchFn: f });
+  assert.equal(new URL(f.pedidos[0].url).searchParams.get('date'), '20261116_2100', 'arranca en el 3.º');
+  assert.equal(r.tramos, 2);
+  assert.equal(Object.keys((await leerJ(base, 'metar/relleno.json')).tramos).length, 4);
+  // el granizo de Río Cuarto (tramo 18-21) está en el índice del 16 desde la PRIMERA corrida
+  assert.ok(Object.values((await leerJ(base, 'metar/2026/11/16/indice.json')).obs).some((o) => o.granizo));
+  // control negativo: sin corte, una sola corrida hace los 4 y la siguiente no pide nada
+  const alm = almacenCarpeta(carpeta());
+  await rellenar({ almacen: alm, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) });
+  const g = api(() => ({ cuerpo: [] }));
+  await rellenar({ almacen: alm, fetchFn: g });
+  assert.equal(g.pedidos.length, 0);
+});
+
+test('[317b] el PRESUPUESTO de tiempo corta prolijo antes de un tramo y deja la marca; la siguiente sigue', async () => {
+  let t = 0;
+  const reloj = () => (t += 100e3);   // cada vez que se mira, pasaron 100 s
+  const alm = almacenCarpeta(carpeta());
+  const logs = [];
+  const r = await rellenar({ almacen: alm, fetchFn: api((u) => ({ cuerpo: porTramo(u) })), reloj, presupuestoS: 250, log: (s) => logs.push(s) });
+  assert.equal(r.presupuesto, true); assert.equal(r.estado, 'ok');
+  assert.ok(r.tramos >= 1 && r.tramos < 4, String(r.tramos));
+  assert.ok(logs.some((s) => /presupuesto de 4 min cumplido; corto prolijo, quedan \d+ tramos/.test(s)));
+  assert.equal(Object.keys((await leerJ(alm, 'metar/relleno.json')).tramos).length, r.tramos);
+  const r2 = await rellenar({ almacen: alm, fetchFn: api((u) => ({ cuerpo: porTramo(u) })) });
+  assert.equal(r.tramos + r2.tramos, 4);
+  // control negativo: con presupuesto de sobra no corta
+  const r3 = await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => ({ cuerpo: porTramo(u) })), reloj: () => 0, presupuestoS: 250 });
+  assert.equal(r3.presupuesto, false); assert.equal(r3.tramos, 4);
+});
+
+test('[317b] un log por tramo: «tramo X/Y (desde–hasta UTC): N partes · K nuevos · guardado»; el que falla dice «queda pendiente»', async () => {
+  const logs = [];
+  await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => ({ cuerpo: porTramo(u) })), log: (s) => logs.push(s) });
+  const t = logs.filter((s) => /tramo \d+\/\d+/.test(s));
+  assert.equal(t.length, 4);
+  assert.match(t[0], /^metar \(RELLENO\): tramo 1\/4 \(11-16 12:00–15:00 UTC\): \d+ partes · \d+ nuevos · guardado$/);
+  assert.match(t[1], /tramo 2\/4 \(11-16 15:00–18:00 UTC\): \d+ partes/);
+  // control negativo: un tramo que falla no dice «guardado»
+  const l2 = [];
+  let n = 0;
+  await rellenar({ almacen: almacenCarpeta(carpeta()), fetchFn: api((u) => (++n <= 2 ? { status: 503 } : { cuerpo: porTramo(u) })), log: (s) => l2.push(s) });
+  assert.match(l2.find((s) => /tramo 1\/4/.test(s)), /falló \(HTTP 503\) · queda pendiente$/);
+  assert.doesNotMatch(l2.find((s) => /tramo 1\/4/.test(s)), /guardado/);
+});
+
+test('[317b] los partes de un tramo se escriben en paralelo, de a 8 como mucho', async () => {
+  const base = almacenCarpeta(carpeta());
+  let vivos = 0, max = 0;
+  const lento = { ...base, leer: (k) => base.leer(k), listar: (p) => base.listar(p),
+    escribir: async (k, b, o) => { if (!/\/S[A-Z]{3}\//.test(k)) return base.escribir(k, b, o); vivos++; max = Math.max(max, vivos); await new Promise((r) => setTimeout(r, 5)); vivos--; return base.escribir(k, b, o); } };
+  const r = await correr({ almacen: lento, fetchFn: api(() => ({ cuerpo: ACTUAL })) });
+  assert.equal(r.guardados, 94);
+  assert.equal(max, 8);
+  assert.equal(C.ESCRITURAS_PARALELAS, 8);
 });
