@@ -1,0 +1,13 @@
+{
+  "name": "hn-colector-metar",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · METAR de los aeropuertos argentinos (aviationweather.gov, NOAA) con el granizo (GR/GS) parseado, en R2",
+  "scripts": {
+    "colectar": "node metar.mjs",
+    "test": "node --test test/metar.test.mjs",
+    "mutantes": "node test/control-negativo.mjs",
+    "validar": "node validar-ojo.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
