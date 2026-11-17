@@ -3,6 +3,7 @@
 // del más viejo al más nuevo (los viejos son los primeros que SLIDER borra). Nada se baja dos veces.
 // El almacén (R2 o carpeta) y fetch vienen de afuera, para probar sin red.
 import crypto from 'node:crypto';
+import { limpiar } from './retencion.mjs';
 import {
   BASE, PRODUCTO, SATELITE, SECTOR, ZOOM, TESELA_PX, RESOLUCION, CAJA, FUENTE, UA,
   urlTiempos, urlTesela, parsearTiempos, partesTiempo, tiempoMs, isoTiempo, teselasCaja, motivoTeselaMala,
@@ -75,7 +76,7 @@ export function pendientes(tiempos, indices, ahoraMs) {
  * @param {'real'|'seco'} [o.modo]  seco = sólo pide latest_times y cuenta
  */
 export async function correr({
-  almacen, fetchFn = fetch, ahoraMs = Date.now(), llave, modo = 'real', tope = TOPE_DEFECTO,
+  almacen, fetchFn = fetch, ahoraMs = Date.now(), llave, modo = 'real', tope = TOPE_DEFECTO, casos,
   pausaMs = PAUSA_MS, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log,
 }) {
   const res = { estado: 'ok', pedidos: 0, tiempos_slider: 0, pendientes: 0, guardados: 0, recuperadas: 0, completos: 0, incompletos: 0, teselas: 0, faltantes: 0, bytes: 0 };
@@ -178,6 +179,8 @@ export async function correr({
     res.guardados++; res.faltantes += faltantes.length;
     if (estado === 'completo') res.completos++; else res.incompletos++;
   }
+  // retención (90 días salvo los días con casos): sólo si se pasó la lista (gremlin.mjs siempre la pasa; null = no válida)
+  if (casos !== undefined) res.retencion = await limpiar({ almacen, casos, ahoraMs, log });
   if (cortar) {
     await alertar(almacen, `SLIDER: ${cortar}. Se cortó la corrida; las teselas que faltan se reintentan en la próxima.`, ahoraMs);
     res.estado = 'cortada';

@@ -416,3 +416,100 @@ test('[311b v3] en la corrida: una PLTE vacía (la de Codex) queda faltante, no 
   assert.equal(r2.recuperadas, 0);
   assert.equal(sl2.teselasPedidas().length, 9);
 });
+
+// ---------- retención (local, 17/11): 90 días, salvo los días con casos ----------
+const R = await import((process.env.GREMLIN_LIB || new URL('../lib/', import.meta.url).href) + 'retencion.mjs');
+const DIA_MS = 86400000;
+const llenarDia = async (alm, d, n = 3) => {
+  const t = d.replace(/-/g, '') + '120000';
+  for (let i = 0; i < n; i++) await alm.escribir(`${R.prefijoDia(d)}${t}/03/00${i}_000.png`, pngFalso());
+  await alm.escribir(`${R.prefijoDia(d)}${t}/sobre.json`, '{}');
+  await alm.escribir(`${R.prefijoDia(d)}indice.json`, '{}');
+};
+const hay = async (alm, d) => (await alm.listar(R.prefijoDia(d))).length;
+const CASOS = { dias: ['2026-11-20'] };            // día argentino: se guardan los UTC 20 y 21
+const HOY = Date.UTC(2027, 1, 20, 12);             // 20/02/2027: el último borrable es el 21/11/2026 (91 días antes)
+
+test('retención: borra lo de más de 90 días, deja los 90 días y los días con casos (D y D+1 UTC), y avanza la marca', async () => {
+  assert.equal(R.ultimoBorrable(HOY), '2026-11-21');
+  const alm = nuevo();
+  for (const d of ['2026-11-16', '2026-11-17', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22', '2027-02-19']) await llenarDia(alm, d);
+  const r = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, log: callado });
+  assert.equal(r.estado, 'ok');
+  assert.equal(await hay(alm, '2026-11-16'), 0);
+  assert.equal(await hay(alm, '2026-11-17'), 0);
+  assert.equal(await hay(alm, '2026-11-19'), 0);
+  assert.equal(await hay(alm, '2026-11-20'), 5, 'día del caso');
+  assert.equal(await hay(alm, '2026-11-21'), 5, 'D+1 UTC del caso (la noche argentina)');
+  assert.equal(await hay(alm, '2026-11-22'), 5, '90 días justos: todavía no');
+  assert.equal(await hay(alm, '2027-02-19'), 5);
+  assert.equal(r.marca, '2026-11-21');
+  assert.equal(JSON.parse((await alm.leer(R.CLAVE_MARCA)).toString()).hasta, '2026-11-21');
+  // al día siguiente cae el 22, y nada más
+  const r2 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY + DIA_MS, log: callado });
+  assert.equal(r2.marca, '2026-11-22');
+  assert.equal(await hay(alm, '2026-11-22'), 0);
+  assert.equal(await hay(alm, '2026-11-20'), 5, 'el caso sigue');
+});
+
+test('retención: el tope de borrados por corrida; un día a medias sigue en la próxima y el índice del día va último', async () => {
+  const alm = nuevo();
+  await llenarDia(alm, '2026-11-16', 20);                 // 22 objetos
+  const r1 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, tope: 10, log: callado });
+  assert.equal(r1.borrados, 10);
+  assert.equal(await hay(alm, '2026-11-16'), 12);
+  assert.ok(await alm.leer(`${R.prefijoDia('2026-11-16')}indice.json`), 'el índice se borra al final');
+  assert.equal(await alm.leer(R.CLAVE_MARCA), null, 'la marca no avanza con el día a medias');
+  await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, tope: 10, log: callado });
+  const r3 = await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, tope: 10, log: callado });
+  assert.equal(await hay(alm, '2026-11-16'), 0);
+  assert.equal(r3.borrados, 2 + 0);
+  assert.equal(R.TOPE_BORRADOS, 300);
+});
+
+test('retención: sin lista válida de casos (o con la marca ilegible) no borra nada', async () => {
+  for (const casos of [null, {}, { dias: '2026-11-20' }, { dias: ['2026-11-20', '20/11/2026'] }, { dias: ['2026-02-30'] }]) {
+    const alm = nuevo();
+    await llenarDia(alm, '2026-11-16');
+    const r = await R.limpiar({ almacen: alm, casos, ahoraMs: HOY, log: callado });
+    assert.equal(r.estado, 'sin-lista', JSON.stringify(casos));
+    assert.equal(await hay(alm, '2026-11-16'), 5);
+  }
+  const alm = nuevo();
+  await llenarDia(alm, '2026-11-16');
+  await alm.escribir(R.CLAVE_MARCA, 'basura');
+  assert.equal((await R.limpiar({ almacen: alm, casos: CASOS, ahoraMs: HOY, log: callado })).estado, 'sin-marca');
+  assert.equal(await hay(alm, '2026-11-16'), 5);
+  // control: con lista válida, sí borra
+  const alm2 = nuevo();
+  await llenarDia(alm2, '2026-11-16');
+  await R.limpiar({ almacen: alm2, casos: { dias: [] }, ahoraMs: HOY, log: callado });
+  assert.equal(await hay(alm2, '2026-11-16'), 0);
+});
+
+test('retención en la corrida: sólo en real, con la lista; ni en seco, ni con la llave apagada, ni sin lista', async () => {
+  const preparar = async () => { const alm = nuevo(); await llenarDia(alm, '2026-11-16'); return alm; };
+  const ahora = HOY;
+  const t = new Date(ahora - 30 * 60000).toISOString().replace(/[-:T]/g, '').slice(0, 12).replace(/\d$/, '0') + '00';
+  let alm = await preparar();
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: [t] }).fetchFn, ahoraMs: ahora, casos: CASOS });
+  assert.equal(await hay(alm, '2026-11-16'), 0, 'real con lista: limpia');
+  alm = await preparar();
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: [t] }).fetchFn, ahoraMs: ahora, casos: CASOS, modo: 'seco' });
+  assert.equal(await hay(alm, '2026-11-16'), 5, 'seco: no');
+  alm = await preparar();
+  await C.correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: [t] }).fetchFn, ahoraMs: ahora, casos: CASOS, llave: 'no', log: callado });
+  assert.equal(await hay(alm, '2026-11-16'), 5, 'llave apagada: no');
+  alm = await preparar();
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: [t] }).fetchFn, ahoraMs: ahora, casos: null });
+  assert.equal(await hay(alm, '2026-11-16'), 5, 'lista ilegible: no');
+});
+
+test('dias-casos.json del repo: válido, con el caso de Cuyo del 16/11', async () => {
+  const fs = await import('node:fs');
+  const j = JSON.parse(fs.readFileSync(new URL('../dias-casos.json', import.meta.url), 'utf8'));
+  const p = R.diasProtegidos(j);
+  assert.ok(p, 'lista válida');
+  assert.ok(j.dias.includes('2026-11-16'));
+  assert.ok(p.has('2026-11-17'), 'D+1 UTC');
+});

@@ -72,6 +72,17 @@ const MUTANTES = [
   ['índices de profundidad < 8 mal leídos', 'slider.mjs', '(fila[bit >> 3] >> (8 - prof - (bit & 7))) & mascara', '(fila[bit >> 3] >> (bit & 7)) & mascara'],
   ['chunk crítico desconocido aceptado', 'slider.mjs', '} else if (tipo.charCodeAt(0) < 97) {', '} else if (false) {'],
   ['IDAT no consecutivos aceptados', 'slider.mjs', "if (idatCerrado) return 'PNG con IDAT no consecutivos';", ''],
+  // retención (17/11): 90 días, salvo los días con casos
+  ['retención de 89 días', 'retencion.mjs', 'export const DIAS_RETENCION = 90;', 'export const DIAS_RETENCION = 89;'],
+  ['casos sin el D+1 UTC', 'retencion.mjs', 'for (const d of dias) { out.add(d); out.add(siguienteDia(d)); }', 'for (const d of dias) { out.add(d); }'],
+  ['casos ignorados', 'retencion.mjs', '    if (!protegidos.has(dia)) {', '    if (true) {'],
+  ['borra con la lista inválida', 'retencion.mjs', "  if (!protegidos) {\n    log('gremlin · retención: la lista de días con casos no es válida; no borro nada');\n    return { estado: 'sin-lista', borrados: 0 };\n  }", '  if (!protegidos) return limpiar({ almacen, casos: { dias: [] }, ahoraMs, tope, log });'],
+  ['acepta días imposibles en la lista', 'retencion.mjs', "&& new Date(Date.parse(d + 'T00:00:00Z')).toISOString().slice(0, 10) === d;", ';'],
+  ['sin tope de borrados', 'retencion.mjs', 'const lote = orden.slice(0, tope - borrados);', 'const lote = orden;'],
+  ['la marca avanza con el día a medias', 'retencion.mjs', '      if (lote.length < orden.length) break;', ''],
+  ['el índice del día no va último', 'retencion.mjs', "const orden = [...claves.filter((k) => !k.endsWith('/indice.json')), ...claves.filter((k) => k.endsWith('/indice.json'))];", "const orden = [...claves.filter((k) => k.endsWith('/indice.json')), ...claves.filter((k) => !k.endsWith('/indice.json'))];"],
+  ['marca ilegible = empezar de cero', 'retencion.mjs', "catch { log('gremlin · retención: la marca no se puede leer; no borro nada'); return { estado: 'sin-marca', borrados: 0 }; }", 'catch { /* sigue */ }'],
+  ['la corrida no limpia', 'colector.mjs', '  if (casos !== undefined) res.retencion = await limpiar({ almacen, casos, ahoraMs, log });', ''],
   ['SLIDER caído escribe igual', 'colector.mjs', "    return { ...res, estado: 'slider-caido' };", '    tiempos = [];'],
 ];
 

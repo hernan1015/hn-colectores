@@ -100,6 +100,22 @@ La idempotencia sale de acá:
 - un tiempo `completo` no se vuelve a pedir;
 - de uno `incompleto` se piden sólo sus faltantes.
 
+## Retención: 90 días, salvo los días con casos (decisión de local, 17/11)
+
+- **Qué se borra:** lo de más de 90 días. Un día UTC se borra cuando terminó hace más de 90 días.
+- **Qué no se borra nunca:** los días con casos de granizo.
+  - Están en **`gremlin/dias-casos.json`**, en el repo, como días **argentinos** `AAAA-MM-DD`.
+  - Un día argentino va de las 03:00 UTC de D a las 03:00 UTC de D+1, así que **se guardan los días UTC D y D+1**.
+  - **Hay que sumar cada caso nuevo a la lista antes de que pasen 90 días.** Hoy tiene el de Cuyo, del 16/11.
+- **Cómo** (`lib/retencion.mjs`): al final de cada corrida real, sin listar el depósito entero.
+  - La marca `gremlin/limpieza.json` dice hasta qué día ya se limpió.
+  - Se toma el día siguiente a la marca, si ya se puede borrar. Se lista sólo ese día y se borran **hasta 300 objetos por corrida**, de a 8; el índice del día va último.
+  - Cuando el día queda vacío, la marca avanza. Un día con caso se saltea, y la marca avanza igual.
+  - Un día lleno tiene unos 1.450 objetos, que se borran en 5 corridas.
+  - Borrar no cuesta: el DELETE de R2 es gratis.
+- **Si la lista no es válida o la marca no se puede leer, no se borra nada.** Mejor guardar de más que perder un caso.
+- No se hace con una regla de ciclo de vida de R2, porque una regla por prefijo no puede exceptuar días sueltos.
+
 ## Workflow, secretos y llave
 
 - **Workflow:** `gremlin/gremlin.workflow.yml.txt`. Para instalarlo hay que copiarlo a `.github/workflows/gremlin.yml`. Viene como `.txt` porque el token de pc-nanci no tiene el permiso `workflow`.
@@ -130,8 +146,8 @@ gremlin (SECO): 100 tiempos en SLIDER · 95 por bajar · 9 teselas por tiempo ·
 | Teselas por tiempo | **9** (zoom 3, 2 km) |
 | Peso por tiempo | ~450 KB, con 50 KB por tesela (medidas: 40 y 60 KB con tormentas; con cielo limpio pesan menos), más un sobre de ~3 KB |
 | Por día (144 tiempos) | **~65 MB** (entre ~40 y ~90 MB, según cuánta convección haya) |
-| Por mes / por año | ~2 GB / **~24 GB** |
-| R2 gratis | 10 GB, compartidos con rayos-hora (0,5 a 1,6 GB por año): **se llenan en unos 4 o 5 meses.** Después, US$ 0,015 por GB y por mes: al año, unos 14 GB de más, ≈ US$ 0,21 por mes, y sigue creciendo. Conviene decidir una regla de ciclo de vida en R2 (por ejemplo, borrar a los 90 días, salvo los días de casos de granizo) |
+| Por mes / por año | ~2 GB / ~24 GB sin retención. **Con la retención de 90 días: ~5,9 GB fijos** (90 × 65 MB), más ~130 MB por cada día con caso |
+| R2 gratis | 10 GB, compartidos con rayos-hora (0,5 a 1,6 GB por año). Con la retención, GREMLIN queda en ~6 GB: **entra en el plan gratis** mientras los días con casos sumen menos de ~2 GB (unos 15) |
 | Operaciones en R2 | por corrida, ~11 escrituras y ~4 lecturas: ~1.600 escrituras por día, ~48.000 por mes (el plan gratis da 1 millón) |
 | Pedidos a SLIDER | 10 por corrida, **1.440 por día**, ~65 MB por día |
 | Minutos de Actions | una corrida dura ~20-30 s (sparse checkout, Node, 10 pedidos con 1 s de pausa) y se cobra **1 min**: **144 min por día**, ~4.300 por mes. El repo es público, así que **no se cobran** |
@@ -170,8 +186,8 @@ gremlin (SECO): 100 tiempos en SLIDER · 95 por bajar · 9 teselas por tiempo ·
 
 ```bash
 cd gremlin
-npm test                          # 44 tests, sin red: SLIDER de mentira y almacén en carpeta
-node test/control-negativo.mjs    # 55 de 55 mutantes detectados
+npm test                          # 49 tests, sin red: SLIDER de mentira y almacén en carpeta
+node test/control-negativo.mjs    # 65 de 65 mutantes detectados
 ```
 
 Qué cubren:
@@ -195,6 +211,6 @@ Qué cubren:
 - **El workflow:** nace apagado, a mano corre en seco y usa los 4 secretos R2.
 
 **Control negativo contado:** `node test/control-negativo.mjs`.
-- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 55 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
+- Rompe a propósito una cosa por vez, en una copia de `lib/`. Hay 65 mutantes, de las claves, el recorte, la idempotencia, los faltantes, el tope, la cortesía, la llave y el sobre.
 - Cada mutante tiene que hacer fallar al menos un test.
 - Antes corre la copia sin romper, que tiene que pasar entera.
