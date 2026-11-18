@@ -85,8 +85,8 @@ def cape(lat, lon, h):
     return np.clip(2500 * np.exp(-((lat + 30) ** 2 + (lon + 60) ** 2) / 60.0) * (1 + 0.1 * np.sin(h)), 0, None) + 50
 
 
-MALLA_ECMWF = {'tipo': 'latlon', 'Ni': 141, 'Nj': 181, 'la1': -13.0, 'lo1': -78.0, 'di': 0.25, 'dj': 0.25, 'scan': 0}
-MALLA_GFS = {'tipo': 'latlon', 'Ni': 141, 'Nj': 181, 'la1': -13.0, 'lo1': 282.0, 'di': 0.25, 'dj': 0.25, 'scan': 0}
+MALLA_ECMWF = {'tipo': 'latlon', 'Ni': 337, 'Nj': 237, 'la1': -3.0, 'lo1': -102.0, 'di': 0.25, 'dj': 0.25, 'scan': 0}
+MALLA_GFS = {'tipo': 'latlon', 'Ni': 337, 'Nj': 237, 'la1': -3.0, 'lo1': 258.0, 'di': 0.25, 'dj': 0.25, 'scan': 0}
 
 
 def coords_regular(m):
@@ -96,10 +96,10 @@ def coords_regular(m):
     return np.meshgrid(lats, lons, indexing='ij')
 
 
-def celdas_icon(paso=0.11, semilla=7):
+def celdas_icon(paso=0.17, semilla=7):
     """centros de celda «icosaédricos» de mentira: una grilla con ruido en la caja + 2°, en GRADOS"""
     r = np.random.default_rng(semilla)
-    la, lo = np.meshgrid(np.arange(-58, -13, paso), np.arange(-78, -43, paso), indexing='ij')
+    la, lo = np.meshgrid(np.arange(-62, -3, paso), np.arange(-102, -18, paso), indexing='ij')   # [312c] las dos cajas + 2°
     la = la.ravel() + r.uniform(-paso / 3, paso / 3, la.size)
     lo = lo.ravel() + r.uniform(-paso / 3, paso / 3, lo.size)
     return la, lo

@@ -237,7 +237,8 @@ def correr(red, almacen, ahora=None, llave='', fuentes=None, retener=RETENER, lo
     fuentes = fuentes or [FUENTES[f]() for f in FUENTES]
     previo = _leer_json(almacen, K_INDICE)
     indice = previo if previo and previo.get('v') == 1 else indice_vacio()
-    antes = _json(dict(indice, actualizado=None))
+    antes = _json(dict(indice, actualizado=None))   # [Codex n3-312c-area-col] ANTES de agregar el anuncio: un índice viejo sin él se reescribe
+    indice['valores'] = valores.anuncio()   # [312c] la grilla v2 (su caja) es un DATO del índice
     salen, errores = {}, []
     for f in fuentes:
         log('%s:' % f.id)

@@ -76,8 +76,9 @@ def meta_valores(meta_v1, campo, variable, png, regrillado_v2):
     """el JSON del cuadro v2: lo del v1 (fuente, corrida, horas, período, cita, aviso) + la codificación y la grilla"""
     a = np.asarray(campo, dtype='f8')
     m = {k: meta_v1[k] for k in ('fuente', 'modelo', 'corrida', 'corrida_iso', 'hora_pronostico', 'valida_iso', 'variable',
-                                  'nombre', 'unidades', 'periodo', 'parametro_fuente', 'cape_tipo', 'caja', 'resolucion_fuente',
+                                  'nombre', 'unidades', 'periodo', 'parametro_fuente', 'cape_tipo', 'resolucion_fuente',
                                   'cita', 'aviso')}
+    m['caja'] = dict(malla.CAJA_V2)   # [312c] la caja de la GRILLA v2 (no la del PNG v1)
     m.update({
         'v': 2, 'paleta': PALETA_V2[variable],
         'valores': {'png': '%03d.val.png' % meta_v1['hora_pronostico'], 'tipo': 'PNG gris 16 bits (big-endian), sin filtro',
@@ -88,3 +89,10 @@ def meta_valores(meta_v1, campo, variable, png, regrillado_v2):
         'firma': firma(png), 'firma_v1': meta_v1['firma'],
     })
     return m
+
+
+def anuncio():
+    """[312c] lo que el índice anuncia de la grilla de valores (la MISMA caja la usa el viento de la 312d): si la grilla cambia, sube
+    `v` y cambian las claves (v3/…); el v1 no se toca."""
+    return {'v': 2, 'claves': V2 + '/{fuente}/{corrida}/{variable}/{fff}.val.png|json', 'grilla': malla.grilla_v2(),
+            'escala': dict(ESCALA), 'sin_dato': SIN_DATO, 'paletas': dict(PALETA_V2)}

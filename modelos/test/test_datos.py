@@ -19,8 +19,8 @@ class TestGrib(unittest.TestCase):
         v = S.cape(LA, LO, 6)
         c = grib.leer(S.mensaje(v, S.MALLA_ECMWF, C, 7, 6, paso=6, nivel1=(17, None), decimales=1),
                       corrida=C, paso_h=6, parametro=(0, 7, 6))
-        self.assertEqual(c['malla']['Ni'], 141)
-        self.assertEqual(c['malla']['lo1'], -78.0)
+        self.assertEqual(c['malla']['Ni'], 337)
+        self.assertEqual(c['malla']['lo1'], -102.0)
         self.assertEqual(c['nivel1'][0], 17)
         self.assertLess(np.abs(c['valores'] - v.ravel()).max(), 0.06)
 
@@ -62,10 +62,10 @@ class TestRecorte(unittest.TestCase):
     def test_recorte_solo_la_caja(self):
         for m in (S.MALLA_ECMWF, S.MALLA_GFS):
             sub, la, lo, _ = self._salida(m, lambda a, b: a + b)
-            self.assertGreaterEqual(la.min(), -57.0)
-            self.assertLessEqual(la.max(), -14.0)
-            self.assertGreaterEqual(lo.min(), -77.0)
-            self.assertLessEqual(lo.max(), -44.0)
+            self.assertGreaterEqual(la.min(), -61.0)   # [312c] el recorte cubre las dos cajas (v1 y v2) ± 1°
+            self.assertLessEqual(la.max(), -4.0)
+            self.assertGreaterEqual(lo.min(), -101.0)
+            self.assertLessEqual(lo.max(), -19.0)
             self.assertEqual(sub.shape, (len(la), len(lo)))
 
     def test_vecino_mas_cercano_pixel_a_pixel(self):

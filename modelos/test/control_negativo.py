@@ -12,7 +12,7 @@ MUT = os.path.join(RAIZ, '.mutante')
 
 MUTANTES = [
     # el recorte
-    ('recorte corrido (la caja no entra)', 'malla.py', "(lats >= CAJA['sur'] - margen)", "(lats >= CAJA['sur'] + 5)"),
+    ('recorte corrido (la caja no entra)', 'malla.py', "(lats >= CAJA_RECORTE['sur'] - margen)", "(lats >= CAJA_RECORTE['sur'] + 5)"),
     ('lon 0..360 del GFS sin normalizar', 'malla.py', "lons = _lon180(malla['lo1'] + di * np.arange(Ni))", "lons = malla['lo1'] + di * np.arange(Ni)"),
     ('filas sur→norte ignoradas', 'malla.py', "signo = 1 if malla['scan'] & 0x40 else -1", 'signo = -1'),
     ('filas equiespaciadas en latitud, no en Mercator', 'malla.py', "    return merc_lat(y), lon\n", "    return np.linspace(CAJA['norte'], CAJA['sur'], ALTO), lon\n"),
@@ -66,10 +66,10 @@ MUTANTES = [
     ('GFS acepta otra capa de CAPE', 'fuentes.py', 'niveles_cape = ((108, 25500.0), (108, 0.0))', 'niveles_cape = ((108, None), (108, None))'),
     ('firma SigV4 mal armada', 'almacen.py', "('AWS4' + secreto).encode()", "('AWS4' + secreto[::-1]).encode()"),
     # [312c] la grilla de valores v2
-    ('v2: filas de sur a norte', 'malla.py', "return CAJA['norte'] - np.arange(NLAT_V2) * PASO_V2,", "return CAJA['sur'] + np.arange(NLAT_V2) * PASO_V2,"),
+    ('v2: filas de sur a norte', 'malla.py', "return CAJA_V2['norte'] - np.arange(NLAT_V2) * PASO_V2,", "return CAJA_V2['sur'] + np.arange(NLAT_V2) * PASO_V2,"),
     ('v2: remuestrea a escondidas una malla corrida', 'malla.py', "> 0.01 * PASO_V2 or np.abs(lons[ii] - lo_n).max() > 0.01 * PASO_V2:", "> 9 or np.abs(lons[ii] - lo_n).max() > 9:"),
     ('v2: ICON con lat y lon cruzadas', 'malla.py', 'd2, k2 = arbol.query(_xyz(LA.ravel(), LO.ravel()), k=1)', 'd2, k2 = arbol.query(_xyz(LO.ravel(), LA.ravel()), k=1)'),
-    ('v2: ICON no verifica la malla del campo', 'malla.py', "        if self.uuid != uuid:\n            raise ValueError('el campo es de otra malla (uuid %s, CLAT/CLON %s)' % (uuid, self.uuid))\n        return np.asarray(valores, dtype='f8')[self.indice_v2]", "        return np.asarray(valores, dtype='f8')[self.indice_v2]"),
+    ('v2: ICON no verifica la malla del campo', 'malla.py', "        if self.uuid != uuid:\n            raise ValueError('el campo es de otra malla (uuid %s, CLAT/CLON %s)' % (uuid, self.uuid))\n        if self.dist_max_v2_km", "        if self.dist_max_v2_km"),
     ('v2: el NaN no se marca', 'valores.py', '    q[nan] = SIN_DATO\n', '    pass\n'),
     ('v2: la lluvia en décimas', 'valores.py', "ESCALA = {'lluvia6h': 0.01,", "ESCALA = {'lluvia6h': 0.1,"),
     ('v2: PNG de 8 bits', 'valores.py', "q = np.ascontiguousarray(q, dtype='>u2')", "q = np.ascontiguousarray(q, dtype='u1')"),
@@ -78,6 +78,11 @@ MUTANTES = [
     ('v2: un error al armarla tumba el v1 (fuentes)', 'fuentes.py', '        except Exception as e:   # cualquier error de la v2 no toca el v1', '        except KeyError as e:   # cualquier error de la v2 no toca el v1'),
     ('v2: leerla al recuperar tumba la corrida', 'tuberia.py', "                except Exception as e:\n                    log('  %s %s %s +%d h: recuperado sin poder leer su v2", "                except KeyError as e:\n                    log('  %s %s %s +%d h: recuperado sin poder leer su v2"),
     ('v2: la fallida no se anota', 'tuberia.py', "                    sobre['valores_fallan'][variable].append(h)\n", "                    pass\n"),
+    ('v2: la caja chica de antes', 'malla.py', "CAJA_V2 = {'oeste': -100.0, 'este': -20.0, 'sur': -60.0, 'norte': -5.0}", "CAJA_V2 = {'oeste': -76.0, 'este': -45.0, 'sur': -56.0, 'norte': -15.0}"),
+    ('v2: ICON no verifica la distancia de los nodos', 'malla.py', '        if self.dist_max_v2_km > self.DIST_MAX_KM:', '        if False:'),
+    ('v2: el índice no anuncia la grilla', 'tuberia.py', "    indice['valores'] = valores.anuncio()", '    pass'),
+    ('v2: el recorte de ICON sólo cubre la caja del v1', 'malla.py', "        sel = np.where((clat >= CAJA_RECORTE['sur'] - 1)", "        sel = np.where((clat >= CAJA['sur'] - 1)"),
+    ('v2: el anuncio entra antes de comparar (un índice viejo no se reescribe)', 'tuberia.py', "    antes = _json(dict(indice, actualizado=None))   # [Codex n3-312c-area-col] ANTES de agregar el anuncio: un índice viejo sin él se reescribe\n    indice['valores'] = valores.anuncio()   # [312c] la grilla v2 (su caja) es un DATO del índice\n", "    indice['valores'] = valores.anuncio()   # [312c] la grilla v2 (su caja) es un DATO del índice\n    antes = _json(dict(indice, actualizado=None))\n"),
     ('v2: la retención no la borra', 'tuberia.py', 'for pre in (V, valores.V2):', 'for pre in (V,):'),
     ('v2: no se recupera al perder el sobre', 'tuberia.py', "                    if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):", '                    if False:'),
 ]

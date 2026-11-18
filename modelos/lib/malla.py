@@ -13,7 +13,13 @@ import math
 
 import numpy as np
 
-CAJA = {'oeste': -76.0, 'este': -45.0, 'sur': -56.0, 'norte': -15.0}
+CAJA = {'oeste': -76.0, 'este': -45.0, 'sur': -56.0, 'norte': -15.0}   # la del PNG v1 (no cambia: el v1 sale siempre igual)
+# [312c · 17/11 19:03, el maker] la caja de la grilla de VALORES v2: TODA Sudamérica a escala continente, del Pacífico al Atlántico y
+# del norte de Bolivia/Brasil al sur de Tierra del Fuego. Es UN dato: va en el JSON de cada cuadro y en el índice (la usa también el
+# viento de la 312d). El recorte de la fuente cubre las dos cajas.
+CAJA_V2 = {'oeste': -100.0, 'este': -20.0, 'sur': -60.0, 'norte': -5.0}
+CAJA_RECORTE = {'oeste': min(CAJA['oeste'], CAJA_V2['oeste']), 'este': max(CAJA['este'], CAJA_V2['este']),
+                'sur': min(CAJA['sur'], CAJA_V2['sur']), 'norte': max(CAJA['norte'], CAJA_V2['norte'])}
 PASO_LON = 0.125
 R_TIERRA = 6378137.0
 ANCHO = int(round((CAJA['este'] - CAJA['oeste']) / PASO_LON))          # 248
@@ -64,8 +70,8 @@ def recorte_regular(malla, margen=1.0):
     signo = 1 if malla['scan'] & 0x40 else -1
     lats = malla['la1'] + signo * dj * np.arange(Nj)
     lons = _lon180(malla['lo1'] + di * np.arange(Ni))
-    j = np.where((lats >= CAJA['sur'] - margen) & (lats <= CAJA['norte'] + margen))[0]
-    i = np.where((lons >= CAJA['oeste'] - margen) & (lons <= CAJA['este'] + margen))[0]
+    j = np.where((lats >= CAJA_RECORTE['sur'] - margen) & (lats <= CAJA_RECORTE['norte'] + margen))[0]
+    i = np.where((lons >= CAJA_RECORTE['oeste'] - margen) & (lons <= CAJA_RECORTE['este'] + margen))[0]
     if len(j) == 0 or len(i) == 0:
         raise ValueError('la caja no cae en la malla')
     return j, i, lats[j], lons[i]
@@ -108,8 +114,8 @@ class MallaIcon:
             clat, clon = np.degrees(clat), np.degrees(clon)   # por si vienen en radianes (la malla NetCDF las trae así)
         clon = _lon180(clon)
         self.uuid = uuid
-        sel = np.where((clat >= CAJA['sur'] - 1) & (clat <= CAJA['norte'] + 1)
-                       & (clon >= CAJA['oeste'] - 1) & (clon <= CAJA['este'] + 1))[0]
+        sel = np.where((clat >= CAJA_RECORTE['sur'] - 1) & (clat <= CAJA_RECORTE['norte'] + 1)
+                       & (clon >= CAJA_RECORTE['oeste'] - 1) & (clon <= CAJA_RECORTE['este'] + 1))[0]
         if len(sel) == 0:
             raise ValueError('ninguna celda en la caja')
         arbol = cKDTree(_xyz(clat[sel], clon[sel]))
@@ -137,27 +143,30 @@ class MallaIcon:
         """[312c] el campo en los nodos de la grilla de valores v2"""
         if self.uuid != uuid:
             raise ValueError('el campo es de otra malla (uuid %s, CLAT/CLON %s)' % (uuid, self.uuid))
+        if self.dist_max_v2_km > self.DIST_MAX_KM:   # sólo la v2 falla (el v1 ya salió): la caja v2 es más grande que la del PNG
+            raise ValueError('nodo v2 a %.0f km de la celda más cercana' % self.dist_max_v2_km)
         return np.asarray(valores, dtype='f8')[self.indice_v2]
 
 
 # ── [312c · 17/11] LA GRILLA DE VALORES (contrato R2 v2) ──────────────────────────────────────────────────────────────────
 # Para que el front interpole el VALOR y aplique la paleta continua DESPUÉS (el dibujo suavizado de la 312c, el método de _v795):
-# una malla lat-lon regular de 0,25° cuyos NODOS van de −15 a −56 (165 filas, norte → sur) y de −76 a −45 (125 columnas,
-# oeste → este). ECMWF y GFS (0,25°) tienen sus puntos EXACTAMENTE en esos nodos: el valor es el de la fuente, sin remuestreo.
+# una malla lat-lon regular de 0,25° cuyos NODOS van de −5 a −60 (221 filas, norte → sur) y de −100 a −20 (321 columnas,
+# oeste → este): la CAJA_V2. ECMWF y GFS (0,25°) tienen sus puntos EXACTAMENTE en esos nodos: el valor es el de la fuente, sin remuestreo.
 # ICON: el centro de celda más cercano a cada nodo (vecino más cercano sobre la esfera, el mismo árbol que el PNG). Nunca se
 # promedia ni se inventa: un nodo sin valor es NaN (en el PNG de 16 bits, 65535).
 PASO_V2 = 0.25
-NLAT_V2 = int(round((CAJA['norte'] - CAJA['sur']) / PASO_V2)) + 1     # 165
-NLON_V2 = int(round((CAJA['este'] - CAJA['oeste']) / PASO_V2)) + 1    # 125
+NLAT_V2 = int(round((CAJA_V2['norte'] - CAJA_V2['sur']) / PASO_V2)) + 1     # 221
+NLON_V2 = int(round((CAJA_V2['este'] - CAJA_V2['oeste']) / PASO_V2)) + 1    # 321
 
 
 def nodos_v2():
     """(lat 1D de las filas, de norte a sur; lon 1D de las columnas, de oeste a este)"""
-    return CAJA['norte'] - np.arange(NLAT_V2) * PASO_V2, CAJA['oeste'] + np.arange(NLON_V2) * PASO_V2
+    return CAJA_V2['norte'] - np.arange(NLAT_V2) * PASO_V2, CAJA_V2['oeste'] + np.arange(NLON_V2) * PASO_V2
 
 
 def grilla_v2():
-    return {'lat0': CAJA['norte'], 'dlat': -PASO_V2, 'nlat': NLAT_V2, 'lon0': CAJA['oeste'], 'dlon': PASO_V2, 'nlon': NLON_V2,
+    return {'lat0': CAJA_V2['norte'], 'dlat': -PASO_V2, 'nlat': NLAT_V2, 'lon0': CAJA_V2['oeste'], 'dlon': PASO_V2, 'nlon': NLON_V2,
+            'caja': dict(CAJA_V2),
             'orden': 'filas de norte a sur, columnas de oeste a este; cada valor es el del NODO (lat, lon)',
             'proyeccion': 'EPSG:4326 (lat-lon regular)'}
 
