@@ -175,6 +175,33 @@ class TestFallaV2(unittest.TestCase):
         self.assertTrue(a.listar('v2/gfs/%s/' % viejas[6]))
 
 
+class TestIndiceViejo(unittest.TestCase):
+    """[Codex n3-312c-area-col] un índice publicado ANTES de la v2 (sin valores) se reescribe con el anuncio aunque no cambie ninguna corrida"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix='modelos-ixv-')
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_el_indice_viejo_se_reescribe_con_el_anuncio(self):
+        a = AlmacenCarpeta(self.dir)
+        viejo = tuberia.indice_vacio()
+        viejo.pop('valores', None)
+        a.escribir(tuberia.K_INDICE, json.dumps(viejo).encode())
+        tuberia.correr(S.RedFalsa({}), a, ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO)   # ninguna corrida nueva
+        i = _j(a, tuberia.K_INDICE)
+        self.assertIn('valores', i)
+        self.assertEqual(i['valores']['grilla']['caja'], {'oeste': -100.0, 'este': -20.0, 'sur': -60.0, 'norte': -5.0})
+
+    def test_con_el_anuncio_ya_puesto_no_se_reescribe(self):
+        a = AlmacenCarpeta(self.dir)
+        tuberia.correr(S.RedFalsa({}), a, ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO)
+        b0 = a.leer(tuberia.K_INDICE)
+        tuberia.correr(S.RedFalsa({}), a, ahora=AHORA + timedelta(minutes=10), llave='si', fuentes=[Gfs()], log=SILENCIO)
+        self.assertEqual(a.leer(tuberia.K_INDICE), b0)   # CONTROL: sin cambios, no se reescribe (tampoco el «actualizado»)
+
+
 class TestIconV2(unittest.TestCase):
     def test_icon_sin_celdas_en_la_caja_v2_falla_solo_la_v2(self):
         la, lo = S.celdas_icon()
