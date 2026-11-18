@@ -1,0 +1,56 @@
+# HN AGRO · [r77] TESELAS PRECOCIDAS DE SATCHI: GeoColor, visible (banda 2) y GREMLIN de CIRA/RAMMB SLIDER, ya reproyectadas a las teselas
+# de Leaflet (z3 a z5, el recorte del relevo), en el depósito PÚBLICO de SATCHI. Ver gremlin/LEEME-precocido.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/precocido.yml (viene como .txt porque el token de pc-nanci no tiene el permiso
+# «workflow», igual que gremlin, rayos-hora y granizo-archivo).
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo PRECOCIDO_ON vale «si». A mano (Run workflow) corre en SECO por defecto.
+# El cron de GitHub es poco confiable con los colectores nuevos (17/11): el disparo de verdad va por pg_cron, como gremlin (0159), con una
+# migración nueva que decide el maker. El registro de Actions es PÚBLICO: se imprimen sólo cantidades.
+name: colector-precocido
+on:
+  schedule:
+    - cron: '6,16,26,36,46,56 * * * *'   # cada 10 min, 2 min después de gremlin
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = pide las listas de tiempos y cuenta, sin bajar ni guardar · real = baja, reproyecta y guarda'
+        type: choice
+        options: [seco, real]
+        default: seco
+      tope:
+        description: 'pedidos a SLIDER por corrida (20 a 400; 120 por defecto)'
+        required: false
+        default: '120'
+      retencion_h:
+        description: 'horas que se guardan (1 a 24; 6 por defecto)'
+        required: false
+        default: '6'
+permissions:
+  contents: read
+concurrency:
+  group: colector-precocido
+  cancel-in-progress: false
+jobs:
+  colectar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.PRECOCIDO_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            rayos-hora/lib
+            gremlin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Precocer
+        env:
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+          PRECOCIDO_DEPOSITO: ${{ vars.PRECOCIDO_DEPOSITO || 'satchi-slider' }}
+          PRECOCIDO_ON: ${{ github.event_name == 'workflow_dispatch' && 'si' || vars.PRECOCIDO_ON }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          TOPE: ${{ github.event_name == 'schedule' && '120' || inputs.tope }}
+          RETENCION_H: ${{ github.event_name == 'schedule' && (vars.PRECOCIDO_RETENCION_H || '6') || inputs.retencion_h }}
+        run: node gremlin/precocido.mjs
