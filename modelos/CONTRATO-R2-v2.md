@@ -192,8 +192,9 @@ Un sobre sin `viento` quiere decir que esa corrida no tiene viento: el front lo 
   TOTAL real (`red.hasta`: ningún pedido empieza después, el socket espera lo que queda y el cuerpo se lee por bloques mirándolo);
   3 pasadas por corrida (`viento_intentos`).
 - Al terminar, el sobre dice `viento_cerrado` (todo el viento hecho o sin intentos) y el índice anota `fuentes.{f}.viento.{cc}` =
-  `cerrado`|`abierto`. La function cachea largo un sobre `completa` sólo con `viento_cerrado` (así el borde nunca guarda 24 h un
-  sobre sin el viento que llega después).
+  `cerrado`|`abierto`. **Pendiente (function de hn-agro):** cachear largo un sobre `completa`
+  sólo con `viento_cerrado`, para que el borde no guarde 24 h un sobre sin el viento que llega después (hoy el índice ya va antes
+  del viento, así que el front puede leer el sobre del v1 mientras el viento se arma).
 - **El chequeo previo** da «hay trabajo» también si una corrida terminada NO está en el índice (una pasada cortada) o si le falta
   el viento con intentos.
 
