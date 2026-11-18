@@ -335,6 +335,10 @@ class TestElV1SaleSiempre(Carpeta):
                 self.n = 0
 
             def read(self, k=-1):
+                if k is None or k < 0:                              # leer TODO de una: el servidor que gotea manda los 99 bloques que faltan
+                    t[0] += 10.0 * (100 - self.n)
+                    self.n = 100
+                    return b'x' * 990
                 t[0] += 10.0                                        # cada bloque «tarda» 10 s
                 self.n += 1
                 return b'x' * 10 if self.n < 100 else b''
@@ -344,15 +348,18 @@ class TestElV1SaleSiempre(Carpeta):
 
             def __exit__(self, *a):
                 return False
-        r = Red(pausa=0, abrir=lambda req, timeout: Cuerpo(), dormir=lambda s: None)
+        vistos = []                                                  # el timeout del socket de cada pedido
+        r = Red(pausa=0, abrir=lambda req, timeout: (vistos.append(timeout), Cuerpo())[1], dormir=lambda s: None)
         r.hasta, r.reloj = 35.0, lambda: t[0]
         with self.assertRaises(ErrorRed):
             r.get('https://x.test/a')                               # se corta al vencer, aunque el servidor siga mandando
         self.assertLess(t[0], 60)
+        self.assertEqual(vistos[0], 35.0)                           # el socket espera a lo sumo lo que queda del plazo (no los 60 s)
         with self.assertRaises(ErrorRed):
             r.get('https://x.test/b')                               # vencido: no empieza
         r.hasta = None
-        self.assertEqual(len(r.get('https://x.test/c')), 10)                 # sin plazo, como siempre
+        self.assertEqual(len(r.get('https://x.test/c')), 990)                # sin plazo, como siempre: el cuerpo entero de una
+        self.assertEqual(vistos[-1], 60)                                     # y con su timeout de siempre
 
 
 class TestChequeoViento(Carpeta):
