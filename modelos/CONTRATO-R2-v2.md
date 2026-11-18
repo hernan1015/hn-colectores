@@ -137,3 +137,76 @@ GET /.netlify/functions/modelos/v2/{fuente}/{corrida}/{variable}/{fff}.val.json|
 ```
 
 Es la misma function y la misma caché inmutable del cuadro v1. Lo imposible es 404 sin ir a R2. Lo roto es 503 no-store.
+
+## 8. [312d · 17/11] EL VIENTO (u y v): sólo v2
+
+Para el viento animado de MODELOS en SATCHI: el método de `_v795` de HN AGRO (el campo de color suave por velocidad y los trazos
+advectados sobre u/v interpolados). **No hay cuadro v1 de viento.**
+
+**Las claves** (la variable es el nivel):
+
+```
+v2/{fuente}/{corrida}/viento10m|viento850|viento250/{fff}.val.png
+v2/{fuente}/{corrida}/viento10m|viento850|viento250/{fff}.val.json
+```
+
+- **Las horas:** ECMWF y GFS cada 6 h de 0 a 120; ICON cada 12 h de 0 a 120 (el peso, abajo).
+- **El PNG:** gris de 16 bits, sin entrelazado, de **nlon × 2·nlat** de la grilla v2: con la caja amplia (`CAJA_V2`, PR #26), **321 × 442**.
+  Las filas 0-220 son **u** y las 221-441 son **v** (u arriba, v abajo), con los mismos nodos de la §3 (de norte a sur). La caja va en
+  el JSON (`caja` = `CAJA_V2`) y en el índice. **u = hacia el ESTE, v = hacia el NORTE**, en m/s, instantáneo a la hora válida.
+- **valor (m/s) = (q − 32768) × 0,1** (de −3276,8 a +3276,6). q = 65535 es «sin dato» (el front no lo interpola con los vecinos).
+- **Los valores:** ECMWF y GFS, el de la fuente en el nodo, sin remuestreo; ICON, el centro de celda más cercano (las U y V del
+  open data del DWD son geográficas, en el centro de la celda). Todos son respecto del norte geográfico.
+- **Lo que se pide a cada fuente:**
+
+  | | 10 m | 850 hPa | 250 hPa |
+  |---|---|---|---|
+  | ECMWF (`.index` + rango) | `10u` / `10v`, levtype `sfc` | `u` / `v`, levtype `pl`, levelist `850` | ídem `250` |
+  | GFS (`.idx` + rango) | `UGRD` / `VGRD` «10 m above ground» | «850 mb» | «250 mb» |
+  | ICON (un `.bz2` por archivo) | `U_10M` / `V_10M` (single-level) | `U` / `V` pressure-level `_850_` | ídem `_250_` |
+
+  En la cabecera se verifica el parámetro (0/2/2 y 0/2/3), el paso y el NIVEL en valor físico (103 = 10 m; 100 = 85000 o 25000 Pa).
+  Un viento de más de 150 m/s es un error de unidades: ese cuadro no sale.
+
+**El JSON** (`.val.json`) lleva lo común de la §5 (fuente, modelo, corrida, horas, caja, resolución, cita y aviso, con la misma
+regla) y además:
+
+```json
+{ "v": 2, "variable": "viento850", "nombre": "Viento en 850 hPa (~1500 m)", "nivel": { "tipo": "isobárico", "hPa": 850 },
+  "unidades": "m/s", "paleta": "viento-continua-v2", "periodo": null, "cape_tipo": null,
+  "componentes": "u = hacia el este, v = hacia el norte (m/s); el rumbo «de dónde viene» es atan2(−u, −v)",
+  "valores": { "png": "012.val.png", "escala": 0.1, "cero": 32768, "sin_dato": 65535, "componentes": ["u", "v"],
+               "formula": "valor = (q − cero) × escala; q = sin_dato → NaN" },
+  "grilla": { …la de la §5… }, "estadisticas": { "vel_max": 41.2, "vel_media": 9.8, "sin_dato": 0 }, "firma": "…" }
+```
+
+**El sobre** suma `viento` (las horas publicadas por nivel), `viento_fallan`, `viento_intentos` y `pedidos_viento`/`bytes_viento`.
+Un sobre sin `viento` quiere decir que esa corrida no tiene viento: el front lo dice, no dibuja un mapa vacío.
+
+**El v1 sale SIEMPRE:**
+- El viento va en una **segunda fase**, cuando el v1 de TODAS las fuentes ya está publicado, su sobre escrito **y el ÍNDICE escrito**
+  (Codex n3-312d-col: el viento nunca deja un v1 sin índice).
+- Cada cuadro de viento tiene su try; la fase entera, otro. Ningún error del viento (bajar, armar, publicar, uno inesperado) toca un
+  cuadro v1, su sobre ni el índice.
+- **Topes:** 3 fallas seguidas cortan el viento de esa fuente por esta pasada; 20 min para toda la fase (`VIENTO_TOPE_S`), un plazo
+  TOTAL real (`red.hasta`: ningún pedido empieza después, el socket espera lo que queda y el cuerpo se lee por bloques mirándolo);
+  3 pasadas por corrida (`viento_intentos`).
+- Al terminar, el sobre dice `viento_cerrado` (todo el viento hecho o sin intentos) y el índice anota `fuentes.{f}.viento.{cc}` =
+  `cerrado`|`abierto`. **Pendiente (function de hn-agro):** cachear largo un sobre `completa`
+  sólo con `viento_cerrado`, para que el borde no guarde 24 h un sobre sin el viento que llega después (hoy el índice ya va antes
+  del viento, así que el front puede leer el sobre del v1 mientras el viento se arma).
+- **El chequeo previo** da «hay trabajo» también si una corrida terminada NO está en el índice (una pasada cortada) o si le falta
+  el viento con intentos.
+
+**El peso medido** (HEAD y los índices de la corrida 17/11 00 UTC):
+
+| | por mensaje o archivo | por hora (6) | por corrida |
+|---|---|---|---|
+| ECMWF (rango) | 0,48-0,74 MB | ~3,7 MB | 21 h → **~78 MB** |
+| GFS (rango) | 0,56-0,96 MB | ~4,2 MB | 21 h → **~88 MB** |
+| ICON (`.bz2` entero) | 3,4-3,9 MB | ~22 MB | **cada 12 h:** 11 h → **~240 MB** (cada 6 h serían ~460 MB) |
+
+- Los `.index`/`.idx` de ECMWF y GFS ya se bajaron para el v1: el viento suma sólo los rangos (126 pedidos por corrida; ICON 66).
+- **R2:** con los sintéticos, ~5,5 KB por cuadro; real, estimado en 30-60 KB. Son 3 niveles × (21 + 11 + 21) × 4 corridas ≈ 640
+  cuadros por día, ≈ 20-40 MB por día; con la retención de 8 corridas, ≈ 40-80 MB guardados.
+- **Para apagarlo sin tocar código:** la variable `MODELOS_VIENTO` del repo (`no`, o la lista de fuentes, p. ej. `ecmwf,gfs`).

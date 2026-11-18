@@ -5,6 +5,7 @@
                                           $GITHUB_OUTPUT), para no instalar nada en las pasadas que no tienen trabajo
 
 Entorno: MODELOS_LLAVE (la variable del repo MODELOS_ON; sin «si» no hace nada), MODELOS_FUENTES (ecmwf,icon,gfs),
+[312d] MODELOS_VIENTO (las fuentes con viento u/v; por defecto las mismas de MODELOS_FUENTES; «no» lo apaga entero),
 R2_OPERA_CUENTA / R2_OPERA_ACCESS_KEY_ID / R2_OPERA_SECRET_ACCESS_KEY, MODELOS_DEPOSITO (satchi-modelos) o
 ALMACEN_CARPETA (seco: escribe en una carpeta, no en R2).
 El registro de Actions es PÚBLICO: se imprimen claves, corridas y cantidades; nunca llaves ni URL firmadas.
@@ -27,6 +28,21 @@ def fuentes_de(env):
     return [FUENTES[x]() for x in ids]
 
 
+def viento_de(env, fuentes):
+    """[312d] las fuentes a las que se les arma el viento (la segunda fase de la tubería). Sin la variable: todas las de la pasada."""
+    x = (env.get('MODELOS_VIENTO') or '').strip().lower()
+    if x in ('no', 'off', '0', 'ninguna'):
+        return ()
+    ids = [f.id for f in fuentes]
+    if not x or x in ('si', 'sí', 'todas'):
+        return tuple(ids)
+    pedidas = [y.strip() for y in x.split(',') if y.strip()]
+    malas = [y for y in pedidas if y not in FUENTES]
+    if malas:
+        raise SystemExit('MODELOS_VIENTO: fuentes desconocidas: %s' % ','.join(malas))
+    return tuple(y for y in ids if y in pedidas)
+
+
 def chequeo(env, red, almacen, ahora=None, log=print):
     """¿alguna fuente tiene una corrida entera que todavía no está terminada en R2?"""
     import json
@@ -34,12 +50,29 @@ def chequeo(env, red, almacen, ahora=None, log=print):
     if (env.get('MODELOS_LLAVE') or '').strip().lower() != 'si':
         log('llave apagada (MODELOS_ON != «si»): no se hace nada')
         return False
+    from lib.fuentes import viento_pendiente
     ahora = ahora or datetime.now(timezone.utc)
-    for f in fuentes_de(env):
+    fs = fuentes_de(env)
+    con_viento = viento_de(env, fs)
+    # [312d · Codex n3-312d-col] «terminada» no alcanza: tiene que estar también en el ÍNDICE (si una pasada se cortó entre el sobre y
+    # el índice, hay trabajo); y una corrida terminada con viento pendiente también es trabajo
+    bi = almacen.leer('v1/indice.json')
+    try:
+        ix = json.loads(bi.decode()) if bi else {}
+    except ValueError:
+        ix = {}
+    for f in fs:
         for c in f.candidatos(ahora):
-            b = almacen.leer('v1/%s/%s/corrida.json' % (f.id, c.strftime('%Y%m%d%H')))
+            cc = c.strftime('%Y%m%d%H')
+            b = almacen.leer('v1/%s/%s/corrida.json' % (f.id, cc))
             s = json.loads(b.decode()) if b else None
             if s and (s.get('estado') == 'completa' or s.get('intentos', 0) >= 3):
+                if ((ix.get('fuentes') or {}).get(f.id) or {}).get('estados', {}).get(cc) != s.get('estado'):
+                    log('%s %s: terminada pero no está en el índice: hay trabajo' % (f.id, cc))
+                    return True
+                if f.id in con_viento and viento_pendiente(f, s):
+                    log('%s %s: le falta el viento: hay trabajo' % (f.id, cc))
+                    return True
                 break
             if f.disponible(red, c, 120):
                 log('%s %s: hay trabajo' % (f.id, c.strftime('%Y%m%d%H')))
@@ -64,7 +97,8 @@ def main(argv, env=os.environ):
                 f.write('hay=%s\n' % ('si' if hay else 'no'))
         return 0
     from lib import tuberia
-    tuberia.correr(red, almacen, llave=llave, fuentes=fuentes_de(env))
+    fs = fuentes_de(env)
+    tuberia.correr(red, almacen, llave=llave, fuentes=fs, viento=viento_de(env, fs))
     print('R2: %d lecturas, %d escrituras, %d borrados' % (almacen.lecturas, almacen.escrituras, almacen.borrados))
     return 0
 

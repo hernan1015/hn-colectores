@@ -18,6 +18,26 @@ from datetime import datetime, timedelta, timezone
 H6 = timedelta(hours=6)
 LLUVIA_MAX_MM = 500.0       # en 6 h: más que eso es un error de unidades, no un dato
 CAPE_MAX = 10000.0
+# [312d · 17/11] EL VIENTO (u y v) para el viento animado de MODELOS en SATCHI (el método de `_v795`). Va SÓLO en la v2 (no hay
+# cuadro v1 de viento) y se arma APARTE y DESPUÉS de todo el v1 (tuberia.procesar_viento): un error del viento nunca toca el v1.
+# u = hacia el ESTE y v = hacia el NORTE, en m/s (GRIB 0/2/2 y 0/2/3), instantáneo a la hora válida. ECMWF y GFS (lat-lon) e ICON
+# (sus U y V del open data son geográficas, en el centro de la celda) dan las dos componentes respecto del norte geográfico.
+VIENTO_MAX = 150.0          # m/s (540 km/h): más que eso es un error de unidades (el chorro de 250 hPa llega a ~100 m/s)
+NIVELES_VIENTO = ('viento10m', 'viento850', 'viento250')
+GRIB_VIENTO = {'viento10m': ((103, 10.0), (255, None)),        # 10 m sobre el suelo
+               'viento850': ((100, 85000.0), (255, None)),     # isobárica, en Pa (valor FÍSICO, con el factor de escala)
+               'viento250': ((100, 25000.0), (255, None))}
+PARAM_UV = {'u': (0, 2, 2), 'v': (0, 2, 3)}
+HORAS_VIENTO = tuple(range(0, 121, 6))
+VIENTO_MAX_INTENTOS = 3     # pasadas que prueban el viento de una corrida (después queda como está)
+
+
+def viento_pendiente(fuente, sobre):
+    """[312d] ¿le falta viento a esta corrida y le quedan intentos? (sin numpy: lo usa también el chequeo previo)"""
+    if not sobre or sobre.get('viento_intentos', 0) >= VIENTO_MAX_INTENTOS:
+        return False
+    hechos = sobre.get('viento') or {}
+    return any(h not in (hechos.get(n) or []) for n in NIVELES_VIENTO for h in fuente.horas_viento)
 
 
 class ErrorFuente(Exception):
@@ -57,6 +77,28 @@ class Fuente:
             raise ErrorFuente('valores fuera de rango (%.1f..%.1f): ¿unidades?' % (np.nanmin(arr), np.nanmax(arr)))
         return np.clip(arr, 0, None)
 
+    # [312d] el viento: horas, chequeo y las dos componentes (cada fuente define _componente)
+    horas_viento = HORAS_VIENTO
+    param_viento = {}
+
+    def _chequear_viento(self, u, v):
+        import numpy as np
+        for n, a in (('u', u), ('v', v)):
+            if np.isnan(a).any():
+                raise ErrorFuente('viento %s: valores faltantes en un nodo' % n)
+            if np.abs(a).max() > VIENTO_MAX:
+                raise ErrorFuente('viento %s fuera de rango (%.1f m/s): ¿unidades?' % (n, np.abs(a).max()))
+        return u, v
+
+    def viento(self, red, corrida, nivel, h):
+        """[312d] (u, v, info): las dos componentes (m/s; u hacia el este, v hacia el norte) en los nodos de la grilla v2"""
+        if nivel not in NIVELES_VIENTO:
+            raise ErrorFuente('nivel de viento desconocido: %s' % nivel)
+        u = self._componente(red, corrida, nivel, 'u', h)
+        v = self._componente(red, corrida, nivel, 'v', h)
+        u, v = self._chequear_viento(u, v)
+        return u, v, {'parametro_fuente': self.param_viento[nivel], 'regrillado': self.regrillado_v2}
+
     def _v2(self, info, construir, variable):
         """[312c · Codex n3-312c-col 1] la grilla v2 se arma APARTE y DESPUÉS del v1: si no se puede (una malla que no cae en los
         nodos, un faltante en un nodo del borde, otra malla de ICON…), el cuadro v1 sale igual y la v2 queda como fallida."""
@@ -88,6 +130,13 @@ class Regular(Fuente):
         sub, la, lo = malla.recortar(c['valores'], c['malla'])
         return c, sub, la, lo
 
+    def _componente(self, red, corrida, nivel, comp, h):
+        """[312d] una componente del viento en los nodos v2 (los puntos de la fuente, sin remuestreo)"""
+        from . import malla
+        _, sub, la, lo = self._campo(red, corrida, h, ('viento', nivel, comp), paso_h=h, parametro=PARAM_UV[comp],
+                                     niveles=GRIB_VIENTO[nivel])
+        return malla.regular_a_v2(sub, la, lo)
+
     def cuadro(self, red, corrida, variable, h):
         from . import malla
         if variable == 'cape':
@@ -112,6 +161,8 @@ class Ecmwf(Regular):
     BASE = 'https://data.ecmwf.int/forecasts'
     param_cape = 'mucape (J/kg, parcela más inestable)'
     param_lluvia = 'tp (m, acumulada desde el inicio): tp(+%(h)d h) − tp(+%(h0)d h), × 1000'
+    param_viento = {'viento10m': '10u y 10v (m/s, a 10 m, instantáneo)', 'viento850': 'u y v (m/s) en 850 hPa (levtype pl, instantáneo)',
+                    'viento250': 'u y v (m/s) en 250 hPa (levtype pl, instantáneo)'}
     cita = {
         'texto': ('Basado en datos y productos del Centro Europeo de Pronósticos Meteorológicos a Plazo Medio (ECMWF). '
                   '© %(anio)d European Centre for Medium-Range Weather Forecasts (ECMWF). Licencia CC BY 4.0. '
@@ -141,6 +192,19 @@ class Ecmwf(Regular):
         return self._cache[k]
 
     def _rango(self, red, corrida, h, clave):
+        if isinstance(clave, tuple):     # [312d] ('viento', nivel, 'u'|'v'): 10u/10v en sfc; u/v en pl con su levelist
+            _, nivel, comp = clave
+            if nivel == 'viento10m':
+                param = '10' + comp
+                L = [x for x in self._indice(red, corrida, h) if x.get('param') == param and x.get('levtype') == 'sfc']
+            else:
+                param = '%s %s hPa' % (comp, nivel[6:])
+                L = [x for x in self._indice(red, corrida, h) if x.get('param') == comp and x.get('levtype') == 'pl'
+                     and str(x.get('levelist')) == nivel[6:]]
+            if len(L) != 1:
+                raise ErrorFuente('%d entradas de %s en el índice de +%d h' % (len(L), param, h))
+            o, n = int(L[0]['_offset']), int(L[0]['_length'])
+            return (o, o + n - 1)
         param = 'tp' if clave == 'lluvia' else 'mucape'
         L = [x for x in self._indice(red, corrida, h) if x.get('param') == param and x.get('levtype') == 'sfc']
         if len(L) != 1:
@@ -183,6 +247,8 @@ class Gfs(Regular):
     BASE = 'https://noaa-gfs-bdp-pds.s3.amazonaws.com'
     param_cape = 'CAPE 255-0 mb above ground (J/kg, parcela más inestable de los 255 hPa de abajo)'
     param_lluvia = 'APCP (kg/m², «%(h0)d-%(h)d hour acc»): el balde de 6 h directo'
+    param_viento = {'viento10m': 'UGRD y VGRD «10 m above ground» (m/s)', 'viento850': 'UGRD y VGRD «850 mb» (m/s)',
+                    'viento250': 'UGRD y VGRD «250 mb» (m/s)'}
     cita = {
         'texto': ('NOAA/NCEP Global Forecast System (GFS), dominio público. Fuente: NOAA Open Data Dissemination '
                   '(bucket noaa-gfs-bdp-pds). Datos recortados y coloreados por HN AGRO; NOAA no los avala.'),
@@ -211,7 +277,11 @@ class Gfs(Regular):
 
     def _rango(self, red, corrida, h, clave):
         L = self._indice(red, corrida, h)
-        if clave == 'lluvia':
+        if isinstance(clave, tuple):     # [312d] ('viento', nivel, 'u'|'v')
+            _, nivel, comp = clave
+            quiero = ({'u': 'UGRD', 'v': 'VGRD'}[comp], '10 m above ground' if nivel == 'viento10m' else '%s mb' % nivel[6:],
+                      'anl' if h == 0 else '%d hour fcst' % h)
+        elif clave == 'lluvia':
             quiero = ('APCP', 'surface', '%d-%d hour acc fcst' % (h - 6, h))
         else:
             quiero = ('CAPE', '255-0 mb above ground', 'anl' if h == 0 else '%d hour fcst' % h)
@@ -241,6 +311,12 @@ class Icon(Fuente):
     BASE = 'https://opendata.dwd.de/weather/nwp/icon/grib'
     param_cape = 'CAPE_ML (J/kg, parcela de la capa de mezcla)'
     param_lluvia = 'TOT_PREC (kg/m², acumulada desde el inicio): TOT_PREC(+%(h)d h) − TOT_PREC(+%(h0)d h)'
+    param_viento = {'viento10m': 'U_10M y V_10M (m/s, single-level)', 'viento850': 'U y V (m/s) pressure-level 850 hPa',
+                    'viento250': 'U y V (m/s) pressure-level 250 hPa'}
+    # [312d] EL PESO: ICON no tiene índice ni rango; es un .bz2 por componente, nivel y hora (~3,4-3,9 MB cada uno, medido el 17/11
+    # con HEAD). Cada 6 h serían 126 archivos ≈ 460 MB por corrida; cada 12 h son 66 ≈ 240 MB. ECMWF y GFS van por rango
+    # (~0,5-1 MB por mensaje), cada 6 h: ~78 y ~88 MB por corrida.
+    horas_viento = tuple(range(0, 121, 12))
     regrillado = ('malla icosaédrica R03B07 → vecino más cercano sobre la esfera (centros de celda CLAT/CLON del DWD, '
                   'árbol KD), equivalente a cdo remapnn')
     regrillado_v2 = ('[312c] a cada nodo de 0,25° de la grilla v2, el valor del centro de celda R03B07 más cercano sobre la esfera '
@@ -262,6 +338,20 @@ class Icon(Fuente):
 
     def disponible(self, red, corrida, h_max):
         return red.existe(self._url(corrida, h_max, 'CAPE_ML')) and red.existe(self._url(corrida, h_max, 'TOT_PREC'))
+
+    def _url_pl(self, corrida, h, hpa, var):
+        """[312d] los niveles de presión: un archivo por variable, hora y nivel (en hPa)"""
+        return '%s/%02d/%s/icon_global_icosahedral_pressure-level_%s_%03d_%d_%s.grib2.bz2' % (
+            self.BASE, corrida.hour, var.lower(), corrida.strftime('%Y%m%d%H'), h, hpa, var)
+
+    def _componente(self, red, corrida, nivel, comp, h):
+        """[312d] una componente del viento: el centro de celda más cercano a cada nodo v2 (el mismo árbol KD)"""
+        from . import grib
+        M = self._malla(red, corrida)
+        var = comp.upper()
+        url = self._url(corrida, h, var + '_10M') if nivel == 'viento10m' else self._url_pl(corrida, h, int(nivel[6:]), var)
+        c = grib.leer(self._bajar(red, url), corrida=corrida, paso_h=h, parametro=PARAM_UV[comp], niveles=GRIB_VIENTO[nivel])
+        return M.a_v2(c['valores'], c['malla']['uuid'])
 
     def _bajar(self, red, url):
         from . import grib

@@ -91,6 +91,44 @@ def meta_valores(meta_v1, campo, variable, png, regrillado_v2):
     return m
 
 
+# ── [312d · 17/11] EL VIENTO (u y v) en la v2 ──────────────────────────────────────────────────────────────────────────────
+# Para el viento animado de MODELOS en SATCHI (el método de `_v795`: el campo de color por velocidad y los trazos advectados sobre
+# u/v interpolados). SÓLO hay v2 (no hay cuadro v1 de viento). Las claves son las de la v2 con la variable = el nivel:
+#   v2/{fuente}/{corrida}/viento10m|viento850|viento250/{fff}.val.png   PNG gris de 16 bits de 125 × 330: las filas 0-164 son u
+#                                                                       y las 165-329 son v (los mismos nodos, de norte a sur)
+#   …/{fff}.val.json                                                    la codificación, la grilla, el nivel, la cita y el aviso
+# valor (m/s) = (q − 32768) × 0,1 (de −3276,8 a +3276,6); q = 65535 es «sin dato». u = hacia el ESTE, v = hacia el NORTE.
+NIVELES_VIENTO = {
+    'viento10m': {'nombre': 'Viento a 10 m', 'nivel': {'tipo': 'altura sobre el suelo', 'm': 10}},
+    'viento850': {'nombre': 'Viento en 850 hPa (~1500 m)', 'nivel': {'tipo': 'isobárico', 'hPa': 850}},
+    'viento250': {'nombre': 'Viento en 250 hPa (~10 km, la corriente en chorro)', 'nivel': {'tipo': 'isobárico', 'hPa': 250}},
+}
+ESCALA_VIENTO = 0.1
+CERO_VIENTO = 32768
+PALETA_VIENTO = 'viento-continua-v2'
+
+
+def codificar_viento(u, v):
+    """u y v (m/s, nlat × nlon) → q uint16 de (2·nlat) × nlon: u arriba, v abajo (NaN → SIN_DATO; fuera del rango → el tope)"""
+    out = []
+    for c in (u, v):
+        a = np.asarray(c, dtype='f8')
+        nan = np.isnan(a)
+        q = np.rint(np.where(nan, 0.0, a) / ESCALA_VIENTO) + CERO_VIENTO
+        q = np.clip(q, 0, TOPE_Q).astype(np.uint16)
+        out.append(np.where(nan, SIN_DATO, q).astype(np.uint16))
+    return np.vstack(out)
+
+
+def decodificar_viento(q):
+    """q de (2·nlat) × nlon → (u, v) en m/s, con NaN donde hay «sin dato»"""
+    q = np.asarray(q, dtype=np.uint16)
+    x = (q.astype('f8') - CERO_VIENTO) * ESCALA_VIENTO
+    x[q == SIN_DATO] = np.nan
+    n = q.shape[0] // 2
+    return x[:n], x[n:]
+
+
 def anuncio():
     """[312c] lo que el índice anuncia de la grilla de valores (la MISMA caja la usa el viento de la 312d): si la grilla cambia, sube
     `v` y cambian las claves (v3/…); el v1 no se toca."""

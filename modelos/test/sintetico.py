@@ -85,6 +85,33 @@ def cape(lat, lon, h):
     return np.clip(2500 * np.exp(-((lat + 30) ** 2 + (lon + 60) ** 2) / 60.0) * (1 + 0.1 * np.sin(h)), 0, None) + 50
 
 
+# [312d] el viento de prueba: u (hacia el este) y v (hacia el norte) en m/s, distintos en cada nivel, celda y hora (y con los dos
+# signos, para que una u y una v cruzadas o con el signo dado vuelta se noten)
+NIVEL_K = {'viento10m': 1.0, 'viento850': 2.0, 'viento250': 6.0}
+
+
+def viento_u(lat, lon, h, nivel):
+    k = NIVEL_K[nivel]
+    return k * (4.0 + 3.0 * np.sin(np.radians(lat) * 9 + h * 0.05) + 0.02 * (lon + 60))
+
+
+def viento_v(lat, lon, h, nivel):
+    k = NIVEL_K[nivel]
+    return k * (-2.0 + 2.5 * np.cos(np.radians(lon) * 7 - h * 0.03) - 0.03 * (lat + 35))
+
+
+def _ev(nivel, comp):
+    """la entrada del .index de ECMWF"""
+    if nivel == 'viento10m':
+        return {'param': '10' + comp, 'levtype': 'sfc'}
+    return {'param': comp, 'levtype': 'pl', 'levelist': nivel[6:]}
+
+
+def _nv(nivel):
+    """(tipo, valor, factor) GRIB: 10 m; 850 hPa como 850 × 10² (factor −2) y 250 hPa como 25000 Pa (factor 0)"""
+    return {'viento10m': (103, 10), 'viento850': (100, 850, -2), 'viento250': (100, 25000)}[nivel]
+
+
 MALLA_ECMWF = {'tipo': 'latlon', 'Ni': 337, 'Nj': 237, 'la1': -3.0, 'lo1': -102.0, 'di': 0.25, 'dj': 0.25, 'scan': 0}
 MALLA_GFS = {'tipo': 'latlon', 'Ni': 337, 'Nj': 237, 'la1': -3.0, 'lo1': 258.0, 'di': 0.25, 'dj': 0.25, 'scan': 0}
 
@@ -103,6 +130,10 @@ def celdas_icon(paso=0.17, semilla=7):
     la = la.ravel() + r.uniform(-paso / 3, paso / 3, la.size)
     lo = lo.ravel() + r.uniform(-paso / 3, paso / 3, lo.size)
     return la, lo
+
+
+class ErrorRedFalsa(Exception):
+    pass
 
 
 class RedFalsa:
@@ -156,9 +187,11 @@ from datetime import datetime, timezone  # noqa: E402
 CORRIDA0 = datetime(2026, 11, 16, 12, tzinfo=timezone.utc)
 
 
-def servidor(corrida, fuentes=('ecmwf', 'gfs', 'icon'), horas=range(0, 121, 6), faltar=()):
-    """todos los archivos de una corrida de las 3 fuentes. `faltar`: (fuente, variable, h) que no se publican."""
+def servidor(corrida, fuentes=('ecmwf', 'gfs', 'icon'), horas=range(0, 121, 6), faltar=(), viento=False):
+    """todos los archivos de una corrida de las 3 fuentes. `faltar`: (fuente, variable, h) que no se publican.
+    [312d] viento=True suma u y v de 10 m, 850 y 250 hPa (más señuelos: 500 hPa); `faltar` acepta también (fuente, nivel, h)."""
     from lib.fuentes import Ecmwf, Gfs, Icon
+    NV = ('viento10m', 'viento850', 'viento250') if viento else ()
     A = {}
     if 'ecmwf' in fuentes:
         E = Ecmwf()
@@ -171,6 +204,15 @@ def servidor(corrida, fuentes=('ecmwf', 'gfs', 'icon'), horas=range(0, 121, 6), 
             if ('ecmwf', 'cape', h) not in faltar:
                 ms.append(({'ecmwf': {'param': 'mucape', 'levtype': 'sfc'}, 'gfs': ''},
                            mensaje(cape(LA, LO, h), MALLA_ECMWF, corrida, 7, 6, paso=h, nivel1=(17, None), decimales=1)))
+            for nivel in NV:
+                if ('ecmwf', nivel, h) in faltar:
+                    continue
+                for comp, num, f in (('u', 2, viento_u), ('v', 3, viento_v)):
+                    ms.append(({'ecmwf': _ev(nivel, comp), 'gfs': ''},
+                               mensaje(f(LA, LO, h, nivel), MALLA_ECMWF, corrida, 2, num, paso=h, nivel1=_nv(nivel), decimales=2)))
+            if NV:   # señuelo: u en 500 hPa
+                ms.append(({'ecmwf': {'param': 'u', 'levtype': 'pl', 'levelist': '500'}, 'gfs': ''},
+                           mensaje(viento_u(LA, LO, h, 'viento250') * -1, MALLA_ECMWF, corrida, 2, 2, paso=h, nivel1=(100, 50000), decimales=2)))
             d, ie, _ = _archivo_con_indice(ms)
             A[E._url(corrida, h, 'grib2')] = d
             A[E._url(corrida, h, 'index')] = ie
@@ -192,6 +234,20 @@ def servidor(corrida, fuentes=('ecmwf', 'gfs', 'icon'), horas=range(0, 121, 6), 
                            mensaje(cape(LA, LO, h), MALLA_GFS, corrida, 7, 6, centro=7, paso=h, nivel1=(108, 25500),
                                    nivel2=(108, 0), decimales=1)))
             ms.append(({'ecmwf': {}, 'gfs': 'CIN:255-0 mb above ground:x'}, relleno(MALLA_GFS)))
+            t_ = 'anl' if h == 0 else '%d hour fcst' % h
+            if NV:   # señuelo: UGRD de 500 mb antes que los buenos
+                ms.append(({'ecmwf': {}, 'gfs': 'UGRD:500 mb:%s' % t_},
+                           mensaje(viento_u(LA, LO, h, 'viento250') * -1, MALLA_GFS, corrida, 2, 2, centro=7, paso=h, nivel1=(100, 50000), decimales=2)))
+            for nivel in NV:
+                if ('gfs', nivel, h) in faltar:
+                    continue
+                lev = '10 m above ground' if nivel == 'viento10m' else '%s mb' % nivel[6:]
+                for comp, num, f, nom in (('u', 2, viento_u, 'UGRD'), ('v', 3, viento_v, 'VGRD')):
+                    ms.append(({'ecmwf': {}, 'gfs': '%s:%s:%s' % (nom, lev, t_)},
+                               mensaje(f(LA, LO, h, nivel), MALLA_GFS, corrida, 2, num, centro=7, paso=h,
+                                       nivel1=(103, 10) if nivel == 'viento10m' else (100, int(nivel[6:]) * 100), decimales=2)))
+            if NV:
+                ms.append(({'ecmwf': {}, 'gfs': 'ABSV:250 mb:x'}, relleno(MALLA_GFS)))
             d, _, ig = _archivo_con_indice(ms)
             A[G._url(corrida, h)] = d
             A[G._url(corrida, h, '.idx')] = ig
@@ -208,4 +264,12 @@ def servidor(corrida, fuentes=('ecmwf', 'gfs', 'icon'), horas=range(0, 121, 6), 
             if ('icon', 'cape', h) not in faltar:
                 A[I._url(corrida, h, 'CAPE_ML')] = bz2.compress(
                     mensaje(cape(la, lo, h), mi, corrida, 7, 6, centro=78, unidad=0, paso=h * 60, nivel1=(192, 0), decimales=1))
+            for nivel in NV:
+                if ('icon', nivel, h) in faltar:
+                    continue
+                for comp, num, f in (('u', 2, viento_u), ('v', 3, viento_v)):
+                    var = comp.upper()
+                    url = I._url(corrida, h, var + '_10M') if nivel == 'viento10m' else I._url_pl(corrida, h, int(nivel[6:]), var)
+                    A[url] = bz2.compress(mensaje(f(la, lo, h, nivel), mi, corrida, 2, num, centro=78, unidad=0, paso=h * 60,
+                                                  nivel1=(103, 10) if nivel == 'viento10m' else (100, int(nivel[6:]) * 100), decimales=2))
     return A
