@@ -29,6 +29,15 @@ GRIB_VIENTO = {'viento10m': ((103, 10.0), (255, None)),        # 10 m sobre el s
                'viento250': ((100, 25000.0), (255, None))}
 PARAM_UV = {'u': (0, 2, 2), 'v': (0, 2, 3)}
 HORAS_VIENTO = tuple(range(0, 121, 6))
+VIENTO_MAX_INTENTOS = 3     # pasadas que prueban el viento de una corrida (después queda como está)
+
+
+def viento_pendiente(fuente, sobre):
+    """[312d] ¿le falta viento a esta corrida y le quedan intentos? (sin numpy: lo usa también el chequeo previo)"""
+    if not sobre or sobre.get('viento_intentos', 0) >= VIENTO_MAX_INTENTOS:
+        return False
+    hechos = sobre.get('viento') or {}
+    return any(h not in (hechos.get(n) or []) for n in NIVELES_VIENTO for h in fuente.horas_viento)
 
 
 class ErrorFuente(Exception):

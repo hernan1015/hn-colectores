@@ -37,7 +37,7 @@ def _v1(alm, f):
     """todo lo del v1 de una corrida: cada cuadro (bytes) y el sobre sin lo del viento"""
     out = {k: alm.leer(k) for k in alm.listar('v1/%s/%s/' % (f, CC)) if not k.endswith('corrida.json')}
     s = _j(alm, 'v1/%s/%s/corrida.json' % (f, CC))
-    for k in ('viento', 'viento_fallan', 'viento_intentos', 'pedidos_viento', 'bytes_viento', 'pedidos', 'bytes_bajados'):
+    for k in ('viento', 'viento_fallan', 'viento_intentos', 'viento_cerrado', 'pedidos_viento', 'bytes_viento', 'pedidos', 'bytes_bajados'):
         s.pop(k, None)
     out['sobre'] = s
     return out
@@ -113,7 +113,7 @@ class TestPuntaAPunta(unittest.TestCase):
             for n in F.NIVELES_VIENTO:
                 for h in (0, 54, 120):
                     u, v = _uv(self.alm, f, n, h)
-                    self.assertEqual(u.shape, (165, 125))
+                    self.assertEqual(u.shape, (malla.grilla_v2()['nlat'], malla.grilla_v2()['nlon']))   # la caja de la v2 (CAJA_V2), no un número fijo
                     self.assertLess(np.abs(u - S.viento_u(LA, LO, h, n)).max(), 0.06, (f, n, h))   # 0,1 m/s de paso + las 2 decimales del GRIB
                     self.assertLess(np.abs(v - S.viento_v(LA, LO, h, n)).max(), 0.06, (f, n, h))
         # el señuelo de 500 hPa es −u de 250: si se tomara, el error sería de decenas de m/s
@@ -187,15 +187,24 @@ class TestElV1SaleSiempre(Carpeta):
         self.assertEqual(_j(self.alm, 'v1/ecmwf/%s/corrida.json' % CC)['viento']['viento250'], list(range(0, 121, 6)))
 
     def test_error_inesperado_fuera_de_cada_cuadro(self):
-        """aunque procesar_viento entero lance (no sólo un cuadro), el índice del v1 se escribe"""
+        """aunque procesar_viento entero lance para una fuente (no sólo un cuadro), el índice del v1 está y la OTRA fuente tiene viento"""
         orig = tuberia.procesar_viento
-        tuberia.procesar_viento = lambda *a, **k: (_ for _ in ()).throw(MemoryError('sin memoria'))
+
+        def rota(f, *a, **k):
+            if f.id == 'gfs':
+                raise MemoryError('sin memoria')
+            return orig(f, *a, **k)
+        tuberia.procesar_viento = rota
         try:
             tuberia.correr(S.RedFalsa(S.servidor(C, fuentes=('ecmwf', 'gfs'), viento=True)), self.alm, ahora=AHORA, llave='si',
-                           log=SILENCIO, fuentes=[Ecmwf(), Gfs()], viento=TODAS)
+                           log=SILENCIO, fuentes=[Gfs(), Ecmwf()], viento=TODAS)
         finally:
             tuberia.procesar_viento = orig
         self._indice_ok()
+        s = _j(self.alm, 'v1/ecmwf/%s/corrida.json' % CC)
+        self.assertEqual(s['viento']['viento250'], list(range(0, 121, 6)))
+        self.assertTrue(s['viento_cerrado'])
+        self.assertEqual(_j(self.alm, 'v1/indice.json')['fuentes']['ecmwf']['viento'], {CC: 'cerrado'})
 
     def test_r2_falla_al_publicar_el_viento(self):
         class SinViento(AlmacenCarpeta):
@@ -219,6 +228,7 @@ class TestElV1SaleSiempre(Carpeta):
                            log=SILENCIO, fuentes=[Ecmwf(), Muere()], viento=TODAS)
         s = _j(self.alm, 'v1/gfs/%s/corrida.json' % CC)
         self.assertEqual((s['estado'], len(s['firmas'])), ('completa', 41))   # el v1, entero y anotado ANTES del viento
+        self._indice_ok()   # [Codex n3-312d-col] Y EL ÍNDICE: se escribió antes de la fase del viento
         tuberia.correr(S.RedFalsa(S.servidor(C, fuentes=('ecmwf', 'gfs'), viento=True)), self.alm, ahora=AHORA, llave='si',
                        log=SILENCIO, fuentes=[Ecmwf(), Gfs()], viento=TODAS)
         self._indice_ok()
@@ -283,7 +293,8 @@ class TestElV1SaleSiempre(Carpeta):
 
     def test_un_viento_distinto_ya_publicado_no_se_pisa(self):
         k = 'v2/gfs/%s/viento10m/006.val.png' % CC
-        otro = valores.png16(valores.codificar_viento(np.zeros((165, 125)), np.zeros((165, 125))))
+        g = malla.grilla_v2()
+        otro = valores.png16(valores.codificar_viento(np.zeros((g['nlat'], g['nlon'])), np.zeros((g['nlat'], g['nlon']))))
         self.alm.escribir(k, otro, 'image/png')
         tuberia.correr(S.RedFalsa(S.servidor(C, fuentes=('gfs',), viento=True)), self.alm, ahora=AHORA, llave='si', log=SILENCIO,
                        fuentes=[Gfs()], viento=('gfs',))
@@ -292,6 +303,73 @@ class TestElV1SaleSiempre(Carpeta):
         self.assertNotIn(6, s['viento']['viento10m'])
         self.assertEqual(s['viento_fallan']['viento10m'], [6])
         self.assertEqual(s['estado'], 'completa')
+
+    def test_el_plazo_es_real_tambien_dentro_de_un_pedido(self):
+        """un pedido que se demora (la red «gotea») no estira el plazo: red.hasta corta el siguiente; el índice del v1 ya estaba"""
+        t = [0.0]
+
+        class Lenta(S.RedFalsa):
+            def get(self, url, rango=None):
+                if '/viento' not in url and getattr(self, 'hasta', None) is not None and not url.endswith(('.index', '.idx')):
+                    t[0] += 50.0                                   # cada mensaje de viento «tarda» 50 s
+                    if t[0] > self.hasta:
+                        raise S.ErrorRedFalsa('plazo vencido')
+                return super().get(url, rango)
+        tuberia.correr(Lenta(S.servidor(C, fuentes=('ecmwf',), viento=True)), self.alm, ahora=AHORA, llave='si', log=SILENCIO,
+                       fuentes=[Ecmwf()], viento=('ecmwf',), viento_tope_s=120, reloj=lambda: t[0])
+        ix = _j(self.alm, 'v1/indice.json')
+        self.assertEqual(ix['fuentes']['ecmwf']['ultima'], CC)
+        s = _j(self.alm, 'v1/ecmwf/%s/corrida.json' % CC)
+        self.assertLess(sum(len(x) for x in s['viento'].values()), 3)
+        self.assertFalse(s['viento_cerrado'])
+
+    def test_red_con_plazo(self):
+        from lib.red import Red, ErrorRed
+        t = [0.0]
+
+        class Cuerpo:
+            status = 200
+            headers = None
+
+            def __init__(self):
+                self.n = 0
+
+            def read(self, k=-1):
+                t[0] += 10.0                                        # cada bloque «tarda» 10 s
+                self.n += 1
+                return b'x' * 10 if self.n < 100 else b''
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        r = Red(pausa=0, abrir=lambda req, timeout: Cuerpo(), dormir=lambda s: None)
+        r.hasta, r.reloj = 35.0, lambda: t[0]
+        with self.assertRaises(ErrorRed):
+            r.get('https://x.test/a')                               # se corta al vencer, aunque el servidor siga mandando
+        self.assertLess(t[0], 60)
+        with self.assertRaises(ErrorRed):
+            r.get('https://x.test/b')                               # vencido: no empieza
+        r.hasta = None
+        self.assertEqual(len(r.get('https://x.test/c')), 10)                 # sin plazo, como siempre
+
+
+class TestChequeoViento(Carpeta):
+    def test_terminada_sin_indice_es_trabajo(self):
+        arch = S.servidor(C, fuentes=('gfs',), viento=True)
+        env = {'MODELOS_LLAVE': 'si', 'MODELOS_FUENTES': 'gfs'}
+        tuberia.correr(S.RedFalsa(arch), self.alm, ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO, viento=('gfs',))
+        self.assertFalse(colector.chequeo(env, S.RedFalsa(arch), self.alm, ahora=AHORA, log=SILENCIO))   # todo hecho: nada
+        self.alm.borrar('v1/indice.json')                                                                   # una pasada cortada
+        self.assertTrue(colector.chequeo(env, S.RedFalsa(arch), self.alm, ahora=AHORA, log=SILENCIO))
+
+    def test_viento_pendiente_es_trabajo(self):
+        arch = S.servidor(C, fuentes=('gfs',), viento=True)
+        env = {'MODELOS_LLAVE': 'si', 'MODELOS_FUENTES': 'gfs'}
+        tuberia.correr(S.RedFalsa(arch), self.alm, ahora=AHORA, llave='si', fuentes=[Gfs()], log=SILENCIO)   # sin la fase del viento
+        self.assertTrue(colector.chequeo(env, S.RedFalsa(arch), self.alm, ahora=AHORA, log=SILENCIO))
+        self.assertFalse(colector.chequeo(dict(env, MODELOS_VIENTO='no'), S.RedFalsa(arch), self.alm, ahora=AHORA, log=SILENCIO))
 
 
 class TestColector(unittest.TestCase):

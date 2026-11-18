@@ -99,13 +99,13 @@ con una paleta fija y sube PNG + JSON al depósito público `satchi-modelos`.
 Va **junto** a cada cuadro v1, y el v1 no cambia. Sirve para que SATCHI dibuje el campo **suave**: interpola el valor y pinta
 con la paleta continua DESPUÉS (el método de `_v795` de HN AGRO). El contrato está en [CONTRATO-R2-v2.md](CONTRATO-R2-v2.md).
 
-- **Las claves:** `v2/{f}/{cc}/{var}/{fff}.val.png`, un PNG gris de 16 bits de 125 × 165 con los nodos de 0,25° de la caja,
+- **Las claves:** `v2/{f}/{cc}/{var}/{fff}.val.png`, un PNG gris de 16 bits de 321 × 221 con los nodos de 0,25° de la caja v2 (lat −5/−60, lon −100/−20: toda Sudamérica; es un dato del JSON y del índice),
   más su `.val.json`.
 - **La codificación:** valor = q × escala (lluvia 0,01 mm; CAPE 1 J/kg). q = 65535 es «sin dato».
 - **ECMWF y GFS:** el valor de la fuente en el nodo, sin remuestreo. **ICON:** el centro de celda más cercano al nodo.
 - **El sobre** suma `valores`: las horas que tienen la v2.
 - **Si falla la v2, el v1 queda.** Nunca se pisa una clave publicada, y la retención también borra `v2/`.
-- **El peso:** ~12 KB por cuadro con datos sintéticos; real, estimado en 15-30 KB.
+- **El peso:** 24-71 KB por cuadro (sintético, caja grande), ≈ 25-35 MB por día. El recorte de la fuente cubre las dos cajas (la descarga del GRIB no cambia: ya es el campo global).
 - **Los tests:** `test/test_valores.py`. El control negativo suma 15 mutantes de la v2 en `test/control_negativo.py`.
 - **La v2 está aislada del v1** (Codex n3-312c-col): se arma aparte en `Fuente._v2`, y si no se puede, el v1 sale igual y la hora va a `valores_fallan` del sobre. Leer la v2 al recuperar un cuadro tampoco tumba la corrida.
 
@@ -116,12 +116,13 @@ Para el viento animado de MODELOS en SATCHI (el método de `_v795` de HN AGRO). 
 
 - **Qué se baja:** u y v de 10 m, 850 hPa y 250 hPa de las 3 fuentes. ECMWF y GFS por rango del índice que ya se bajó para el
   v1, cada 6 h; ICON un `.bz2` por componente, nivel y hora, **cada 12 h** por el peso (~240 MB por corrida; cada 6 h serían ~460).
-- **Qué se publica:** `v2/{f}/{cc}/viento10m|viento850|viento250/{fff}.val.png` (gris de 16 bits, 125 × 330: u arriba y v abajo,
+- **Qué se publica:** `v2/{f}/{cc}/viento10m|viento850|viento250/{fff}.val.png` (gris de 16 bits, 321 × 442 con la caja amplia del PR #26: u arriba y v abajo,
   `(q − 32768) × 0,1` m/s) y su `.val.json`. El sobre suma `viento` y `viento_fallan`.
-- **El v1 sale siempre:** el viento es una segunda fase, cuando el v1 de todas las fuentes ya está publicado; cada cuadro y la fase
-  entera tienen su try; topes de 3 fallas seguidas, 20 min y 3 pasadas por corrida.
+- **El v1 sale siempre:** el viento es una segunda fase, cuando el v1 de todas las fuentes ya está publicado Y EL ÍNDICE ESCRITO; cada
+  cuadro y la fase entera tienen su try; topes de 3 fallas seguidas, 20 min con plazo real por pedido y lectura, y 3 pasadas por
+  corrida. El chequeo previo mira también el índice y el viento pendiente.
 - **La llave:** `MODELOS_VIENTO` (variable del repo; vacía = las mismas fuentes, `no` lo apaga, o una lista).
-- **Los tests:** `test/test_viento.py` (20). El control negativo suma 17 mutantes del viento (77 de 77 detectados).
+- **Los tests:** `test/test_viento.py` (24). El control negativo suma 23 mutantes del viento.
 
 ## Idempotencia, reintentos y retención
 

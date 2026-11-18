@@ -36,15 +36,20 @@ Son las horas que **además** tienen su grilla v2. Siempre es un subconjunto de 
   - La v2 se arma **aparte y después** del v1: un error de la v2 nunca frena el v1.
   - Al recuperar un cuadro, leer su v2 tampoco tumba la corrida.
 
+**El índice** (`v1/indice.json`, que sigue siendo `v: 1`) suma `valores`: { `v`: 2, `claves`, `grilla` (con su `caja`), `escala`, `sin_dato`, `paletas` }.
+- Es donde el front y el viento de la 312d leen la caja.
+- **Si la grilla cambia algún día,** sube `valores.v` y cambian las claves (`v3/…`); el v1 sigue saliendo igual.
+
 ## 3. La grilla
 
 - **Lat-lon regular de 0,25°** (EPSG:4326). Los **nodos** son:
-  - lat de −15 a −56: 165 filas, **de norte a sur**;
-  - lon de −76 a −45: 125 columnas, de oeste a este.
+  - lat de −5 a −60: 221 filas, **de norte a sur**;
+  - lon de −100 a −20: 321 columnas, de oeste a este.
+- **La caja es un DATO** (`grilla.caja` y `caja` en cada `.val.json`; `valores.grilla` en el índice), no una constante del front ni de la function. Es TODA Sudamérica a escala continente (pedido del maker, 17/11 19:03): del Pacífico al Atlántico y del norte de Bolivia/Brasil al sur de Tierra del Fuego. Es más grande que la del PNG v1 (−15/−56, −76/−45), que no cambia. El viento de la 312d usa la misma.
 - **Cada valor es el del NODO (lat, lon).** Para leerlo:
 
   ```
-  lat = −15 − 0,25 · fila      lon = −76 + 0,25 · columna
+  lat = −5 − 0,25 · fila      lon = −100 + 0,25 · columna
   ```
 
 - **ECMWF y GFS** (0,25°): sus puntos están exactamente en los nodos. El valor es el de la fuente, **sin remuestreo**.
@@ -56,7 +61,7 @@ Son las horas que **además** tienen su grilla v2. Siempre es un subconjunto de 
 
 ## 4. El PNG `.val.png`
 
-- **Formato:** gris de **16 bits** (tipo de color 0, profundidad 16), sin entrelazado, de **125 × 165** (ancho × alto). La fila 0 es la del norte.
+- **Formato:** gris de **16 bits** (tipo de color 0, profundidad 16), sin entrelazado, de **321 × 221** (ancho × alto). La fila 0 es la del norte.
 - **Por fila:** el byte de filtro va en 0 (la tubería escribe filtro 0; el front deshace los 5 filtros por las dudas). Los valores van big-endian.
 - **valor = q × escala:**
 
@@ -71,9 +76,9 @@ Son las horas que **además** tienen su grilla v2. Siempre es un subconjunto de 
 - **El PNG se escribe a mano** (zlib, filtro 0): mismos datos → mismos bytes → misma firma.
 
 **Peso medido:**
-- Con campos sintéticos, ~12 KB por cuadro.
-- Lo real se estima en 15-30 KB. Son 41 cuadros × 3 fuentes × 4 corridas por día, ≈ 5-15 MB por día.
-- Con la retención de 8 corridas por fuente, ≈ 15-30 MB guardados.
+- Con campos sintéticos de la caja grande: lluvia 65-71 KB por cuadro, CAPE 24-70 KB (con y sin textura de modelo real).
+- Son 41 cuadros × 3 fuentes × 4 corridas por día, ≈ 25-35 MB por día. El PNG v1 no cambia (2,6-10 KB).
+- Con la retención de 8 corridas por fuente, ≈ 50-70 MB guardados.
 
 ## 5. El JSON `.val.json`
 
@@ -87,7 +92,8 @@ Lleva lo común con el JSON v1 del mismo cuadro, con los mismos valores:
   "paleta": "lluvia6h-continua-v2",          // o "cape-continua-v2"
   "valores": { "png": "012.val.png", "tipo": "PNG gris 16 bits (big-endian), sin filtro",
                "escala": 0.01, "sin_dato": 65535, "formula": "valor = q × escala; q = sin_dato → NaN" },
-  "grilla": { "lat0": -15.0, "dlat": -0.25, "nlat": 165, "lon0": -76.0, "dlon": 0.25, "nlon": 125,
+  "grilla": { "lat0": -5.0, "dlat": -0.25, "nlat": 221, "lon0": -100.0, "dlon": 0.25, "nlon": 321,
+              "caja": { "oeste": -100.0, "este": -20.0, "sur": -60.0, "norte": -5.0 },
               "orden": "filas de norte a sur, columnas de oeste a este; cada valor es el del NODO (lat, lon)",
               "proyeccion": "EPSG:4326 (lat-lon regular)" },
   "regrillado": "…",
@@ -145,8 +151,9 @@ v2/{fuente}/{corrida}/viento10m|viento850|viento250/{fff}.val.json
 ```
 
 - **Las horas:** ECMWF y GFS cada 6 h de 0 a 120; ICON cada 12 h de 0 a 120 (el peso, abajo).
-- **El PNG:** gris de 16 bits, sin entrelazado, de **125 × 330**. Las filas 0-164 son **u** y las 165-329 son **v**, con los mismos
-  nodos de la §3 (de norte a sur). **u = hacia el ESTE, v = hacia el NORTE**, en m/s, instantáneo a la hora válida.
+- **El PNG:** gris de 16 bits, sin entrelazado, de **nlon × 2·nlat** de la grilla v2: con la caja amplia (`CAJA_V2`, PR #26), **321 × 442**.
+  Las filas 0-220 son **u** y las 221-441 son **v** (u arriba, v abajo), con los mismos nodos de la §3 (de norte a sur). La caja va en
+  el JSON (`caja` = `CAJA_V2`) y en el índice. **u = hacia el ESTE, v = hacia el NORTE**, en m/s, instantáneo a la hora válida.
 - **valor (m/s) = (q − 32768) × 0,1** (de −3276,8 a +3276,6). q = 65535 es «sin dato» (el front no lo interpola con los vecinos).
 - **Los valores:** ECMWF y GFS, el de la fuente en el nodo, sin remuestreo; ICON, el centro de celda más cercano (las U y V del
   open data del DWD son geográficas, en el centro de la celda). Todos son respecto del norte geográfico.
@@ -177,13 +184,18 @@ regla) y además:
 Un sobre sin `viento` quiere decir que esa corrida no tiene viento: el front lo dice, no dibuja un mapa vacío.
 
 **El v1 sale SIEMPRE:**
-- El viento va en una **segunda fase**, cuando el v1 de TODAS las fuentes ya está publicado y su sobre escrito.
+- El viento va en una **segunda fase**, cuando el v1 de TODAS las fuentes ya está publicado, su sobre escrito **y el ÍNDICE escrito**
+  (Codex n3-312d-col: el viento nunca deja un v1 sin índice).
 - Cada cuadro de viento tiene su try; la fase entera, otro. Ningún error del viento (bajar, armar, publicar, uno inesperado) toca un
   cuadro v1, su sobre ni el índice.
-- **Topes:** 3 fallas seguidas cortan el viento de esa fuente por esta pasada; 20 min para toda la fase (`VIENTO_TOPE_S`); 3
-  pasadas por corrida (`viento_intentos`).
-- El índice se escribe DESPUÉS de la fase, para que el sobre que guarda la caché del borde ya traiga el viento. Por eso los topes:
-  el índice (lo que hace visible el v1) se demora, como mucho, eso.
+- **Topes:** 3 fallas seguidas cortan el viento de esa fuente por esta pasada; 20 min para toda la fase (`VIENTO_TOPE_S`), un plazo
+  TOTAL real (`red.hasta`: ningún pedido empieza después, el socket espera lo que queda y el cuerpo se lee por bloques mirándolo);
+  3 pasadas por corrida (`viento_intentos`).
+- Al terminar, el sobre dice `viento_cerrado` (todo el viento hecho o sin intentos) y el índice anota `fuentes.{f}.viento.{cc}` =
+  `cerrado`|`abierto`. La function cachea largo un sobre `completa` sólo con `viento_cerrado` (así el borde nunca guarda 24 h un
+  sobre sin el viento que llega después).
+- **El chequeo previo** da «hay trabajo» también si una corrida terminada NO está en el índice (una pasada cortada) o si le falta
+  el viento con intentos.
 
 **El peso medido** (HEAD y los índices de la corrida 17/11 00 UTC):
 

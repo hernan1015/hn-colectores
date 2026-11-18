@@ -50,12 +50,29 @@ def chequeo(env, red, almacen, ahora=None, log=print):
     if (env.get('MODELOS_LLAVE') or '').strip().lower() != 'si':
         log('llave apagada (MODELOS_ON != «si»): no se hace nada')
         return False
+    from lib.fuentes import viento_pendiente
     ahora = ahora or datetime.now(timezone.utc)
-    for f in fuentes_de(env):
+    fs = fuentes_de(env)
+    con_viento = viento_de(env, fs)
+    # [312d · Codex n3-312d-col] «terminada» no alcanza: tiene que estar también en el ÍNDICE (si una pasada se cortó entre el sobre y
+    # el índice, hay trabajo); y una corrida terminada con viento pendiente también es trabajo
+    bi = almacen.leer('v1/indice.json')
+    try:
+        ix = json.loads(bi.decode()) if bi else {}
+    except ValueError:
+        ix = {}
+    for f in fs:
         for c in f.candidatos(ahora):
-            b = almacen.leer('v1/%s/%s/corrida.json' % (f.id, c.strftime('%Y%m%d%H')))
+            cc = c.strftime('%Y%m%d%H')
+            b = almacen.leer('v1/%s/%s/corrida.json' % (f.id, cc))
             s = json.loads(b.decode()) if b else None
             if s and (s.get('estado') == 'completa' or s.get('intentos', 0) >= 3):
+                if ((ix.get('fuentes') or {}).get(f.id) or {}).get('estados', {}).get(cc) != s.get('estado'):
+                    log('%s %s: terminada pero no está en el índice: hay trabajo' % (f.id, cc))
+                    return True
+                if f.id in con_viento and viento_pendiente(f, s):
+                    log('%s %s: le falta el viento: hay trabajo' % (f.id, cc))
+                    return True
                 break
             if f.disponible(red, c, 120):
                 log('%s %s: hay trabajo' % (f.id, c.strftime('%Y%m%d%H')))

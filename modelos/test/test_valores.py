@@ -46,16 +46,17 @@ class TestCodificacion(unittest.TestCase):
 
     def test_nodos(self):
         la, lo = malla.nodos_v2()
-        self.assertEqual((len(la), len(lo)), (165, 125))
-        self.assertEqual((la[0], la[-1], lo[0], lo[-1]), (-15.0, -56.0, -76.0, -45.0))
+        self.assertEqual((len(la), len(lo)), (221, 321))
+        self.assertEqual((la[0], la[-1], lo[0], lo[-1]), (-5.0, -60.0, -100.0, -20.0))
         g = malla.grilla_v2()
-        self.assertEqual((g['lat0'], g['dlat'], g['nlat'], g['lon0'], g['dlon'], g['nlon']), (-15.0, -0.25, 165, -76.0, 0.25, 125))
+        self.assertEqual((g['lat0'], g['dlat'], g['nlat'], g['lon0'], g['dlon'], g['nlon']), (-5.0, -0.25, 221, -100.0, 0.25, 321))
+        self.assertEqual(g['caja'], {'oeste': -100.0, 'este': -20.0, 'sur': -60.0, 'norte': -5.0})
 
     def test_una_malla_corrida_no_se_remuestrea_a_escondidas(self):
-        la = -13.125 - 0.25 * np.arange(181)
-        lo = -78.0 + 0.25 * np.arange(141)
+        la = -3.125 - 0.25 * np.arange(237)
+        lo = -102.0 + 0.25 * np.arange(337)
         with self.assertRaises(ValueError):
-            malla.regular_a_v2(np.zeros((181, 141)), la, lo)
+            malla.regular_a_v2(np.zeros((237, 337)), la, lo)
 
 
 class TestPuntaAPuntaV2(unittest.TestCase):
@@ -83,17 +84,27 @@ class TestPuntaAPuntaV2(unittest.TestCase):
         m = _j(self.alm, 'v2/ecmwf/2026111612/lluvia6h/012.val.json')
         v1 = _j(self.alm, 'v1/ecmwf/2026111612/lluvia6h/012.json')
         self.assertEqual(m['v'], 2)
-        for k in ('fuente', 'corrida', 'valida_iso', 'periodo', 'unidades', 'caja', 'cita', 'aviso'):
+        for k in ('fuente', 'corrida', 'valida_iso', 'periodo', 'unidades', 'cita', 'aviso'):
             self.assertEqual(m[k], v1[k], k)
         self.assertEqual(m['valores']['escala'], 0.01)
         self.assertEqual(m['valores']['sin_dato'], 65535)
         self.assertEqual(m['valores']['png'], '012.val.png')
-        self.assertEqual(m['grilla']['nlat'], 165)
+        self.assertEqual(m['grilla']['nlat'], 221)
         self.assertEqual(m['paleta'], 'lluvia6h-continua-v2')
         self.assertEqual(m['firma'], paleta.firma(self.alm.leer('v2/ecmwf/2026111612/lluvia6h/012.val.png')))
         self.assertEqual(m['firma_v1'], v1['firma'])
         self.assertEqual(m['estadisticas']['sin_dato'], 0)
         self.assertNotIn('grilla', v1)                                  # el v1 no cambia
+        self.assertEqual(v1['caja'], {'oeste': -76.0, 'este': -45.0, 'sur': -56.0, 'norte': -15.0})
+        self.assertEqual(m['caja'], {'oeste': -100.0, 'este': -20.0, 'sur': -60.0, 'norte': -5.0})   # la caja v2 es un dato
+        self.assertEqual(m['grilla']['caja'], m['caja'])
+
+    def test_el_indice_anuncia_la_grilla_v2(self):
+        i = _j(self.alm, tuberia.K_INDICE)
+        self.assertEqual(i['v'], 1)                                       # el índice v1 sigue siendo v1
+        self.assertEqual(i['valores']['v'], 2)
+        self.assertEqual(i['valores']['grilla']['caja'], {'oeste': -100.0, 'este': -20.0, 'sur': -60.0, 'norte': -5.0})
+        self.assertEqual((i['valores']['grilla']['nlat'], i['valores']['grilla']['nlon']), (221, 321))
 
     def _val(self, f, var, h):
         q = valores.leer_png16(self.alm.leer('v2/%s/2026111612/%s/%03d.val.png' % (f, var, h)))
@@ -112,8 +123,8 @@ class TestPuntaAPuntaV2(unittest.TestCase):
         self.assertGreater(np.abs(ci - S.cape(LA, LO, 6)).max(), 0.6)   # no es la función en el nodo: es la celda
         # la fila 0 es la del NORTE y la columna 0 la del OESTE
         v = self._val('gfs', 'cape', 6)
-        self.assertLess(abs(v[0, 0] - S.cape(-15.0, -76.0, 6)), 0.6)
-        self.assertLess(abs(v[164, 124] - S.cape(-56.0, -45.0, 6)), 0.6)
+        self.assertLess(abs(v[0, 0] - S.cape(-5.0, -100.0, 6)), 0.6)
+        self.assertLess(abs(v[220, 320] - S.cape(-60.0, -20.0, 6)), 0.6)
 
 
 class AlmacenSinV2(AlmacenCarpeta):
@@ -165,12 +176,21 @@ class TestFallaV2(unittest.TestCase):
 
 
 class TestIconV2(unittest.TestCase):
+    def test_icon_sin_celdas_en_la_caja_v2_falla_solo_la_v2(self):
+        la, lo = S.celdas_icon()
+        dentro = (la > -58) & (la < -13) & (lo > -78) & (lo < -43)        # las celdas sólo de la caja del v1 (+2°)
+        M = malla.MallaIcon(la[dentro], lo[dentro], 'u1')
+        self.assertGreater(M.dist_max_v2_km, M.DIST_MAX_KM)
+        self.assertEqual(M.a_salida(np.ones(dentro.sum()), 'u1').shape, (malla.ALTO, malla.ANCHO))   # el v1, sí
+        with self.assertRaises(ValueError):
+            M.a_v2(np.ones(dentro.sum()), 'u1')
+
     def test_otra_malla_no(self):
         la, lo = S.celdas_icon()
         M = malla.MallaIcon(la, lo, 'u1')
         with self.assertRaises(ValueError):
             M.a_v2(np.zeros(len(la)), 'u2')
-        self.assertEqual(M.indice_v2.shape, (165, 125))
+        self.assertEqual(M.indice_v2.shape, (221, 321))
         self.assertLess(M.dist_max_v2_km, M.DIST_MAX_KM)   # los nodos del borde también tienen su celda cerca
 
 
@@ -224,7 +244,7 @@ class TestV2Aislada(unittest.TestCase):
             v = np.ones((len(la_n), len(lo_n)))
             v[0, 0] = np.nan
             return v
-        a = self._con(con_nan, lambda self, *x: np.ones((165, 125)), [Gfs()])
+        a = self._con(con_nan, lambda self, *x: np.ones((221, 321)), [Gfs()])
         self._v1_entero(a, 'gfs')
 
     def test_la_lectura_de_la_v2_al_recuperar_no_tumba_la_corrida(self):

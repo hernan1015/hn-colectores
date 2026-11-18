@@ -266,7 +266,7 @@ class TestChequeo(Carpeta):
     def test_hay_trabajo_y_despues_no(self):
         import colector
         arch = S.servidor(C, fuentes=('icon',))
-        env = {'MODELOS_LLAVE': 'si', 'MODELOS_FUENTES': 'icon'}
+        env = {'MODELOS_LLAVE': 'si', 'MODELOS_FUENTES': 'icon', 'MODELOS_VIENTO': 'no'}   # [312d] el v1 solo (el viento: test_viento)
         self.assertTrue(colector.chequeo(env, S.RedFalsa(arch), self.alm, ahora=AHORA, log=SILENCIO))
         tuberia.correr(S.RedFalsa(arch), self.alm, ahora=AHORA, llave='si', fuentes=[Icon()], log=SILENCIO)
         red = S.RedFalsa(arch)
