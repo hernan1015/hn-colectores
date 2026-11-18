@@ -23,10 +23,11 @@ jobs:
   modelos:
     if: ${{ vars.MODELOS_ON == 'si' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60          # medido: 1–4 min con trabajo; el tope de GitHub es 6 h
+    timeout-minutes: 60          # medido: 1–4 min con trabajo (+ el viento, con su tope de 20 min); el tope de GitHub es 6 h
     env:
       MODELOS_LLAVE: ${{ vars.MODELOS_ON }}
       MODELOS_FUENTES: ${{ vars.MODELOS_FUENTES || 'ecmwf,icon,gfs' }}
+      MODELOS_VIENTO: ${{ vars.MODELOS_VIENTO || '' }}          # [312d] el viento u/v (v2): vacío = las mismas fuentes; «no» lo apaga
       ALMACEN_CARPETA: ${{ inputs.seco && format('{0}/salida', github.workspace) || '' }}
       PYTHONIOENCODING: utf-8
     steps:
