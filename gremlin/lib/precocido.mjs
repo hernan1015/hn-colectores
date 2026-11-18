@@ -182,10 +182,9 @@ export async function correr({
     const aEscribir = [];
     for (const s of plan.teselas) {
       if (s.noche) { aEscribir.push({ s, png: transparente }); res.teselas_noche++; continue; }
-      if (!s.nat.every((k) => imgs.has(k))) { faltan++; continue; }   // le falta una nativa: NO se escribe (la regla de la _v1829)
       const m = new Map(s.nat.map((k) => [k.slice(k.indexOf(':') + 1), imgs.get(k)]));
       const rp = reproyectar(prod, t, s.z, s.x, s.y, m);
-      if (rp.faltan > 0) { faltan++; continue; }
+      if (rp.faltan > 0) { faltan++; continue; }   // a un píxel le faltó su nativa: NO se escribe (la regla de la _v1829)
       aEscribir.push({ s, png: codificarPng(TESELA, TESELA, rp.rgba) });
     }
     await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {
