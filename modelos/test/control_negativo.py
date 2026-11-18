@@ -82,6 +82,7 @@ MUTANTES = [
     ('v2: ICON no verifica la distancia de los nodos', 'malla.py', '        if self.dist_max_v2_km > self.DIST_MAX_KM:', '        if False:'),
     ('v2: el índice no anuncia la grilla', 'tuberia.py', "    indice['valores'] = valores.anuncio()", '    pass'),
     ('v2: el recorte de ICON sólo cubre la caja del v1', 'malla.py', "        sel = np.where((clat >= CAJA_RECORTE['sur'] - 1)", "        sel = np.where((clat >= CAJA['sur'] - 1)"),
+    ('v2: el anuncio entra antes de comparar (un índice viejo no se reescribe)', 'tuberia.py', "    antes = _json(dict(indice, actualizado=None))   # [Codex n3-312c-area-col] ANTES de agregar el anuncio: un índice viejo sin él se reescribe\n    indice['valores'] = valores.anuncio()   # [312c] la grilla v2 (su caja) es un DATO del índice\n", "    indice['valores'] = valores.anuncio()   # [312c] la grilla v2 (su caja) es un DATO del índice\n    antes = _json(dict(indice, actualizado=None))\n"),
     ('v2: la retención no la borra', 'tuberia.py', 'for pre in (V, valores.V2):', 'for pre in (V,):'),
     ('v2: no se recupera al perder el sobre', 'tuberia.py', "                    if _firma_publicada(almacen, k_valores(fuente.id, cc, variable, h, 'json')):", '                    if False:'),
     # [312d] el viento (u y v, sólo v2)
