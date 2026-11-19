@@ -160,9 +160,10 @@ def pintar_sin_dato(U, meta):
     tope = int(math.floor(((meta.get('techo_historico_m') or 18) - (meta.get('correccion_radar_m') or 0) + 1) * 100 + 0.5))
     y, x = np.mgrid[0:H, 0:W]
     raya = ((x + y) // 8) % 3 == 0
-    m = (U < 65535) & (U <= tope) & raya
+    sd = (U < 65535) & (U <= tope)          # la planicie entera de la zona: ahí MANDA el «sin dato» (nadie pinta encima)
+    m = sd & raya
     rgb = np.zeros((H, W, 3), np.uint8); rgb[m] = RAYADO
-    return rgb, m.astype(np.float32) * RAYADO_ALFA
+    return rgb, m.astype(np.float32) * RAYADO_ALFA, sd
 
 
 def tesela_lonlat(z, x, y):
@@ -180,12 +181,21 @@ def teselas_de(caja, z):
 
 
 def componer(fuentes, z, x, y):
+    """Una tesela de 256 px con todas las fuentes. [Codex n3-litoral-colector] Las reglas, por punto:
+      1) SIN DATO GANA EN SU PLANICIE: si una zona no tiene altura ese día, su planicie va rayada y NADIE pinta encima (ni la profundidad de
+         una vecina ni el agua vista): otro color ahí se leería como un dato de esa zona, que no lo hay. El rayado y el «sin dato» de la barra
+         dicen lo mismo.
+      2) EL PICO Y LA MESETA NO TIENEN PROFUNDIDAD EN NINGÚN LADO: el territorio marcado de cualquier zona veta la profundidad de TODAS (también
+         de una vecina solapada); ahí va el color fijo si OPERA vio agua, si no nada.
+      3) UNA SOLA FUENTE DE COLOR POR PUNTO: la profundidad sale de UNA zona (la de más peso · alfa en ese punto), nunca de un promedio de
+         colores (un promedio no es la profundidad de nadie). La costura se suaviza en el ALFA (peso por distancia al borde de cada caja).
+      4) El color fijo del modelo (pico/meseta con OPERA) manda sobre la profundidad; el agua vista sin modelo, sólo donde no hay ninguna de las dos."""
     lon, lat = tesela_lonlat(z, x, y)
     LON, LAT = np.meshgrid(lon, lat)
-    # [Codex n3-r79c] nunca se promedia un color de profundidad con el color fijo: el fijo del MODELO (pico/meseta con OPERA) manda; si no hay,
-    # manda la profundidad; el agua vista sin modelo (cajas y tramos) sólo donde no hay ninguna de las dos. El alfa sí se funde (sin cortes).
-    acc = np.zeros((256, 256, 3), np.float32); aD = np.zeros((256, 256), np.float32); aZF = np.zeros((256, 256), np.float32)
-    aAV = np.zeros((256, 256), np.float32); aR = np.zeros((256, 256), np.float32); wR = np.zeros((256, 256), np.float32); ww = np.zeros((256, 256), np.float32)
+    N = (256, 256)
+    aD = np.zeros(N, np.float32); mejor = np.zeros(N, np.float32); col = np.zeros(N + (3,), np.uint8)
+    aZF = np.zeros(N, np.float32); aAV = np.zeros(N, np.float32); ww = np.zeros(N, np.float32)
+    aR = np.zeros(N, np.float32); wR = np.zeros(N, np.float32); sd = np.zeros(N, bool); veto = np.zeros(N, bool)
     for F in fuentes:
         m = F['meta']; H, W = F['a'].shape
         c = ((LON - m['oeste']) / (m['este'] - m['oeste']) * W).astype(np.int64); r = ((m['norte'] - LAT) / (m['norte'] - m['sur']) * H).astype(np.int64)
@@ -194,27 +204,31 @@ def componer(fuentes, z, x, y):
         cc, rr = c[dentro], r[dentro]
         al = F['a'][rr, cc]; w = F['w'][rr, cc] if F['w'] is not None else np.full(al.shape, F['peso'], np.float32)
         wa = w * al
-        if F.get('rayado'):                                     # zona sin dato ese día (su peso no apaga a las vecinas)
-            aR[dentro] += wa; wR[dentro] += w; continue
+        if F.get('rayado'):
+            aR[dentro] += wa; wR[dentro] += w; sd[dentro] |= F['sd'][rr, cc]; continue
         ww[dentro] += w
         if F['fijo'] is None:                                   # agua vista sin modelo
             aAV[dentro] += wa; continue
+        if F.get('veto') is not None: veto[dentro] |= F['veto'][rr, cc]
         fj = F['fijo'][rr, cc]
         aZF[dentro] += np.where(fj, wa, 0)
-        nd = ~fj
-        sub = np.zeros(al.shape, np.float32); sub[nd] = wa[nd]
-        acc[dentro] += sub[:, None] * F['rgb'][rr, cc].astype(np.float32); aD[dentro] += sub
-    out = np.zeros((256, 256, 4), np.uint8)
+        prof = np.where(fj, 0, wa)
+        aD[dentro] += prof
+        gana = prof > mejor[dentro]                             # la zona de más peso · alfa en este punto pone el color
+        sub = mejor[dentro]; sub[gana] = prof[gana]; mejor[dentro] = sub
+        cs = col[dentro]; cs[gana] = F['rgb'][rr, cc][gana]; col[dentro] = cs
+    aD = np.where(veto, 0, aD)
+    out = np.zeros(N + (4,), np.uint8)
     aa = aD + aZF + aAV
-    ray = (aa <= 1e-6) & (aR > 1e-6)    # el rayado sólo donde nadie más pinta
-    aa = np.where(ray, aR, aa); ww = np.where(ray, wR, ww)
-    hay = aa > 1e-6
-    if not hay.any(): return None
-    prof = hay & (aZF <= 1e-6) & (aD > 1e-6)
+    hay = (aa > 1e-6) & ~sd
+    ray = sd & (aR > 1e-6)
+    if not (hay.any() or ray.any()): return None
+    profu = hay & (aZF <= 1e-6) & (aD > 1e-6)
     out[hay, :3] = FIJO
+    out[profu, :3] = col[profu]
+    out[hay, 3] = np.clip(255 * aa[hay] / np.maximum(ww[hay], 1e-6), 0, 255).astype(np.uint8)
     out[ray, :3] = RAYADO
-    out[prof, :3] = np.clip(acc[prof] / aD[prof][:, None], 0, 255).astype(np.uint8)
-    out[hay, 3] = np.clip(255 * aa[hay] / ww[hay], 0, 255).astype(np.uint8)
+    out[ray, 3] = np.clip(255 * aR[ray] / np.maximum(wR[ray], 1e-6), 0, 255).astype(np.uint8)
     if not (out[..., 3] > 0).any(): return None
     return out
 
@@ -252,14 +266,14 @@ def precocer(alt, ind, fechas, salida, zmin=6, zmax=11, zonas=None, calado_dir=N
             a = (alt.get(z) or {}).get(fecha)
             if not a or not isinstance(a.get('h'), (int, float)):
                 sin.append(z)
-                rgb, al = pintar_sin_dato(Z[z]['U'], Z[z]['meta'])
-                fuentes.append({'meta': Z[z]['meta'], 'rgb': rgb, 'a': al, 'w': Z[z]['w'], 'peso': None, 'fijo': None, 'rayado': True})
+                rgb, al, sdm = pintar_sin_dato(Z[z]['U'], Z[z]['meta'])
+                fuentes.append({'meta': Z[z]['meta'], 'rgb': rgb, 'a': al, 'w': Z[z]['w'], 'peso': None, 'fijo': None, 'rayado': True, 'sd': sdm})
                 continue
             if a.get('tipo') == 'pronostico': tipo = 'pronostico'
             obs, fo, cob = (None, None, None)
             if Z[z]['R']['px_meseta'] or Z[z]['R']['px_pico']: obs, fo, cob = obs_opera(Z[z]['meta'], Z[z]['U'].shape, fecha, ind)
             rgb, al, fj = pintar_zona(Z[z]['U'], Z[z]['marca'], int(math.floor(a['h'] * 100 + 0.5)), obs, Z[z]['fb'])
-            fuentes.append({'meta': Z[z]['meta'], 'rgb': rgb, 'a': al, 'w': Z[z]['w'], 'peso': None, 'fijo': fj})
+            fuentes.append({'meta': Z[z]['meta'], 'rgb': rgb, 'a': al, 'w': Z[z]['w'], 'peso': None, 'fijo': fj, 'veto': Z[z]['marca'] > 0})
             det[z] = {'h': a['h'], 'opera': fo, 'opera_cob': cob}
         sueltas = dict(('av:' + k, ampliar(c['caja'])) for k, c in av.items()); sueltas.update(corredores(Z))
         for k, caja in sueltas.items():   # el agua vista sin modelo (cajas de agua vista y los tramos del río entre zonas), en el color fijo

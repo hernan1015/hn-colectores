@@ -21,29 +21,31 @@ function almacenFalso({ fallar = () => null } = {}) {
     async listar(p) { return [...datos.keys()].filter((k) => k.startsWith(p)).sort(); },
   };
 }
-const INDICE = { v: 1, z_min: 6, z_max: 11, generado: '2026-11-19T19:00:00Z', firma: 'abc', fechas: [
+const INDICE = { v: 1, z_min: 6, z_max: 11, generado: '2026-11-19T19:00:00Z', firma: 'abc', mb: { '2026-11-18': { teselas: 2 }, '2026-11-19': { teselas: 2 } }, fechas: [
   { fecha: '2026-11-18', tipo: 'medido', sin_dato: [] }, { fecha: '2026-11-19', tipo: 'pronostico', sin_dato: ['caseros'] }] };
 const ARCH = ['2026-11-18/6/21/36.png', '2026-11-18/7/42/73.png', '2026-11-19/6/21/36.png', '2026-11-19/7/42/73.png']
   .map((ruta) => ({ ruta, leer: () => Buffer.from('png:' + ruta) }));
-const sub = (o) => S.subir({ indice: INDICE, archivos: ARCH, ahoraMs: AHORA, esperar: sinEspera, concurrencia: 2, ...o });
+let nSuf = 0;
+const sub = (o) => S.subir({ indice: INDICE, archivos: ARCH, ahoraMs: AHORA, esperar: sinEspera, concurrencia: 2, sufijo: 'run' + (++nSuf), ...o });
+const V0 = 'v20261119T200000Z-prueba';
 
 test('primero TODAS las teselas (bajo su versión) y recién después el índice', async () => {
   const A = almacenFalso();
-  const r = await sub({ almacen: A });
-  assert.equal(r.version, 'v20261119T2000Z');
+  const r = await sub({ almacen: A, sufijo: 'prueba' });
+  assert.equal(r.version, V0);
   const esc = A.orden.filter((x) => x.startsWith('escribir'));
   assert.equal(esc.length, 5);
   assert.equal(esc[esc.length - 1], 'escribir crecidas-litoral/indice.json', 'el índice al final');
-  for (const a of ARCH) assert.ok(A.datos.has('crecidas-litoral/v20261119T2000Z/' + a.ruta), a.ruta);
+  for (const a of ARCH) assert.ok(A.datos.has('crecidas-litoral/' + V0 + '/' + a.ruta), a.ruta);
   const I = JSON.parse(A.datos.get('crecidas-litoral/indice.json'));
-  assert.equal(I.version, 'v20261119T2000Z'); assert.equal(I.firma, 'abc'); assert.deepEqual(I.borrar_despues, []);
+  assert.equal(I.version, V0); assert.equal(I.firma, 'abc'); assert.deepEqual(I.borrar_despues, []);
 });
 
 test('una tesela que falla corta ANTES del índice: el publicado sigue apuntando a la versión vieja, completa', async () => {
   const A = almacenFalso({ fallar: (op, k) => (op === 'escribir' && k.endsWith('2026-11-19/7/42/73.png') ? new Error('R2 escribir: HTTP 403') : null) });
-  A.datos.set('crecidas-litoral/indice.json', Buffer.from(JSON.stringify({ ...INDICE, version: 'v20261118T2000Z' })));
+  A.datos.set('crecidas-litoral/indice.json', Buffer.from(JSON.stringify({ ...INDICE, version: 'v20261118T200000Z-viejo' })));
   await assert.rejects(sub({ almacen: A }), (e) => e.almacen === true);
-  assert.equal(JSON.parse(A.datos.get('crecidas-litoral/indice.json')).version, 'v20261118T2000Z');
+  assert.equal(JSON.parse(A.datos.get('crecidas-litoral/indice.json')).version, 'v20261118T200000Z-viejo');
   assert.ok(!A.orden.includes('escribir crecidas-litoral/indice.json'));
 });
 
@@ -60,19 +62,19 @@ test('los 5xx se reintentan (con espera); un 4xx no', async () => {
 
 test('borrado DIFERIDO: la versión vieja queda anotada; recién una corrida posterior, pasadas 6 h, la borra (después del índice)', async () => {
   const A = almacenFalso();
-  A.datos.set('crecidas-litoral/v20261118T2000Z/2026-11-17/6/21/36.png', Buffer.from('x'));
-  A.datos.set('crecidas-litoral/indice.json', Buffer.from(JSON.stringify({ ...INDICE, version: 'v20261118T2000Z', borrar_despues: [] })));
+  A.datos.set('crecidas-litoral/v20261118T200000Z-viejo/2026-11-17/6/21/36.png', Buffer.from('x'));
+  A.datos.set('crecidas-litoral/indice.json', Buffer.from(JSON.stringify({ ...INDICE, version: 'v20261118T200000Z-viejo', borrar_despues: [] })));
   const r1 = await sub({ almacen: A });
-  assert.ok(A.datos.has('crecidas-litoral/v20261118T2000Z/2026-11-17/6/21/36.png'), 'no se borra en la misma corrida');
-  assert.deepEqual(JSON.parse(A.datos.get('crecidas-litoral/indice.json')).borrar_despues, [{ version: 'v20261118T2000Z', desde: AHORA }]);
+  assert.ok(A.datos.has('crecidas-litoral/v20261118T200000Z-viejo/2026-11-17/6/21/36.png'), 'no se borra en la misma corrida');
+  assert.deepEqual(JSON.parse(A.datos.get('crecidas-litoral/indice.json')).borrar_despues, [{ version: 'v20261118T200000Z-viejo', desde: AHORA }]);
   assert.equal(r1.borradas, 0);
   /* 2 h después: todavía no */
   await sub({ almacen: A, ahoraMs: AHORA + 2 * 3600e3 });
-  assert.ok(A.datos.has('crecidas-litoral/v20261118T2000Z/2026-11-17/6/21/36.png'), 'a las 2 h sigue');
+  assert.ok(A.datos.has('crecidas-litoral/v20261118T200000Z-viejo/2026-11-17/6/21/36.png'), 'a las 2 h sigue');
   /* 7 h después: se borra, y después de escribir el índice */
   A.orden.length = 0;
   const r3 = await sub({ almacen: A, ahoraMs: AHORA + 7 * 3600e3 });
-  assert.ok(!A.datos.has('crecidas-litoral/v20261118T2000Z/2026-11-17/6/21/36.png'), 'a las 7 h se borra');
+  assert.ok(!A.datos.has('crecidas-litoral/v20261118T200000Z-viejo/2026-11-17/6/21/36.png'), 'a las 7 h se borra');
   assert.ok(r3.borradas >= 1);
   const iI = A.orden.indexOf('escribir crecidas-litoral/indice.json'), iB = A.orden.findIndex((x) => x.startsWith('borrar'));
   assert.ok(iI >= 0 && iB > iI, 'el borrado va después del índice');
@@ -106,7 +108,55 @@ test('subir.mjs: llave apagada no hace nada; seco escribe en la carpeta; el log 
   assert.ok(!fs.existsSync(dep), 'apagada: nada');
   assert.equal(await P.principal({ env: { CRECIDAS_LITORAL_ON: 'si', MODO: 'seco', LITORAL_SALIDA: sal, LITORAL_CARPETA: dep, R2_OPERA_SECRET_ACCESS_KEY: 'SECRETO' }, log: (m) => msgs.push(m), logError: (m) => msgs.push(m), ahoraMs: AHORA }), 0);
   assert.ok(fs.existsSync(path.join(dep, 'crecidas-litoral', 'indice.json')));
-  assert.ok(fs.existsSync(path.join(dep, 'crecidas-litoral', 'v20261119T2000Z', '2026-11-19', '7', '42', '73.png')));
+  const vS = JSON.parse(fs.readFileSync(path.join(dep, 'crecidas-litoral', 'indice.json'), 'utf8')).version;
+  assert.match(vS, /^v20261119T200000Z-[0-9a-z]{4,20}$/);
+  assert.ok(fs.existsSync(path.join(dep, 'crecidas-litoral', vS, '2026-11-19', '7', '42', '73.png')));
   assert.ok(!msgs.join('\n').includes('SECRETO') && !msgs.join('\n').includes(tmp), 'el log no lleva secretos ni rutas');
   fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+test('[Codex] la versión es única: al segundo + sufijo; dos publicaciones en el mismo segundo no se pisan; nunca sobre una versión del índice', async () => {
+  const A = almacenFalso();
+  const r1 = await sub({ almacen: A }), r2 = await sub({ almacen: A });
+  assert.notEqual(r1.version, r2.version, 'mismo segundo, otra versión');
+  assert.equal(r1.version.slice(0, 18), 'v20261119T200000Z-');
+  /* la que el índice ya señala: no se reescribe */
+  const pub = JSON.parse(A.datos.get('crecidas-litoral/indice.json')).version;
+  const antes = A.orden.length;
+  await assert.rejects(sub({ almacen: A, sufijo: pub.split('-')[1] }), /versión ya usada/);
+  assert.ok(!A.orden.slice(antes).some((x) => x.startsWith('escribir')), 'no escribió nada');
+  /* un prefijo con objetos (otra corrida a medias con la misma versión): tampoco */
+  A.datos.set('crecidas-litoral/v20261119T200000Z-ocupada/2026-11-18/6/21/36.png', Buffer.from('x'));
+  await assert.rejects(sub({ almacen: A, sufijo: 'ocupada' }), /versión ya usada/);
+  /* el sufijo del run de Actions */
+  assert.equal(S.sufijoDe({ GITHUB_RUN_ID: '123456789', GITHUB_RUN_ATTEMPT: '2' }), '123456789a2');
+  assert.match(S.sufijoDe({}), /^[0-9a-f]{8}$/);
+});
+
+test('[Codex] una salida incompleta no se publica: cada fecha con las teselas que dice el índice', async () => {
+  const A = almacenFalso();
+  await assert.rejects(sub({ almacen: A, archivos: ARCH.slice(1) }), /incompletas/);
+  await assert.rejects(sub({ almacen: A, indice: { ...INDICE, mb: undefined } }), /incompletas/);
+  assert.equal(A.orden.filter((x) => x.startsWith('escribir')).length, 0);
+});
+
+test('[Codex] si el borrado se corta, los pendientes vencidos siguen anotados en el índice', async () => {
+  const A = almacenFalso();
+  A.datos.set('crecidas-litoral/v20261118T200000Z-viejo/2026-11-17/6/21/36.png', Buffer.from('x'));
+  A.datos.set('crecidas-litoral/indice.json', Buffer.from(JSON.stringify({ ...INDICE, version: 'v20261119T150000Z-actual', borrar_despues: [{ version: 'v20261118T200000Z-viejo', desde: AHORA - 7 * 3600e3 }] })));
+  A.borrar = async () => { throw Object.assign(new Error('R2 borrar: HTTP 403'), {}); };
+  await assert.rejects(sub({ almacen: A }));
+  const I = JSON.parse(A.datos.get('crecidas-litoral/indice.json'));
+  assert.ok(I.borrar_despues.some((p) => p.version === 'v20261118T200000Z-viejo'), 'el vencido sigue anotado');
+  assert.ok(I.borrar_despues.some((p) => p.version === 'v20261119T150000Z-actual'), 'y la versión que se reemplazó, también');
+});
+
+test('[Codex] la versión que nombra el índice no se reusa aunque no tenga objetos; lo que no es tesela no se sube', async () => {
+  const A = almacenFalso();
+  A.datos.set('crecidas-litoral/indice.json', Buffer.from(JSON.stringify({ ...INDICE, version: 'v20261119T200000Z-fantasma', borrar_despues: [] })));
+  await assert.rejects(sub({ almacen: A, sufijo: 'fantasma' }), /versión ya usada/);
+  const B = almacenFalso();
+  const r = await sub({ almacen: B, archivos: [...ARCH, { ruta: '2026-11-18/notas.txt', leer: () => Buffer.from('x') }, { ruta: '../2026-11-18/6/1/1.png', leer: () => Buffer.from('x') }] });
+  assert.equal(r.teselas, 4);
+  assert.ok(![...B.datos.keys()].some((k) => k.includes('notas') || k.includes('..')));
 });

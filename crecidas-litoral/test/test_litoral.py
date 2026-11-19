@@ -32,5 +32,17 @@ class Litoral(unittest.TestCase):
         self.assertEqual(L.main({'CRECIDAS_LITORAL_ON': 'no'}), 0)
 
 
+class Firma(unittest.TestCase):
+    def test_firma_justa(self):
+        alt = {'a': {'2026-11-18': {'h': 1.0, 'tipo': 'medido'}, '2026-09-01': {'h': 2.0, 'tipo': 'medido'}}}
+        f = ['2026-11-18']
+        base = L.firma_de(alt, f, ['G1'], 'e1')
+        alt['a']['2026-09-01']['h'] = 3.0
+        self.assertEqual(base, L.firma_de(alt, f, ['G1'], 'e1'), 'una altura fuera de las fechas generadas no cambia la firma')
+        self.assertNotEqual(base, L.firma_de(alt, f, ['G1', 'G2'], 'e1'), 'una pasada nueva de OPERA sí')
+        self.assertNotEqual(base, L.firma_de(alt, f, ['G1'], 'e2'), 'un estático nuevo (calado, cajas) sí')
+        self.assertEqual(base, L.firma_de(alt, f, ['G1'], 'e1'))
+
+
 if __name__ == '__main__':
     unittest.main()

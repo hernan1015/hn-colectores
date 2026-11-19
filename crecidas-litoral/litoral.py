@@ -7,7 +7,7 @@ Fuentes (sin base de datos: todo público, salvo OPERA que usa EARTHDATA_TOKEN):
     {HN_SITIO}/.netlify/functions/satchi-publico?que=calado&zona=<zona> (la misma que lee SATCHI);
   · el agua vista: OPERA DSWx-S1 (WTR, 30 m) por CMR/Earthdata, con caché en disco (LITORAL_OPERA_CACHE, <GranuleUR>/<archivo>.tif).
 Fechas: desde 29 días antes de la última medida hasta el último día en que al menos la mitad de las zonas tiene altura (~44-45 fechas).
-SIN CAMBIOS → NO HACE NADA: la firma (alturas + pronósticos + versión del método) se compara con la del índice publicado
+SIN CAMBIOS → NO HACE NADA: la firma (alturas y pronósticos de las fechas generadas + gránulos de OPERA + hash de los estáticos + método) se compara con la del índice publicado
 ({HN_LITORAL_PUBLICO}/indice.json). Igual firma y mismo día → no genera (LITORAL_FORZAR=si lo fuerza). Así se puede disparar seguido barato.
 Variables: CRECIDAS_LITORAL_ON (sólo «si»), LITORAL_SALIDA (carpeta de salida), LITORAL_TRABAJO, LITORAL_OPERA_CACHE, EARTHDATA_TOKEN,
 HN_SITIO, HN_LITORAL_PUBLICO, LITORAL_FORZAR, LITORAL_ZMAX (11 por defecto).
@@ -15,7 +15,7 @@ Uso: python -I litoral.py"""
 import datetime, hashlib, json, os, sys, time, urllib.error, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-METODO_V = 'r79c-3'   # sube si cambia el método (marcas, fusión, paleta): obliga a regenerar
+METODO_V = 'r79c-4'   # sube si cambia el método (marcas, fusión, paleta): obliga a regenerar
 ZONAS = ['corrientes', 'bellavista', 'reconquista', 'goya', 'esquina', 'lapaz', 'santotome', 'alvear', 'libres', 'caseros', 'concordia', 'colon', 'cdeluruguay']
 CMR = 'https://cmr.earthdata.nasa.gov/search/granules.umm_json?collection_concept_id=C2949811996-POCLOUD&page_size=200'
 UA = 'hn-agro-colector-litoral/1'
@@ -58,8 +58,12 @@ def fechas_de(alt):
     return [f for f in todas if d0 <= f <= fin]
 
 
-def firma_de(alt, fechas):
-    b = json.dumps({'m': METODO_V, 'f': fechas, 'a': {z: alt[z] for z in sorted(alt)}}, sort_keys=True).encode()
+def firma_de(alt, fechas, granulos=(), estaticos=''):
+    """[Codex n3-litoral-colector] la firma: el método, las fechas, las alturas SÓLO de esas fechas, los gránulos de OPERA de la ventana y el
+    hash de los estáticos (calado + cajas de agua vista). Cualquiera que cambie obliga a regenerar; nada más."""
+    fs_ = set(fechas)
+    a = {z: {f: x for f, x in alt[z].items() if f in fs_} for z in sorted(alt)}
+    b = json.dumps({'m': METODO_V, 'f': fechas, 'a': a, 'o': sorted(granulos), 'e': estaticos}, sort_keys=True).encode()
     return hashlib.sha256(b).hexdigest()
 
 
@@ -93,15 +97,20 @@ def bajar_wtr(url, destino, token):
     os.replace(destino + '.part', destino)
 
 
-def indice_opera(cajas, desde, hasta, cache, token, pedir_=pedir, bajar=bajar_wtr):
-    """los WTR que tocan las cajas en la ventana, bajados a la caché (lo que ya está no se baja) → {granulo: {fecha, archivo, bbox}}"""
-    import rasterio
-    from rasterio.warp import transform_bounds
+def listar_opera(cajas, desde, hasta, pedir_=pedir):
+    """sólo la lista de gránulos (CMR): barata, entra en la firma antes de bajar nada → ({granulo: url}, fallas)"""
     gr = {}; fallas = 0
     for c in cajas:
         try: gr.update(cmr_granulos(c, desde, hasta, pedir_))
         except Exception: fallas += 1
         time.sleep(PAUSA)
+    return gr, fallas
+
+
+def indice_opera(gr, cache, token, fallas=0, bajar=bajar_wtr):
+    """los WTR de la lista, bajados a la caché (lo que ya está no se baja) → {granulo: {fecha, archivo, bbox}}"""
+    import rasterio
+    from rasterio.warp import transform_bounds
     nuevos = 0; ind = {}
     for ur, url in sorted(gr.items()):
         f = os.path.join(cache, ur, os.path.basename(url))
@@ -141,16 +150,14 @@ def main(env=os.environ):
             time.sleep(PAUSA)
         fechas = fechas_de(alt)
         if not fechas: log('falló (error:fuente) · sin alturas'); return 1
-        firma = firma_de(alt, fechas)
+        h = hashlib.sha256()
+        for z in ZONAS:
+            for ext in ('json', 'png'):
+                with open(os.path.join(cal, z + '.' + ext), 'rb') as fh: h.update(fh.read())
+        with open(av, 'rb') as fh: h.update(fh.read())
+        estaticos = h.hexdigest()
         log(f'alturas: {len(ZONAS) - sin} zonas · {len(fechas)} fechas ({sum(1 for f in fechas if any((alt[z].get(f) or {}).get("tipo") == "pronostico" for z in alt))} con pronóstico)')
         hoy = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
-        if env.get('LITORAL_FORZAR') != 'si':
-            try:
-                pub = json.loads(pedir(publico + '/indice.json', timeout=30))
-                if pub.get('firma') == firma and str(pub.get('generado', ''))[:10] == hoy:
-                    log('sin cambios (misma firma hoy): no se genera'); return 0
-            except Exception:
-                pass   # sin índice publicado (primera vez) o no se pudo leer: se genera
         # las cajas: zonas, cajas de agua vista (ampliadas) y tramos del río entre zonas, como precocer.py
         Zm = {z: {'meta': json.load(open(os.path.join(cal, z + '.json'), encoding='utf-8'))} for z in ZONAS}
         cajas = [(m['meta']['oeste'], m['meta']['sur'], m['meta']['este'], m['meta']['norte']) for m in Zm.values()]
@@ -158,12 +165,23 @@ def main(env=os.environ):
         cajas += list(P.corredores(Zm).values())
         desde = (datetime.date.fromisoformat(fechas[0]) - datetime.timedelta(days=P.OPERA_DIAS)).isoformat()
         token = env.get('EARTHDATA_TOKEN', '')
+        ind = None; gr = {}; fallas = 0
         if env.get('LITORAL_OPERA_INDICE'):   # pruebas en seco: un índice de una caché ya bajada (no pide nada a NASA)
-            ind = json.load(open(env['LITORAL_OPERA_INDICE'], encoding='utf-8'))
+            ind = json.load(open(env['LITORAL_OPERA_INDICE'], encoding='utf-8')); granulos = list(ind)
         elif token:
-            ind = indice_opera(cajas, desde, hoy, cache, token)
+            gr, fallas = listar_opera(cajas, desde, hoy); granulos = list(gr)
         else:
-            ind = {}; log('opera: sin EARTHDATA_TOKEN: la meseta y el pico no se pintan (regla c)')
+            ind = {}; granulos = []; log('opera: sin EARTHDATA_TOKEN: la meseta y el pico no se pintan (regla c)')
+        firma = firma_de(alt, fechas, granulos, estaticos)
+        if env.get('LITORAL_FORZAR') != 'si':
+            try:
+                pub = json.loads(pedir(publico + '/indice.json', timeout=30))
+                if pub.get('firma') == firma and str(pub.get('generado', ''))[:10] == hoy:
+                    log('sin cambios (misma firma hoy): no se genera'); return 0
+            except Exception:
+                pass   # sin índice publicado (primera vez) o no se pudo leer: se genera
+        if ind is None:
+            ind = indice_opera(gr, cache, token, fallas)
         os.makedirs(salida, exist_ok=True)
         P.precocer(alt, ind, fechas, salida, zmin=6, zmax=int(env.get('LITORAL_ZMAX', '11')), zonas=ZONAS, calado_dir=cal, agua_vista=av,
                    log=log, extra={'firma': firma, 'metodo': METODO_V})
