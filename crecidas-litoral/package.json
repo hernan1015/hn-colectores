@@ -1,0 +1,12 @@
+{
+  "name": "hn-colector-crecidas-litoral",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · TODO EL LITORAL: las teselas precocidas de la crecida (z6-z11 por fecha) en el depósito público de SATCHI",
+  "scripts": {
+    "subir": "node subir.mjs",
+    "test": "node --test test/subir.test.mjs",
+    "control": "node test/control-negativo.mjs"
+  },
+  "engines": { "node": ">=20" }
+}
