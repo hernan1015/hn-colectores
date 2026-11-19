@@ -105,7 +105,7 @@ test('real: el cuadro entero (z4 y z5) y las metateselas (z6) de GREMLIN, píxel
   const ind = leerIndice(dir, 'gremlin');
   assert.equal(ind.cuadro.ruta, 'slider/gremlin/{tiempo}/c/{z}.webp'); assert.deepEqual(ind.cuadro.z, [4, 5]); assert.deepEqual(ind.cuadro.cajas[5], cj);
   assert.equal(ind.meta.ruta, 'slider/gremlin/{tiempo}/m/{z}/{x}/{y}.webp'); assert.deepEqual(ind.meta.z, [6]); assert.equal(ind.meta.lado, 4); assert.deepEqual(ind.meta.cobertura[6], P.coberturaMeta('gremlin', 6));
-  assert.deepEqual(ind.tiempos[t].c, [4, 5]); assert.deepEqual(ind.tiempos[t].m, { n: metasGremlin, faltan: 0, vacias: [], noche: false });
+  assert.deepEqual(ind.tiempos[t].c, [4, 5]); assert.deepEqual(ind.tiempos[t].m, { n: metasGremlin, faltan: 0, faltantes: [], vacias: [], noche: false });
   assert.equal(P.hecho(ind.tiempos[t], true), true);
 });
 
@@ -127,15 +127,20 @@ test('una nativa que falta: no se escribe el cuadro de ese zoom ni la metatesela
   for (const [x0, y0] of P.metasDe('gremlin', 6)) { for (let k = 0; k < 16 && !una; k++) { if (!P.enCobertura(P.coberturaMeta('gremlin', 6), x0 * 4 + (k % 4), y0 * 4 + (k >> 2))) continue; const l = SS.nativasDe('gremlin', 6, x0 * 4 + (k % 4), y0 * 4 + (k >> 2)).lista.find((q) => q.f >= 4 || q.c >= 4); if (l) { una = l; mx = x0; my = y0; } } if (una) break; }
   const s = sliderFalso({ tiempos: T.slice(-1), tesela: (tt, f, c) => (romper && f === una.f && c === una.c ? { status: 404 } : null) });
   const r = await correr({ almacen: alm, fetchFn: s.fetchFn });
-  assert.equal(r.incompletos, 0, 'las teselas z3-z5 no la usan'); assert.equal(r.cuadros, 2);
+  /* [Codex n3-r79b-colector · 1] el tiempo NO es «completo» (faltan metateselas) y el índice dice CUÁLES faltan */
+  assert.equal(r.incompletos, 1); assert.equal(r.teselas_faltantes, 0, 'las teselas z3-z5 no la usan'); assert.equal(r.cuadros, 2);
   assert.ok(r.metas_faltantes >= 1); assert.equal(fs.existsSync(path.join(dir, 'slider/gremlin', t, 'm/6', String(mx), my + '.webp')), false);
   const q = leerIndice(dir, 'gremlin').tiempos[t];
-  assert.ok(q.m.faltan >= 1); assert.equal(P.hecho(q, true), false); assert.equal(P.hecho(q, false), q.estado === 'completo');
+  assert.ok(q.m.faltan >= 1); assert.equal(q.estado, 'incompleto'); assert.equal(P.hecho(q, true), false);
+  assert.equal(q.m.faltantes.length, q.m.faltan); assert.ok(q.m.faltantes.includes('6/' + mx + '/' + my), JSON.stringify(q.m.faltantes));
+  for (const k of q.m.faltantes) assert.equal(fs.existsSync(path.join(dir, 'slider/gremlin', t, 'm', ...k.split('/')) + '.webp'), false, 'la que figura como faltante no está');
+  const escritas = archivos(path.join(dir, 'slider/gremlin', t, 'm'), '.webp').map((k) => k.replace('.webp', ''));
+  assert.equal(escritas.length, q.m.n); for (const k of escritas) assert.ok(!q.m.faltantes.includes(k));
   assert.equal(zsMeta, 3);
   romper = false;
   const r2 = await correr({ almacen: alm, fetchFn: s.fetchFn });
   assert.equal(r2.guardados, 1); const q2 = leerIndice(dir, 'gremlin').tiempos[t];
-  assert.equal(q2.m.faltan, 0); assert.equal(q2.m.n, metasGremlin); assert.equal(P.hecho(q2, true), true); assert.equal(q2.intentos, 2);
+  assert.equal(q2.m.faltan, 0); assert.deepEqual(q2.m.faltantes, []); assert.equal(q2.estado, 'completo'); assert.equal(q2.m.n, metasGremlin); assert.equal(P.hecho(q2, true), true); assert.equal(q2.intentos, 2);
   /* y en una tesela de z5: su cuadro z5 no se escribe (el z4 sí) */
   const d3 = carpetaTemporal(), nat5 = SS.nativasDe('gremlin', 5, 10, 18).lista[0];
   const s3 = sliderFalso({ tiempos: T.slice(-1), tesela: (tt, f, c) => (f === nat5.f && c === nat5.c ? { status: 404 } : null) });
@@ -189,6 +194,17 @@ test('el ritmo de cortesía con 3 en vuelo: nunca más de 3 pedidos a la vez y c
   assert.ok(maxVivos <= 3, 'en vuelo: ' + maxVivos); assert.equal(P.EN_VUELO_SLIDER, 3); assert.ok(maxVivos > 1, 'con los cuadros, más de uno a la vez');
   for (let i = 1; i < inicios.length; i++) assert.ok(inicios[i] - inicios[i - 1] >= PAUSA * 0.75, 'pedido ' + i + ': ' + Math.round(inicios[i] - inicios[i - 1]) + ' ms');
   assert.ok(inicios.length > 20);
+});
+
+test('[Codex n3-r79b-colector · 2] el ritmo se comprueba al ARRANCAR: con los temporizadores vencidos juntos (event loop trabado), los pedidos igual salen separados', async () => {
+  let t = 0; const inicios = [], PAUSA = 1000;
+  const s = sliderFalso({ tiempos: T.slice(-1) });
+  const fetchFn = async (u, o) => { inicios.push(t); await new Promise((r) => setTimeout(r, 1)); return s.fetchFn(u, o); };
+  /* cada espera tarda de verdad 3 ms y, al volver, el reloj saltó 10 s: como si el event loop hubiera estado trabado y vencieran todas juntas */
+  const esperar = async () => { await new Promise((r) => setTimeout(r, 3)); t += 10 * PAUSA; };
+  await correr({ almacen: ALM.almacenCarpeta(carpetaTemporal()), fetchFn, pausaMs: PAUSA, reloj: () => t, esperar });
+  assert.ok(inicios.length > 20);
+  for (let i = 1; i < inicios.length; i++) assert.ok(inicios[i] - inicios[i - 1] >= PAUSA, 'pedido ' + i + ': ' + (inicios[i] - inicios[i - 1]) + ' ms');
 });
 
 test('la llave apagada (cuadros: false): ni un WebP, el índice sin «cuadro» ni «meta», y el script lo apaga con PRECOCIDO_CUADROS=no', async () => {

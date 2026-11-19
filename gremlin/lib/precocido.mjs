@@ -360,11 +360,14 @@ export async function correr({
     }
   };
   /* [r79] el ritmo de cortesía con varios en vuelo: cada pedido empieza, como pronto, PAUSA_MS después del comienzo del anterior */
-  let proximo = 0;
-  const ritmo = async () => { const a = reloj(), espera = Math.max(0, proximo - a); proximo = Math.max(a, proximo) + pausaMs; if (espera > 0) await esperar(espera); };
+  /* [Codex n3-r79b-colector · 2] EL RITMO SE COMPRUEBA AL ARRANCAR: después de cada espera se vuelve a mirar el reloj contra el comienzo del
+     último pedido; si un temporizador venció tarde (el event loop trabado) y otro pedido arrancó en el medio, se espera de nuevo. La
+     comprobación y la marca son sincrónicas: dos trabajadores nunca arrancan con menos de PAUSA_MS entre sí. */
+  let ultimoInicio = -Infinity;
+  const ritmo = async () => { for (;;) { const a = reloj(), falta = ultimoInicio + pausaMs - a; if (falta <= 0) { ultimoInicio = a; return; } await esperar(falta); } };
   const pedir = async (ruta, tipo, conRitmo) => {
     if (conRitmo) { if (pausaMs > 0) await ritmo(); }
-    else { if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs); proximo = reloj() + pausaMs; }
+    else { if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs); ultimoInicio = reloj(); }
     res.pedidos++;
     try {
       const r = await fetchFn(BASE + ruta, { headers: { 'user-agent': UA, accept: tipo === 'json' ? 'application/json' : 'image/png' }, signal: AbortSignal.timeout(30000) });
@@ -466,7 +469,7 @@ export async function correr({
       }
       rgbaDe.clear();
       const zs = Z_META[prod] || [], top = pm ? pm.z : null, vacias = [], padres = new Map();
-      let mEsc = 0, mFal = 0;
+      let mEsc = 0, mFal = 0; const faltantes = [];   // [Codex n3-r79b-colector · 1] las que faltan, por coordenada (z/mx/my)
       const subir = (z, mx, my, buf, estado) => {
         if (z <= zs[0]) return;
         const k = (z - 1) + '/' + (mx >> 1) + '/' + (my >> 1);
@@ -478,9 +481,9 @@ export async function correr({
       };
       const cerrar = async (z, mx, my, buf, estado) => {
         if (estado === 'vacia') { vacias.push(z + '/' + mx + '/' + my); res.metas_vacias++; }
-        else if (estado === 'mal') { mFal++; res.metas_faltantes++; }
+        else if (estado === 'mal') { mFal++; res.metas_faltantes++; faltantes.push(z + '/' + mx + '/' + my); }
         else if (await escribirWebp(claveMeta(prod, t, z, mx, my), buf, META_PX, META_PX, etiquetaMeta(prod, t, z, mx, my), 'metas')) { mEsc++; res.metas++; }
-        else { estado = 'mal'; mFal++; }
+        else { estado = 'mal'; mFal++; faltantes.push(z + '/' + mx + '/' + my); }
         subir(z, mx, my, buf, estado);
       };
       if (top != null) {
@@ -509,15 +512,17 @@ export async function correr({
         }
       }
       const noche = vacias.length > 0 && mEsc === 0 && mFal === 0;
-      mInfo = { n: mEsc, faltan: mFal, vacias: noche ? [] : vacias, noche };
+      mInfo = { n: mEsc, faltan: mFal, faltantes, vacias: noche ? [] : vacias, noche };
     }
     res.teselas += escritas; res.teselas_faltantes += faltan;
     if (fallidas > 0) {   // [reintento] el almacén no tomó alguna tesela: el tiempo NO se publica ni gasta un intento; la próxima lo rehace
       res.sin_publicar++; log(`precocido: un tiempo con ${fallidas} teselas que el almacén no tomó; no lo publico`);
       continue;
     }
-    const estado = faltan === 0 ? 'completo' : 'incompleto', previo = e.ind.tiempos[t];
-    e.ind.tiempos[t] = { estado, n: escritas, faltan, intentos: (previo?.intentos || 0) + 1, z: [Z_MIN, zM], ...(cuadros ? { c: cEsc || [], m: mInfo || { n: 0, faltan: 0, vacias: [], noche: false } } : {}) };
+    /* [Codex n3-r79b-colector · 1] con la llave de los cuadros, «completo» exige también los cuadros y TODAS las metateselas */
+    const todoCuadros = !cuadros || (cEsc && Z_CUADRO.every((z) => cEsc.indexOf(z) >= 0) && mInfo && mInfo.faltan === 0);
+    const estado = faltan === 0 && todoCuadros ? 'completo' : 'incompleto', previo = e.ind.tiempos[t];
+    e.ind.tiempos[t] = { estado, n: escritas, faltan, intentos: (previo?.intentos || 0) + 1, z: [Z_MIN, zM], ...(cuadros ? { c: cEsc || [], m: mInfo || { n: 0, faltan: 0, faltantes: [], vacias: [], noche: false } } : {}) };
     e.ind.actualizado = new Date(ahoraMs).toISOString();
     if (!(await escribirR(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE }))) {   // después de las teselas
       res.indices_fallidos++; noBorrar = true; continue;   // [reintento] el índice no quedó: en esta corrida no se borra nada

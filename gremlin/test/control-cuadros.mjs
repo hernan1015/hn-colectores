@@ -25,6 +25,9 @@ const MUTANTES = [
   ['8 pedidos a SLIDER en vuelo', F, 'export const EN_VUELO_SLIDER = 3;', 'export const EN_VUELO_SLIDER = 8;'],
   ['las metateselas de abajo que no hacen falta, escritas', F, 'if (!metasDe(prod, z).some((q) => q[0] === Q.mx && q[1] === Q.my)) continue;', ''],
   ['el log con la clave del cuadro', F, '${cuadros ? ` · ${res.cuadros} cuadros', '${cuadros ? ` · ${claveCuadro(\'gremlin\', \'x\', 5)} · ${res.cuadros} cuadros'],
+  ['[Codex · 1] las faltantes sin sus coordenadas', F, "else if (estado === 'mal') { mFal++; res.metas_faltantes++; faltantes.push(z + '/' + mx + '/' + my); }", "else if (estado === 'mal') { mFal++; res.metas_faltantes++; }"],
+  ['[Codex · 1] «completo» con metateselas faltantes', F, 'const estado = faltan === 0 && todoCuadros ?', 'const estado = faltan === 0 ?'],
+  ['[Codex · 2] el ritmo sin volver a mirar al arrancar', F, 'if (falta <= 0) { ultimoInicio = a; return; } await esperar(falta);', 'ultimoInicio = Math.max(a, ultimoInicio + pausaMs); if (falta > 0) await esperar(falta); return;'],
   ['la cabecera sin la cobertura', F, 'cobertura: Object.fromEntries((Z_META[prod] || []).map((z) => [z, coberturaMeta(prod, z)])) },', 'cobertura: {} },'],
 ];
 function correrCon(nombre, archivo, viejo, nuevo) {
