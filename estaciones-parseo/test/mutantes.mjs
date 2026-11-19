@@ -33,10 +33,10 @@ const MUTANTES = [
   ['fuentes/weathercloud.mjs', 'if (!formato.verificado || p.id == null)', 'if (p.id == null && false)', 'Weathercloud sin verificar no guarda'],
   ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', "      new.mostrar := false;\n      new.duplicado_de_red := null;", "      new.duplicado_de_red := null;", 'el colector no puede mostrar (insert)'],
   ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', '      new.mostrar := old.mostrar;', '      null;', 'el colector no puede mostrar (update)'],
-  ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', "check (not mostrar or red not in ('WEATHERLINK_PUB', 'WEATHERCLOUD_PUB', 'INTA_SIPAN_AV')),\n  constraint estaciones_redes_red_forma", "check (true),\n  constraint estaciones_redes_red_forma", 'WeatherLink no se puede mostrar'],
+  ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', "check (not mostrar or red not in ('WEATHERLINK_PUB', 'WEATHERCLOUD_PUB', 'INTA_SIPAN_AV'))\n);", "check (true)\n);", 'WeatherLink no se puede mostrar'],
   ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', "constraint el_temp      check (temp_c is null or (temp_c > -40 and temp_c < 50)),", '', 'la base frena los 50 °C'],
-  ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', '       and d.lat between e.lat - radio / 111.0 and e.lat + radio / 111.0\n       and public.estaciones_distancia_km(e.lat, e.lon, d.lat, d.lon) < radio;', '       and true;', 'duplicadas: sólo a < 2 km'],
-  ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', '  where c.d <= p_radio_km', '  where true', 'la vista: sólo a ≤ 25 km'],
+  ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', '       and b.lat between a.lat - radio / 110.0 and a.lat + radio / 110.0\n       and b.lon between a.lon - radio / 60.0 and a.lon + radio / 60.0\n     where public.estaciones_distancia_km(a.lat, a.lon, b.lat, b.lon) < radio', '     where true', 'duplicadas: sólo a < 2 km'],
+  ['esquema/0161_estaciones_parseo_unificada_COPIA.sql', '    where x.d <= p_radio_km', '    where true', 'la vista: sólo a ≤ 25 km'],
 ];
 
 const tmp = process.argv[2] || fs.mkdtempSync(path.join(os.tmpdir(), 'mutantes-parseo-'));

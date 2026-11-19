@@ -69,8 +69,7 @@ create table if not exists public.estaciones_redes (
   prioridad      smallint     not null default 50,      -- la preferida entre duplicadas: la de número MENOR
   actualizado_en timestamptz  not null default now(),
   constraint estaciones_redes_privadas_internas
-    check (not mostrar or red not in ('WEATHERLINK_PUB', 'WEATHERCLOUD_PUB', 'INTA_SIPAN_AV')),
-  constraint estaciones_redes_red_forma check (red ~ '^[A-Z0-9_]{2,40}$')
+    check (not mostrar or red not in ('WEATHERLINK_PUB', 'WEATHERCLOUD_PUB', 'INTA_SIPAN_AV'))
 );
 comment on table public.estaciones_redes is
   'Una fila por red de estaciones, con su marca mostrar (false = interno, el default). WeatherLink, Weathercloud y SIPAN: interno por CHECK.';
@@ -90,9 +89,9 @@ insert into public.estaciones_redes (red, nombre, terminos, terminos_url, priori
   ('WEATHERLINK_PUB',  'WeatherLink (Davis)',            'Los términos de Davis prohíben los robots: interno hasta el permiso escrito.', 'https://www.davisinstruments.com/policies/terms-of-service', 80),
   ('WEATHERCLOUD_PUB', 'Weathercloud',                   'Sus términos prohíben el scraping: interno hasta el permiso escrito.', 'https://weathercloud.net/legal/tos', 90)
 on conflict (red) do nothing;
--- las redes que ya tengan estaciones y no estén en la lista: también, en interno
+-- las redes que ya tengan estaciones y no estén en la lista: también, en interno (las necesita la FK de abajo)
 insert into public.estaciones_redes (red, nombre)
-  select distinct e.red, e.red from public.estaciones e where e.red ~ '^[A-Z0-9_]{2,40}$'
+  select distinct e.red, e.red from public.estaciones e
 on conflict (red) do nothing;
 
 -- ── 2. La marca por estación, la duplicada y la firma del parseo ───────────────────────────────────────────────
@@ -109,6 +108,11 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'estaciones_privadas_internas') then
     alter table public.estaciones add constraint estaciones_privadas_internas
       check (not mostrar or red not in ('WEATHERLINK_PUB', 'WEATHERCLOUD_PUB', 'INTA_SIPAN_AV'));
+  end if;
+  -- [Codex n3 0161 §2] toda estación tiene su red en estaciones_redes: no hay estación visible de una red que no existe.
+  -- Sin ON UPDATE/DELETE: una red con estaciones no se borra ni se renombra (además lo prohíbe el disparador de redes).
+  if not exists (select 1 from pg_constraint where conname = 'estaciones_red_fk') then
+    alter table public.estaciones add constraint estaciones_red_fk foreign key (red) references public.estaciones_redes (red);
   end if;
   if not exists (select 1 from pg_constraint where conname = 'estaciones_duplicado_forma') then
     alter table public.estaciones add constraint estaciones_duplicado_forma
@@ -135,7 +139,10 @@ begin
     end if;
   end if;
   if new.mostrar then
-    select r.mostrar into red_mostrar from public.estaciones_redes r where r.red = new.red;
+    -- [Codex n3 0161 §2] FOR SHARE: se serializa con el cambio de visibilidad de la red (el UPDATE de la red espera a
+    -- esta transacción, y ésta espera a la que la esté cambiando y relee su valor). Sólo llega acá quien quiere mostrar:
+    -- el colector nunca (su mostrar es siempre false), así que no le hace falta permiso de bloqueo.
+    select r.mostrar into red_mostrar from public.estaciones_redes r where r.red = new.red for share;
     if not coalesce(red_mostrar, false) then
       raise exception 'estaciones: la estación no se puede mostrar porque su red (%) es interna', new.red using errcode = '23514';
     end if;
@@ -146,10 +153,13 @@ drop trigger if exists estaciones_mostrar_guardia on public.estaciones;
 create trigger estaciones_mostrar_guardia before insert or update on public.estaciones
   for each row execute function public.estaciones_mostrar_guardia();
 
--- Si una red vuelve a interno, sus estaciones también.
+-- Si una red vuelve a interno, sus estaciones también. Una red NO se renombra (con estaciones o sin ellas): se crea otra.
 create or replace function public.estaciones_redes_a_interno() returns trigger
 language plpgsql security invoker set search_path = public, pg_temp as $$
 begin
+  if new.red is distinct from old.red then
+    raise exception 'estaciones_redes: una red no se renombra (crear otra)' using errcode = '23514';
+  end if;
   if not new.mostrar then
     update public.estaciones set mostrar = false where red = new.red and mostrar;
   end if;
@@ -225,45 +235,55 @@ end $$;
 -- miden lo mismo). Se guardan las DOS; la no preferida apunta a la preferida. La preferida: la red de menor
 -- `prioridad` (las institucionales antes que las de particulares), después la que más lecturas tuvo en 7 días, y
 -- después el orden de red e id (para que el resultado no dependa del azar). Sólo escribe lo que cambia.
+-- [Codex n3 0161 §1] SIN tablas temporales (el que llama podría prepararlas con un disparador propio y hacerlo correr
+-- con los permisos del dueño): los pares se calculan en una consulta y el reparto, en una variable de la función.
 create or replace function public.estaciones_marcar_duplicados(p_radio_km double precision default 2) returns integer
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-  e record; n integer := 0; radio double precision := least(greatest(coalesce(p_radio_km, 2), 0.1), 5);
+  par record; n integer := 0;
+  radio double precision := least(greatest(coalesce(p_radio_km, 2), 0.1), 5);
+  pref jsonb := '{}'::jsonb;          -- clave de la reclamada → [red, id] de la preferida
+  sep constant text := chr(31);
 begin
-  create temp table if not exists _hn_dup (red text, estacion_id text, lat double precision, lon double precision,
-    orden bigint, pref_red text, pref_id text, primary key (red, estacion_id)) on commit drop;
-  truncate _hn_dup;
-  insert into _hn_dup (red, estacion_id, lat, lon, orden)
-    select s.red, s.estacion_id, s.lat::float8, s.lon::float8,
-           row_number() over (order by coalesce(r.prioridad, 50),
-             (select count(*) from public.estaciones_lecturas l where l.red = s.red and l.estacion_id = s.estacion_id
-                and l.instante > now() - interval '7 days') desc, s.red, s.estacion_id)
-    from public.estaciones s left join public.estaciones_redes r on r.red = s.red
-    where s.lat is not null and s.lon is not null and s.activa;
-  for e in select * from _hn_dup order by orden loop
-    if exists (select 1 from _hn_dup d where d.red = e.red and d.estacion_id = e.estacion_id and d.pref_red is not null) then
-      continue;   -- ya la reclamó una preferida
-    end if;
-    update _hn_dup d set pref_red = e.red, pref_id = e.estacion_id
-     where d.pref_red is null and d.red <> e.red and d.orden > e.orden
-       and d.lat between e.lat - radio / 111.0 and e.lat + radio / 111.0
-       and public.estaciones_distancia_km(e.lat, e.lon, d.lat, d.lon) < radio;
+  for par in
+    with s as (
+      select e.red, e.estacion_id, e.lat::float8 as lat, e.lon::float8 as lon,
+             row_number() over (order by coalesce(r.prioridad, 50),
+               (select count(*) from public.estaciones_lecturas l where l.red = e.red and l.estacion_id = e.estacion_id
+                  and l.instante > now() - interval '7 days') desc, e.red, e.estacion_id) as orden
+      from public.estaciones e left join public.estaciones_redes r on r.red = e.red
+      where e.lat is not null and e.lon is not null and e.activa
+    )
+    select a.red as a_red, a.estacion_id as a_id, b.red as b_red, b.estacion_id as b_id
+      from s a join s b on b.orden > a.orden and b.red <> a.red
+       and b.lat between a.lat - radio / 110.0 and a.lat + radio / 110.0
+       and b.lon between a.lon - radio / 60.0 and a.lon + radio / 60.0
+     where public.estaciones_distancia_km(a.lat, a.lon, b.lat, b.lon) < radio
+     order by a.orden, b.orden
+  loop
+    -- en orden de preferencia: la que ya fue reclamada no reclama; la que no, se queda con las de después a < 2 km
+    continue when pref ? (par.a_red || sep || par.a_id);
+    continue when pref ? (par.b_red || sep || par.b_id);
+    pref := pref || jsonb_build_object(par.b_red || sep || par.b_id, jsonb_build_array(par.a_red, par.a_id));
   end loop;
-  update public.estaciones s set duplicado_de_red = d.pref_red, duplicado_de_id = d.pref_id
-    from _hn_dup d
-   where s.red = d.red and s.estacion_id = d.estacion_id
-     and (s.duplicado_de_red is distinct from d.pref_red or s.duplicado_de_id is distinct from d.pref_id);
+  with nuevo as (
+    select e.red, e.estacion_id, pref -> (e.red || sep || e.estacion_id) ->> 0 as pr, pref -> (e.red || sep || e.estacion_id) ->> 1 as pi
+      from public.estaciones e
+  )
+  update public.estaciones e set duplicado_de_red = nv.pr, duplicado_de_id = nv.pi
+    from nuevo nv
+   where e.red = nv.red and e.estacion_id = nv.estacion_id
+     and (e.duplicado_de_red is distinct from nv.pr or e.duplicado_de_id is distinct from nv.pi);
   get diagnostics n = row_count;
-  -- las que ya no entran en la cuenta (sin coordenadas o inactivas) no apuntan a nadie
-  update public.estaciones s set duplicado_de_red = null, duplicado_de_id = null
-   where s.duplicado_de_red is not null
-     and not exists (select 1 from _hn_dup d where d.red = s.red and d.estacion_id = s.estacion_id);
   return n;
 end $$;
 
 -- LA VISTA INTERNA para comparar un punto: las estaciones a ≤ p_radio_km (25 km como máximo) de (p_lat, p_lon), con
--- la distancia, la fuente, la marca, la última lectura y la serie de 7 días (cada lectura y el resumen por día local,
--- UTC−3). SECURITY INVOKER: con RLS, quien no es el maker no ve ninguna fila.
+-- la distancia, la fuente, la marca, la última lectura, la serie de 7 días (UNA lectura por hora, la última de cada
+-- hora: 168 puntos como mucho) y el resumen por día local (UTC−3). Como mucho, las 50 más cercanas. Las lecturas de
+-- cada estación se leen UNA vez (→ la última, la horaria y el diario). SECURITY INVOKER: con RLS, quien no es el maker
+-- no ve ninguna fila. [Codex n3 0161 §5] El punto se acota a la Argentina (lat −56…−20, lon −75…−52): no hay
+-- antimeridiano ni polos.
 create or replace function public.estaciones_comparar_punto(p_lat double precision, p_lon double precision,
                                                            p_radio_km double precision default 25,
                                                            p_hasta timestamptz default now())
@@ -274,8 +294,8 @@ language plpgsql stable security invoker set search_path = public, pg_temp as $$
 declare
   dlat double precision; dlon double precision; desde timestamptz;
 begin
-  if p_lat is null or p_lon is null or p_lat < -90 or p_lat > 90 or p_lon < -180 or p_lon > 180 then
-    raise exception 'estaciones_comparar_punto: la latitud o la longitud están fuera de rango' using errcode = '22023';
+  if p_lat is null or p_lon is null or p_lat < -56 or p_lat > -20 or p_lon < -75 or p_lon > -52 then
+    raise exception 'estaciones_comparar_punto: el punto está fuera de la Argentina (lat −56…−20, lon −75…−52)' using errcode = '22023';
   end if;
   if p_radio_km is null or p_radio_km <= 0 or p_radio_km > 25 then
     raise exception 'estaciones_comparar_punto: el radio va de 0 a 25 km' using errcode = '22023';
@@ -283,44 +303,68 @@ begin
   if p_hasta is null then p_hasta := now(); end if;
   desde := p_hasta - interval '7 days';
   dlat := p_radio_km / 110.0;
-  dlon := p_radio_km / (110.0 * greatest(cos(radians(p_lat)), 0.05));
+  dlon := p_radio_km / (110.0 * cos(radians(p_lat)));
   return query
   with cerca as (
-    select s.red as e_red, s.estacion_id as e_id, s.nombre as e_nombre, s.mostrar as e_mostrar, s.lat as e_lat, s.lon as e_lon,
-           s.duplicado_de_red as e_dup_red, s.duplicado_de_id as e_dup_id,
-           public.estaciones_distancia_km(p_lat, p_lon, s.lat::float8, s.lon::float8) as d
-    from public.estaciones s
-    where s.lat is not null and s.lon is not null
-      and s.lat between p_lat - dlat and p_lat + dlat
-      and s.lon between p_lon - dlon and p_lon + dlon
+    select x.* from (
+      select s.red as e_red, s.estacion_id as e_id, s.nombre as e_nombre, s.mostrar as e_mostrar, s.lat as e_lat, s.lon as e_lon,
+             s.duplicado_de_red as e_dup_red, s.duplicado_de_id as e_dup_id,
+             -- haversine en línea: la función de distancia no se le da a authenticated
+             2 * 6371.0088 * asin(least(1, sqrt(power(sin(radians(s.lat::float8 - p_lat) / 2), 2)
+               + cos(radians(p_lat)) * cos(radians(s.lat::float8)) * power(sin(radians(s.lon::float8 - p_lon) / 2), 2)))) as d
+      from public.estaciones s
+      where s.lat is not null and s.lon is not null
+        and s.lat between p_lat - dlat and p_lat + dlat
+        and s.lon between p_lon - dlon and p_lon + dlon
+    ) x
+    where x.d <= p_radio_km
+    order by x.d, x.e_red, x.e_id
+    limit 50
+  ),
+  lect as materialized (
+    select c.e_red, c.e_id, l.instante, l.temp_c, l.hum_pct, l.lluvia_mm, l.lluvia_periodo_min, l.lluvia_dia_mm,
+           l.viento_ms, l.racha_ms, l.viento_dir_gr, l.presion_hpa, l.marcas
+      from cerca c join public.estaciones_lecturas l
+        on l.red = c.e_red and l.estacion_id = c.e_id and l.instante > desde and l.instante <= p_hasta
+  ),
+  ult as (
+    select distinct on (q.e_red, q.e_id) q.e_red, q.e_id,
+           jsonb_build_object('instante', q.instante, 'temp_c', q.temp_c, 'hum_pct', q.hum_pct, 'lluvia_mm', q.lluvia_mm,
+             'lluvia_periodo_min', q.lluvia_periodo_min, 'lluvia_dia_mm', q.lluvia_dia_mm, 'viento_ms', q.viento_ms,
+             'racha_ms', q.racha_ms, 'viento_dir_gr', q.viento_dir_gr, 'presion_hpa', q.presion_hpa, 'marcas', q.marcas) as j
+      from lect q order by q.e_red, q.e_id, q.instante desc
+  ),
+  hor as (
+    select h.e_red, h.e_id, jsonb_agg(jsonb_build_object('instante', h.instante, 'temp_c', h.temp_c, 'hum_pct', h.hum_pct,
+             'lluvia_mm', h.lluvia_mm, 'lluvia_periodo_min', h.lluvia_periodo_min, 'lluvia_dia_mm', h.lluvia_dia_mm,
+             'viento_ms', h.viento_ms, 'racha_ms', h.racha_ms) order by h.instante) as j
+      from (select u2.*, row_number() over (partition by u2.e_red, u2.e_id order by u2.instante desc) as k
+              from (select distinct on (q.e_red, q.e_id, date_trunc('hour', q.instante at time zone 'UTC')) q.*
+                      from lect q order by q.e_red, q.e_id, date_trunc('hour', q.instante at time zone 'UTC'), q.instante desc) u2) h
+     where h.k <= 168                      -- las 168 horas más nuevas, como mucho
+     group by h.e_red, h.e_id
+  ),
+  dia as (
+    select dd.e_red, dd.e_id, jsonb_agg(to_jsonb(dd) - 'e_red' - 'e_id' order by dd.dia) as j
+      from (select q.e_red, q.e_id, ((q.instante at time zone 'UTC') - interval '3 hours')::date as dia,
+                   min(q.temp_c) as tmin_c, max(q.temp_c) as tmax_c, round(avg(q.hum_pct), 1) as hum_media_pct,
+                   max(q.viento_ms) as viento_max_ms,
+                   coalesce(max(q.lluvia_dia_mm), sum(q.lluvia_mm) filter (where q.lluvia_periodo_min < 1440)) as lluvia_mm,
+                   case when max(q.lluvia_dia_mm) is not null then 'acumulado_consola'
+                        when count(q.lluvia_mm) filter (where q.lluvia_periodo_min < 1440) > 0 then 'suma_registros' end as lluvia_origen,
+                   sum(q.lluvia_mm) filter (where q.lluvia_periodo_min = 1440) as lluvia_9a9_mm,
+                   count(*) as lecturas
+              from lect q group by 1, 2, 3) dd
+     group by dd.e_red, dd.e_id
   )
   select c.e_red, c.e_id, c.e_nombre, coalesce(r.nombre, c.e_red), c.e_mostrar, c.e_dup_red is null,
          case when c.e_dup_red is null then null else c.e_dup_red || ' · ' || c.e_dup_id end,
-         round(c.d::numeric, 2), c.e_lat, c.e_lon,
-         (select to_jsonb(u) from (
-            select l.instante, l.temp_c, l.hum_pct, l.lluvia_mm, l.lluvia_periodo_min, l.lluvia_dia_mm, l.viento_ms, l.racha_ms,
-                   l.viento_dir_gr, l.presion_hpa, l.marcas
-            from public.estaciones_lecturas l
-            where l.red = c.e_red and l.estacion_id = c.e_id and l.instante > desde and l.instante <= p_hasta
-            order by l.instante desc limit 1) u),
-         coalesce((select jsonb_agg(to_jsonb(s2) order by s2.instante) from (
-            select l.instante, l.temp_c, l.hum_pct, l.lluvia_mm, l.lluvia_periodo_min, l.lluvia_dia_mm, l.viento_ms, l.racha_ms
-            from public.estaciones_lecturas l
-            where l.red = c.e_red and l.estacion_id = c.e_id and l.instante > desde and l.instante <= p_hasta) s2), '[]'::jsonb),
-         coalesce((select jsonb_agg(to_jsonb(dd) order by dd.dia) from (
-            select ((l.instante at time zone 'UTC') - interval '3 hours')::date as dia,
-                   min(l.temp_c) as tmin_c, max(l.temp_c) as tmax_c, round(avg(l.hum_pct), 1) as hum_media_pct,
-                   max(l.viento_ms) as viento_max_ms,
-                   coalesce(max(l.lluvia_dia_mm), sum(l.lluvia_mm) filter (where l.lluvia_periodo_min < 1440)) as lluvia_mm,
-                   case when max(l.lluvia_dia_mm) is not null then 'acumulado_consola'
-                        when count(l.lluvia_mm) filter (where l.lluvia_periodo_min < 1440) > 0 then 'suma_registros' end as lluvia_origen,
-                   sum(l.lluvia_mm) filter (where l.lluvia_periodo_min = 1440) as lluvia_9a9_mm,
-                   count(*) as lecturas
-            from public.estaciones_lecturas l
-            where l.red = c.e_red and l.estacion_id = c.e_id and l.instante > desde and l.instante <= p_hasta
-            group by 1) dd), '[]'::jsonb)
-  from cerca c left join public.estaciones_redes r on r.red = c.e_red
-  where c.d <= p_radio_km
+         round(c.d::numeric, 2), c.e_lat, c.e_lon, u.j, coalesce(h.j, '[]'::jsonb), coalesce(dd.j, '[]'::jsonb)
+  from cerca c
+  left join public.estaciones_redes r on r.red = c.e_red
+  left join ult u on u.e_red = c.e_red and u.e_id = c.e_id
+  left join hor h on h.e_red = c.e_red and h.e_id = c.e_id
+  left join dia dd on dd.e_red = c.e_red and dd.e_id = c.e_id
   order by c.d, c.e_red, c.e_id;
 end $$;
 comment on function public.estaciones_comparar_punto(double precision, double precision, double precision, timestamptz) is
@@ -347,8 +391,11 @@ create policy solo_maker_lee on public.estaciones for select to authenticated us
 drop policy if exists solo_maker_lee on public.estaciones_lecturas;
 create policy solo_maker_lee on public.estaciones_lecturas for select to authenticated using (public.is_maker());
 
--- Las funciones: anon nada. La vista, el maker (y el pool). La poda y las duplicadas, sólo el colector (y postgres).
-revoke all on function public.estaciones_comparar_punto(double precision, double precision, double precision, timestamptz) from public, anon;
+-- Las funciones: anon nada. La vista, authenticated (con RLS: el maker) y service_role. La poda y las duplicadas, sólo el colector.
+-- [Codex n3 0161 §3] TODAS las funciones nuevas: sin EXECUTE para PUBLIC, anon ni authenticated. La única excepción es la
+-- vista, que authenticated necesita (y la RLS la deja vacía para quien no es el maker).
+revoke all on function public.estaciones_distancia_km(double precision, double precision, double precision, double precision) from public, anon, authenticated;
+revoke all on function public.estaciones_comparar_punto(double precision, double precision, double precision, timestamptz) from public, anon, authenticated;
 grant execute on function public.estaciones_comparar_punto(double precision, double precision, double precision, timestamptz) to authenticated, service_role;
 revoke all on function public.estaciones_lecturas_podar(integer) from public, anon, authenticated;
 revoke all on function public.estaciones_marcar_duplicados(double precision) from public, anon, authenticated;
