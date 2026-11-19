@@ -132,6 +132,8 @@ test('una nativa que falta: no se escribe el cuadro de ese zoom ni la metatesela
   assert.ok(r.metas_faltantes >= 1); assert.equal(fs.existsSync(path.join(dir, 'slider/gremlin', t, 'm/6', String(mx), my + '.webp')), false);
   const q = leerIndice(dir, 'gremlin').tiempos[t];
   assert.ok(q.m.faltan >= 1); assert.equal(q.estado, 'incompleto'); assert.equal(P.hecho(q, true), false);
+  /* «hecho» también mira cuadros y metateselas (un índice de la r77 que dice «completo» sin ellos se rehace) */
+  assert.equal(P.hecho({ estado: 'completo', c: [4], m: { faltan: 0 } }, true), false); assert.equal(P.hecho({ estado: 'completo' }, true), false); assert.equal(P.hecho({ estado: 'completo' }, false), true);
   assert.equal(q.m.faltantes.length, q.m.faltan); assert.ok(q.m.faltantes.includes('6/' + mx + '/' + my), JSON.stringify(q.m.faltantes));
   for (const k of q.m.faltantes) assert.equal(fs.existsSync(path.join(dir, 'slider/gremlin', t, 'm', ...k.split('/')) + '.webp'), false, 'la que figura como faltante no está');
   const escritas = archivos(path.join(dir, 'slider/gremlin', t, 'm'), '.webp').map((k) => k.replace('.webp', ''));
