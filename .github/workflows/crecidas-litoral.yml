@@ -1,0 +1,80 @@
+# HN AGRO · [r79 · 10] TODO EL LITORAL: las teselas precocidas de la crecida (z6-z11, una carpeta por fecha, ~45 fechas: 30 medidas +
+# el pronóstico) en el depósito PÚBLICO de SATCHI (satchi-slider, prefijo crecidas-litoral/). Ver crecidas-litoral/LEEME.md.
+# PARA INSTALARLO: copiar este archivo a .github/workflows/crecidas-litoral.yml (viene como .txt porque el token de pc-nanci no tiene el
+# permiso «workflow», igual que precocido, gremlin, rayos-hora y granizo-archivo).
+# APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo CRECIDAS_LITORAL_ON vale «si». A mano (Run workflow) corre en SECO
+# por defecto (escribe en una carpeta del runner y no toca R2).
+# CADA 3 HORAS, PERO SÓLO TRABAJA SI CAMBIÓ ALGO: litoral.py compara la firma (alturas medidas + pronósticos + versión del método) con la
+# del índice publicado; igual firma el mismo día → no genera ni sube. Así «cuando cambia un pronóstico» sale barato (13 pedidos chicos).
+# Secrets (por nombre): R2_OPERA_CUENTA, R2_OPERA_ACCESS_KEY_ID, R2_OPERA_SECRET_ACCESS_KEY (el token del depósito público, el mismo del
+# precocido satelital) y EARTHDATA_TOKEN (el de IMERG). Las alturas y pronósticos salen de la function PÚBLICA del sitio: sin base de datos.
+# El registro de Actions es PÚBLICO: se imprimen sólo cantidades y categorías.
+name: colector-crecidas-litoral
+on:
+  schedule:
+    - cron: '23 */3 * * *'
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco = genera y «sube» a una carpeta del runner (no toca R2) · real = sube al depósito público'
+        type: choice
+        options: [seco, real]
+        default: seco
+      forzar:
+        description: 'si = genera aunque la firma no haya cambiado'
+        type: choice
+        options: ['no', 'si']
+        default: 'no'
+permissions:
+  contents: read
+concurrency:
+  group: colector-crecidas-litoral
+  cancel-in-progress: false
+jobs:
+  colectar:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.CRECIDAS_LITORAL_ON == 'si' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            rayos-hora/lib
+            crecidas-litoral
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias
+        run: python -m pip install --quiet numpy pillow rasterio scipy
+      - name: Caché de OPERA (los WTR ya bajados no se vuelven a pedir)
+        uses: actions/cache@v4
+        with:
+          path: _opera
+          key: opera-litoral-${{ github.run_id }}
+          restore-keys: opera-litoral-
+      - name: Armar las teselas
+        env:
+          CRECIDAS_LITORAL_ON: ${{ github.event_name == 'workflow_dispatch' && 'si' || vars.CRECIDAS_LITORAL_ON }}
+          LITORAL_SALIDA: ${{ runner.temp }}/litoral-salida
+          LITORAL_TRABAJO: ${{ runner.temp }}/litoral-trabajo
+          LITORAL_OPERA_CACHE: _opera
+          LITORAL_FORZAR: ${{ github.event_name == 'workflow_dispatch' && inputs.forzar || 'no' }}
+          EARTHDATA_TOKEN: ${{ secrets.EARTHDATA_TOKEN }}
+        run: python -I crecidas-litoral/litoral.py
+      - name: Subir (primero las teselas, después el índice; borrado diferido)
+        env:
+          CRECIDAS_LITORAL_ON: ${{ github.event_name == 'workflow_dispatch' && 'si' || vars.CRECIDAS_LITORAL_ON }}
+          MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
+          LITORAL_SALIDA: ${{ runner.temp }}/litoral-salida
+          LITORAL_CARPETA: ${{ runner.temp }}/litoral-deposito-seco
+          PRECOCIDO_DEPOSITO: ${{ vars.PRECOCIDO_DEPOSITO || 'satchi-slider' }}
+          R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
+          R2_OPERA_ACCESS_KEY_ID: ${{ secrets.R2_OPERA_ACCESS_KEY_ID }}
+          R2_OPERA_SECRET_ACCESS_KEY: ${{ secrets.R2_OPERA_SECRET_ACCESS_KEY }}
+        run: node crecidas-litoral/subir.mjs
+      - name: Recortar la caché de OPERA (más de 45 días, afuera)
+        if: always()
+        run: find _opera -type f -mtime +45 -delete 2>/dev/null || true
