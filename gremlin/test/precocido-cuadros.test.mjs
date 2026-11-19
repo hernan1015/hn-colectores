@@ -84,7 +84,10 @@ test('real: el cuadro entero (z4 y z5) y las metateselas (z6) de GREMLIN, píxel
   const cj = P.cajaCuadro('gremlin', 5), img = await crudo(c5);
   assert.deepEqual([img.w, img.h], [(cj.x1 - cj.x0 + 1) * 256, (cj.y1 - cj.y0 + 1) * 256]);
   for (const [x, y] of [P.teselasDe('gremlin', 5)[0], [10, 18], P.teselasDe('gremlin', 5).at(-1)]) {
-    const png = SS.decodificarPng(fs.readFileSync(path.join(dir, 'slider/gremlin', t, '5', String(x), y + '.png')));
+    /* [decisión 7] ya no hay PNG sueltas: la tesela de referencia es la reproyección del relevo, con las mismas nativas */
+    const nd = SS.nativasDe('gremlin', 5, x, y), mm = new Map();
+    for (const q of nd.lista) { const resp = await s.fetchFn('https://slider.cira.colostate.edu/' + SS.rutaNativa('gremlin', t, nd.zs, q.f, q.c)); mm.set(q.f + '_' + q.c, SS.decodificarPng(Buffer.from(await resp.arrayBuffer()))); }
+    const png = SS.reproyectar('gremlin', t, 5, x, y, mm);
     for (const j of [0, 77, 255]) for (const i of [0, 130, 255]) {
       const a = (j * 256 + i) * 4, b = (((y - cj.y0) * 256 + j) * img.w + (x - cj.x0) * 256 + i) * 4;
       assert.deepEqual([...img.px.subarray(b, b + 4)], [...png.rgba.subarray(a, a + 4)], `z5 ${x}/${y} píxel ${i},${j}`);
@@ -207,6 +210,21 @@ test('[Codex n3-r79b-colector · 2] el ritmo se comprueba al ARRANCAR: con los t
   await correr({ almacen: ALM.almacenCarpeta(carpetaTemporal()), fetchFn, pausaMs: PAUSA, reloj: () => t, esperar });
   assert.ok(inicios.length > 20);
   for (let i = 1; i < inicios.length; i++) assert.ok(inicios[i] - inicios[i - 1] >= PAUSA, 'pedido ' + i + ': ' + (inicios[i] - inicios[i - 1]) + ' ms');
+});
+
+test('[decisión 7 del maker] con los cuadros NO se escriben las teselas PNG z3-z5: el índice lo dice (png: false) y z3-z5 sale del cuadro', async () => {
+  const dir = carpetaTemporal(), s = sliderFalso({ tiempos: T.slice(-1) }), t = T.at(-1), alm = ALM.almacenCarpeta(dir), puts = [];
+  const r = await correr({ almacen: { ...alm, escribir: (k, b, o) => { puts.push(k); return alm.escribir(k, b, o); } }, fetchFn: s.fetchFn });
+  assert.equal(archivos(dir, '.png').length, 0, 'ni una PNG suelta'); assert.ok(puts.every((k) => !k.endsWith('.png')));
+  assert.equal(r.teselas, 0); assert.equal(r.teselas_en_cuadro, 106); assert.equal(r.cuadros, 2); assert.equal(r.completos, 1);
+  const ind = leerIndice(dir, 'gremlin'); assert.equal(ind.png, false); assert.deepEqual(ind.cuadro.z, [4, 5]);
+  assert.equal(ind.tiempos[t].estado, 'completo'); assert.equal(ind.tiempos[t].n, 106); assert.deepEqual(ind.tiempos[t].c, [4, 5]);
+  /* las escrituras por tiempo: 2 cuadros + las metateselas + el índice (antes, además, 106 PNG) */
+  assert.equal(puts.length, 2 + metasGremlin + 1);
+  /* sin la llave, como en la r77: las 106 PNG y png: true */
+  const d2 = carpetaTemporal();
+  await correr({ almacen: ALM.almacenCarpeta(d2), fetchFn: sliderFalso({ tiempos: T.slice(-1) }).fetchFn, cuadros: false, codificarWebp: null });
+  assert.equal(archivos(d2, '.png').length, 106); assert.equal(leerIndice(d2, 'gremlin').png, true);
 });
 
 test('la llave apagada (cuadros: false): ni un WebP, el índice sin «cuadro» ni «meta», y el script lo apaga con PRECOCIDO_CUADROS=no', async () => {

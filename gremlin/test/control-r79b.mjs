@@ -2,7 +2,7 @@
 // temporal fuera del repo) corre test/precocido-cuadros.test.mjs, y TIENEN que fallar los dos tests de lo que pidió Codex:
 //   · «una nativa que falta…» (el índice no decía cuáles metateselas faltan y el tiempo quedaba «completo»);
 //   · «el ritmo se comprueba al ARRANCAR…» (el limitador sólo miraba al reservar el turno).
-// Correr: node test/control-r79b.mjs [sha]  (dentro de gremlin/)
+// Correr: node test/control-r79b.mjs [sha] [regex de los tests que TIENEN que fallar …]  (dentro de gremlin/)
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,7 +24,7 @@ fs.rmSync(dir, { recursive: true, force: true });
 const fallan = (r.stdout.match(/^✖ .*$/gm) || []).filter((l) => !/failing tests/.test(l)).map((l) => l.replace(/ \(\d.*$/, ''));
 const unicos = [...new Set(fallan)];
 console.log(`con la lib de ${SHA} fallan ${unicos.length}:\n  ` + unicos.join('\n  '));
-const deben = [/una nativa que falta/, /el ritmo se comprueba al ARRANCAR/];
+const deben = process.argv[3] ? process.argv.slice(3).map((x) => new RegExp(x)) : [/una nativa que falta/, /el ritmo se comprueba al ARRANCAR/];
 const ok = deben.every((re) => unicos.some((l) => re.test(l)));
-console.log(ok ? 'CONTROL OK: los dos tests de Codex fallan con la sha anterior' : 'CONTROL MAL: alguno pasa con la sha anterior');
+console.log(ok ? 'CONTROL OK: los tests pedidos fallan con ' + SHA : 'CONTROL MAL: alguno pasa con ' + SHA);
 process.exit(ok ? 0 : 1);

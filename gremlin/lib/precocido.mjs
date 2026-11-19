@@ -45,6 +45,10 @@
 //   LA LLAVE: `cuadros` (en el script, PRECOCIDO_CUADROS; «no» la apaga y el colector queda exactamente como en la r77). Con la llave
 //   prendida, las nativas de SLIDER se piden de a EN_VUELO_SLIDER (3) a la vez, con el mismo ritmo de cortesía: una por PAUSA_MS como
 //   máximo (1 s), contadas desde el comienzo de cada pedido; así un tiempo de los tres productos (~180 nativas) entra en la corrida.
+//   [r79 · decisión 7 del maker, 19/11 14:25] CON LOS CUADROS, LAS TESELAS PNG z3-z5 DE LA r77 YA NO SE ESCRIBEN (el costo de R2 en la capa
+//   gratuita): z3-z5 vienen del cuadro entero. El índice lo dice (`png: false` en la cabecera) y el relevo de hn-agro, con eso, no las busca
+//   en el depósito ni las ofrece a la página: el respaldo de una tesela suelta va al relevo (CIRA), como antes de la r77. Se siguen
+//   reproyectando (el cuadro sale de ellas y una que falla deja el tiempo incompleto). Sin la llave, como en la r77 (`png: true`).
 //   El WebP lo arma `codificarWebp(rgba, w, h, etiqueta, producto)`, que viene de afuera (gremlin/webp.mjs, con sharp): esta lib no tiene
 //   dependencias.
 import { crc32 } from './slider.mjs';
@@ -280,7 +284,7 @@ export function planTiempo(prod, t, zMin = Z_MIN, zMax = Z_MAX) {
 }
 
 const cabecera = (prod, conCuadros) => Object.assign({
-  v: 1, producto: prod, titulo: PRODUCTOS[prod].titulo, z_min: Z_MIN, z_max: Z_MAX, tesela_px: TESELA, recorte: { ...RECORTE },
+  v: 1, producto: prod, png: !conCuadros,   // [r79 · decisión 7] con los cuadros, sin teselas PNG sueltas titulo: PRODUCTOS[prod].titulo, z_min: Z_MIN, z_max: Z_MAX, tesela_px: TESELA, recorte: { ...RECORTE },
   ruta: `${RAIZ}/${prod}/{tiempo}/{z}/{x}/{y}.png`,
   cita: prod === 'gremlin' ? CITA_GREMLIN + ' · ' + CITA : CITA,
   nota: 'Teselas de Leaflet reproyectadas desde CIRA/RAMMB SLIDER con la misma cuenta que el relevo de SATCHI. Una tesela que falta no es «despejado»: es sin dato.',
@@ -436,11 +440,12 @@ export async function correr({
     const transparente = codificarPng(TESELA, TESELA, new Uint8Array(TESELA * TESELA * 4));
     const aEscribir = [], rgbaDe = new Map(), malZ = new Set();
     for (const s of plan.teselas) {
-      if (s.noche) { aEscribir.push({ s, png: transparente }); res.teselas_noche++; continue; }
+      if (s.noche) { if (!cuadros) aEscribir.push({ s, png: transparente }); res.teselas_noche++; continue; }   // [decisión 7] con los cuadros, sin PNG
       const m = new Map(s.nat.map((k) => [k.slice(k.indexOf(':') + 1), imgs.get(k)]));
       const rp = reproyectar(prod, t, s.z, s.x, s.y, m);
       if (rp.faltan > 0) { faltan++; malZ.add(s.z); continue; }   // a un píxel le faltó su nativa: NO se escribe (la regla de la _v1829)
       if (cuadros && Z_CUADRO.indexOf(s.z) >= 0) rgbaDe.set(s.z + '/' + s.x + '/' + s.y, rp.rgba);
+      if (cuadros) { res.teselas_en_cuadro = (res.teselas_en_cuadro || 0) + 1; continue; }   // [decisión 7] va dentro del cuadro entero, no como PNG suelta
       aEscribir.push({ s, png: codificarPng(TESELA, TESELA, rp.rgba) });
     }
     let fallidas = 0;
@@ -522,7 +527,7 @@ export async function correr({
     /* [Codex n3-r79b-colector · 1] con la llave de los cuadros, «completo» exige también los cuadros y TODAS las metateselas */
     const todoCuadros = !cuadros || (cEsc && Z_CUADRO.every((z) => cEsc.indexOf(z) >= 0) && mInfo && mInfo.faltan === 0);
     const estado = faltan === 0 && todoCuadros ? 'completo' : 'incompleto', previo = e.ind.tiempos[t];
-    e.ind.tiempos[t] = { estado, n: escritas, faltan, intentos: (previo?.intentos || 0) + 1, z: [Z_MIN, zM], ...(cuadros ? { c: cEsc || [], m: mInfo || { n: 0, faltan: 0, faltantes: [], vacias: [], noche: false } } : {}) };
+    e.ind.tiempos[t] = { estado, n: cuadros ? plan.teselas.length - faltan : escritas, faltan, intentos: (previo?.intentos || 0) + 1, z: [Z_MIN, zM], ...(cuadros ? { c: cEsc || [], m: mInfo || { n: 0, faltan: 0, faltantes: [], vacias: [], noche: false } } : {}) };
     e.ind.actualizado = new Date(ahoraMs).toISOString();
     if (!(await escribirR(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE }))) {   // después de las teselas
       res.indices_fallidos++; noBorrar = true; continue;   // [reintento] el índice no quedó: en esta corrida no se borra nada

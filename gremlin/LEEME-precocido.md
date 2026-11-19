@@ -97,3 +97,7 @@ slider/{producto}/{tiempo}/m/{z}/{mx}/{my}.webp   metateselas de 1024 px (4 × 4
 **Probar sin R2:** como siempre, con `PUBLICO_CARPETA`. **Rollback:** `PRECOCIDO_CUADROS=no` (el colector queda exactamente como en la r77).
 
 **Tests:** `node --test test/precocido-cuadros.test.mjs` (13) y el control `node test/control-cuadros.mjs` (mutantes en una carpeta temporal fuera del repo).
+
+## r79 · decisión 7 del maker: con los cuadros, sin PNG sueltas
+
+Con `PRECOCIDO_CUADROS` prendido **ya no se escriben las teselas PNG z3-z5** de la r77: z3-z5 salen del cuadro entero. El índice lo dice (`png: false`) y el relevo de hn-agro (`912f4003` en adelante: `938beb3c`) no las ofrece a la página ni las busca en el depósito; el respaldo de una tesela suelta va a CIRA, como antes de la r77. **Hay que publicar hn-agro antes de prender el colector así.** Escrituras: ~0,3 M por mes (antes, con las PNG, ~1,65 M).

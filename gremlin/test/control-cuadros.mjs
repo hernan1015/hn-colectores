@@ -28,6 +28,8 @@ const MUTANTES = [
   ['[Codex · 1] las faltantes sin sus coordenadas', F, "else if (estado === 'mal') { mFal++; res.metas_faltantes++; faltantes.push(z + '/' + mx + '/' + my); }", "else if (estado === 'mal') { mFal++; res.metas_faltantes++; }"],
   ['[Codex · 1] «completo» con metateselas faltantes', F, 'const estado = faltan === 0 && todoCuadros ?', 'const estado = faltan === 0 ?'],
   ['[Codex · 2] el ritmo sin volver a mirar al arrancar', F, 'if (falta <= 0) { ultimoInicio = a; return; } await esperar(falta);', 'ultimoInicio = Math.max(a, ultimoInicio + pausaMs); if (falta > 0) await esperar(falta); return;'],
+  ['[decisión 7] con los cuadros se escriben las PNG igual', F, "      if (cuadros) { res.teselas_en_cuadro = (res.teselas_en_cuadro || 0) + 1; continue; }", "      if (cuadros) { res.teselas_en_cuadro = (res.teselas_en_cuadro || 0) + 1; }"],
+  ['[decisión 7] el índice dice png: true sin PNG', F, 'v: 1, producto: prod, png: !conCuadros,', 'v: 1, producto: prod, png: true,'],
   ['la cabecera sin la cobertura', F, 'cobertura: Object.fromEntries((Z_META[prod] || []).map((z) => [z, coberturaMeta(prod, z)])) },', 'cobertura: {} },'],
 ];
 function correrCon(nombre, archivo, viejo, nuevo) {
