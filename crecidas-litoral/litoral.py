@@ -6,7 +6,7 @@ Fuentes (sin base de datos: todo público, salvo OPERA que usa EARTHDATA_TOKEN):
   · las alturas MEDIDAS (30 días, Prefectura vía INA) y el PRONÓSTICO (p50) de cada zona: la function pública del sitio,
     {HN_SITIO}/.netlify/functions/satchi-publico?que=calado&zona=<zona> (la misma que lee SATCHI);
   · el agua vista: OPERA DSWx-S1 (WTR, 30 m) por CMR/Earthdata, con caché en disco (LITORAL_OPERA_CACHE, <GranuleUR>/<archivo>.tif).
-Fechas: desde 29 días antes de la última medida hasta el último día de pronóstico (~44-45 fechas).
+Fechas: desde 29 días antes de la última medida hasta el último día en que al menos la mitad de las zonas tiene altura (~44-45 fechas).
 SIN CAMBIOS → NO HACE NADA: la firma (alturas + pronósticos + versión del método) se compara con la del índice publicado
 ({HN_LITORAL_PUBLICO}/indice.json). Igual firma y mismo día → no genera (LITORAL_FORZAR=si lo fuerza). Así se puede disparar seguido barato.
 Variables: CRECIDAS_LITORAL_ON (sólo «si»), LITORAL_SALIDA (carpeta de salida), LITORAL_TRABAJO, LITORAL_OPERA_CACHE, EARTHDATA_TOKEN,
@@ -15,7 +15,7 @@ Uso: python -I litoral.py"""
 import datetime, hashlib, json, os, sys, time, urllib.error, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-METODO_V = 'r79c-2'   # sube si cambia el método (marcas, fusión, paleta): obliga a regenerar
+METODO_V = 'r79c-3'   # sube si cambia el método (marcas, fusión, paleta): obliga a regenerar
 ZONAS = ['corrientes', 'bellavista', 'reconquista', 'goya', 'esquina', 'lapaz', 'santotome', 'alvear', 'libres', 'caseros', 'concordia', 'colon', 'cdeluruguay']
 CMR = 'https://cmr.earthdata.nasa.gov/search/granules.umm_json?collection_concept_id=C2949811996-POCLOUD&page_size=200'
 UA = 'hn-agro-colector-litoral/1'
@@ -52,7 +52,10 @@ def fechas_de(alt):
     todas = sorted({f for a in alt.values() for f in a})
     if not med or not todas: return []
     ult = max(med); d0 = (datetime.date.fromisoformat(ult) - datetime.timedelta(days=29)).isoformat()
-    return [f for f in todas if f >= d0]
+    # el final: el último día en que al menos la mitad de las zonas tiene altura (un puerto con 31 días de pronóstico no estira el
+    # Litoral a fechas donde casi todo iría rayado «sin dato»)
+    n = len(alt); fin = max([f for f in todas if sum(1 for a in alt.values() if f in a) * 2 >= n] or [ult])
+    return [f for f in todas if d0 <= f <= fin]
 
 
 def firma_de(alt, fechas):

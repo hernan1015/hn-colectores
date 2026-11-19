@@ -23,6 +23,11 @@ class Litoral(unittest.TestCase):
         f1 = L.firma_de(alt, f); alt['lapaz']['2026-11-19']['h'] = 6.31
         self.assertNotEqual(f1, L.firma_de(alt, f), 'un pronóstico que cambia cambia la firma')
 
+    def test_fin_con_la_mitad(self):
+        alt = {'a': {'2026-11-18': {'h': 1, 'tipo': 'medido'}, '2026-11-19': {'h': 1, 'tipo': 'pronostico'}, '2026-12-19': {'h': 1, 'tipo': 'pronostico'}},
+               'b': {'2026-11-18': {'h': 1, 'tipo': 'medido'}, '2026-11-19': {'h': 1, 'tipo': 'pronostico'}}, 'c': {'2026-11-18': {'h': 1, 'tipo': 'medido'}}}
+        self.assertEqual(L.fechas_de(alt)[-1], '2026-11-19', 'un solo puerto con pronóstico largo no estira el Litoral')
+
     def test_llave_apagada(self):
         self.assertEqual(L.main({'CRECIDAS_LITORAL_ON': 'no'}), 0)
 
