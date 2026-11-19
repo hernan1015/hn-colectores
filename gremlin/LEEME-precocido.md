@@ -19,9 +19,16 @@ slider/{producto}/indice.json                 { v, producto, z_min, z_max, recor
 - **El orden:** primero las teselas y después el índice. Al borrar, al revés: primero el índice y después las teselas.
 - **Del más nuevo al más viejo**, intercalando productos: la película arranca por el último cuadro.
 - **El visible de noche:** la tesela entera sin sol se escribe transparente, sin pedir nativas.
-- **Retención:** `RETENCION_H`, 6 h por defecto (de 1 a 24). Lo vencido sale del índice y sus teselas se borran sin listar, porque las claves salen de la geometría. El DELETE de R2 es gratis. Si el reloj está más de 1 día adelante de SLIDER, no se borra nada.
+- **Retención:** `RETENCION_H`, 6 h por defecto (de 1 a 24), medida contra SLIDER, es decir, contra el tiempo más nuevo de `latest_times`, no contra el reloj. Si el reloj y SLIDER difieren en más de 1 h, no se borra nada.
+- **El borrado es diferido** (revisión de Codex n3-r77-colector):
+  - Un tiempo vencido sale del índice y pasa a `borrar` como `{ t, salio }`.
+  - Sus teselas se borran recién en una corrida posterior, a más de 5 min. Así cubre el max-age del índice (30 s), la memoria del relevo (60 s) y un margen.
+  - `tiempos` y `borrar` tienen que ser disjuntos, y `borrar` sólo acepta tiempos con forma válida y vencidos según SLIDER.
+  - Si el índice no valida, no se borra nada.
+  - Las claves salen de la geometría, sin listar. El DELETE de R2 es gratis.
+- **La hora en el PNG:** cada tesela lleva un chunk `tEXt` `hn-slider` = `producto/tiempo/z/x/y`. El relevo sirve una tesela del depósito sólo si la etiqueta es exactamente la pedida y el tiempo está en `latest_times`.
 - **Cortesía:** UA `hn-colector/1.0`, 1 s entre pedidos y un tope por corrida (`TOPE`, 120 por defecto, de 20 a 400). Un 429 o un 403 cortan la corrida, y también 3 fallas seguidas.
-- **El registro de Actions es público:** sólo se imprimen cantidades.
+- **El registro de Actions es público:** sólo se imprimen cantidades. Un error sale como una categoría fija (`error:almacen`, `error:red` o `error:interno`) y, si lo hay, el código HTTP numérico. Nunca sale el mensaje.
 
 ## Probar sin R2 (la llave seca)
 
@@ -34,8 +41,8 @@ PRECOCIDO_ON=si MODO=seco PUBLICO_CARPETA=/una/carpeta node gremlin/precocido.mj
 
 ```
 cd gremlin
-node --test test/precocido.test.mjs     # 16 tests, sin red
-node test/control-precocido.mjs         # control negativo contado (mutantes)
+node --test test/precocido.test.mjs     # 20 tests, sin red
+node test/control-precocido.mjs         # control negativo contado (mutantes), en una carpeta temporal fuera del repo
 ```
 
 ## Para activarlo (lo decide el maker)

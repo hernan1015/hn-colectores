@@ -11,10 +11,16 @@
 // relevo, al no encontrarla, van a CIRA como hoy); el tiempo queda «incompleto» con la cantidad que falta, y se reintenta.
 // EL ORDEN DE LAS ESCRITURAS: primero las teselas, después el índice (el índice nunca nombra un tiempo cuyas teselas no estén). Al borrar,
 // al revés: primero el índice (el tiempo deja de figurar), después las teselas.
-// LA RETENCIÓN: RETENCION_H (6 h por defecto; de 1 a 24). Lo más viejo sale del índice y se borra (DELETE de R2 es gratis), con un tope
-// por corrida; lo que no se llegó a borrar queda en `borrar` del índice para la próxima. Si el reloj está más de 1 día adelante de SLIDER,
-// no se borra nada.
+// LA RETENCIÓN: RETENCION_H (6 h por defecto; de 1 a 24), medida contra SLIDER (el tiempo más nuevo de latest_times), no contra el reloj.
+// [Codex n3-r77-colector · 1 y 2] EL BORRADO ES DIFERIDO: un tiempo vencido sale del índice y pasa a `borrar` con la hora en que salió;
+// sus teselas se borran recién en una corrida POSTERIOR, a más de ESPERA_BORRADO_MS (5 min: el max-age del índice, 30 s, la memoria del
+// relevo, 60 s, y margen). `tiempos` y `borrar` tienen que ser disjuntos; `borrar` sólo acepta tiempos con forma válida, que ya
+// salieron del índice y que están vencidos según SLIDER. Si el índice no valida, o el reloj y SLIDER difieren en más de 1 h, NO SE BORRA
+// NADA. DELETE de R2 es gratis; con un tope por corrida, lo que no se llegó a borrar queda para la próxima.
+// [Codex n3-r77 pelicula · 3] LA HORA EN EL PNG: cada tesela lleva un chunk tEXt «hn-slider» = «producto/tiempo/z/x/y»; el relevo de hn-agro
+// sirve una tesela del depósito sólo si su etiqueta es exactamente la pedida (un PNG íntegro de otra hora o de otro lugar no pasa).
 // El almacén (R2 o carpeta) y fetch vienen de afuera, para probar sin red. Se imprimen SÓLO CANTIDADES (el registro de Actions es público).
+import { crc32 } from './slider.mjs';
 import {
   PRODUCTOS, RECORTE, TESELA, TESELA_SLIDER, CITA, CITA_GREMLIN, UA as UA_RELEVO,
   rutaTiempos, rutaNativa, normalizarTiempos, tiempoMs, validarTesela, nativasDe, enteraDeNoche, reproyectar, codificarPng,
@@ -32,7 +38,26 @@ export const PAUSA_MS = 1000;
 export const MAX_INTENTOS = 4;
 export const FALLAS_SEGUIDAS_CORTE = 3;
 export const TOPE_BORRADOS = 3000, PARALELO = 8, PARALELO_ESCRITURA = 8;
-export const ADELANTO_MAX_MS = 86400000;
+export const DESFASE_MAX_MS = 3600e3;      // [Codex · 2] reloj contra SLIDER: más de 1 h de diferencia, no se borra nada
+export const ESPERA_BORRADO_MS = 5 * 60e3;  // [Codex · 1] lo que salió del índice se borra recién en una corrida posterior
+export const CLAVE_ETIQUETA = 'hn-slider';
+/** la etiqueta de una tesela (la que lleva su PNG en tEXt) */
+export const etiqueta = (prod, t, z, x, y) => prod + '/' + t + '/' + z + '/' + x + '/' + y;
+/** PNG + un chunk tEXt «hn-slider» con la etiqueta, después del IHDR (ancillary: el PNG sigue siendo el mismo para cualquier lector) */
+export function conEtiqueta(png, texto) {
+  const datos = Buffer.from(CLAVE_ETIQUETA + '\0' + texto, 'latin1');
+  const t = Buffer.concat([Buffer.from('tEXt', 'latin1'), datos]);
+  const l = Buffer.alloc(4); l.writeUInt32BE(datos.length);
+  const c = Buffer.alloc(4); c.writeUInt32BE(crc32(t));
+  const b = Buffer.from(png), finIhdr = 8 + 12 + 13;
+  return Buffer.concat([b.subarray(0, finIhdr), l, t, c, b.subarray(finIhdr)]);
+}
+/** [Codex · 3] el error, en una CATEGORÍA FIJA y un código HTTP numérico si lo hay: nunca el mensaje (el registro de Actions es público) */
+export function categoriaError(e) {
+  const m = String((e && e.message) || ''), http = /\bHTTP (\d{3})\b/.exec(m);
+  const cat = /^R2 |almac/i.test(m) || (e && e.almacen) ? 'error:almacen' : e && (e.name === 'AbortError' || e.name === 'TimeoutError' || e.name === 'TypeError') ? 'error:red' : 'error:interno';
+  return cat + (http ? ' http ' + http[1] : '');
+}
 export const CACHE_TESELA = 'public, max-age=86400, immutable';
 export const CACHE_INDICE = 'public, max-age=30';
 const HORA = 3600000;
@@ -90,10 +115,22 @@ const leerJSON = async (almacen, clave) => {
   const b = await almacen.leer(clave); if (!b) return null;
   try { return JSON.parse(b.toString('utf8')); } catch { return null; }
 };
-/** el índice leído, si tiene la forma; si no, uno nuevo (un índice roto no se usa para borrar: `roto`) */
-function indiceDe(j, prod) {
-  if (j && j.v === 1 && j.producto === prod && j.tiempos && typeof j.tiempos === 'object' && Array.isArray(j.borrar || [])) return { ind: { ...cabecera(prod), tiempos: { ...j.tiempos }, borrar: [...(j.borrar || [])] }, roto: false };
-  return { ind: { ...cabecera(prod), tiempos: {}, borrar: [] }, roto: j != null };
+const RE_T = /^20\d{12}$/;
+/** [Codex · 1 y 2] el índice leído, VALIDADO: tiempos con forma, `borrar` = [{ t, salio }] con forma, y los dos disjuntos. Si no valida,
+ *  se arma uno nuevo y `roto` = true: con un índice roto no se borra nada. */
+export function indiceDe(j, prod) {
+  const nuevo = { ind: { ...cabecera(prod), tiempos: {}, borrar: [] }, roto: j != null };
+  if (!j || j.v !== 1 || j.producto !== prod || !j.tiempos || typeof j.tiempos !== 'object' || Array.isArray(j.tiempos)) return nuevo;
+  const borrar = j.borrar === undefined ? [] : j.borrar;
+  if (!Array.isArray(borrar)) return nuevo;
+  for (const [t, q] of Object.entries(j.tiempos)) if (!RE_T.test(t) || !Number.isFinite(tiempoMs(t)) || !q || typeof q !== 'object') return nuevo;
+  const vistos = new Set();
+  for (const b of borrar) {
+    if (!b || typeof b !== 'object' || !RE_T.test(String(b.t)) || !Number.isFinite(tiempoMs(b.t)) || !Number.isFinite(b.salio)) return nuevo;
+    if (vistos.has(b.t) || Object.prototype.hasOwnProperty.call(j.tiempos, b.t)) return nuevo;   // disjuntos, sin repetidos
+    vistos.add(b.t);
+  }
+  return { ind: { ...cabecera(prod), tiempos: { ...j.tiempos }, borrar: borrar.map((b) => ({ t: String(b.t), salio: b.salio })) }, roto: false };
 }
 async function enParalelo(lista, n, fn) {
   const out = new Array(lista.length); let i = 0;
@@ -148,11 +185,13 @@ export async function correr({
     est[prod] = { tiempos, ...indiceDe(await leerJSON(almacen, claveIndice(prod)), prod) };
   }
   // 2) qué falta: dentro de la retención, sin completar y sin agotar los intentos; del más nuevo al más viejo, intercalando productos
-  const desde = ahoraMs - ret * HORA, cola = [];
+  // [Codex · 2] la retención se mide contra SLIDER (el más nuevo de latest_times); el reloj sólo sirve si coincide (± 1 h)
+  const refOk = Number.isFinite(masNuevoMs) && Math.abs(ahoraMs - masNuevoMs) <= DESFASE_MAX_MS;
+  const desde = (Number.isFinite(masNuevoMs) ? masNuevoMs : ahoraMs) - ret * HORA, cola = [];
   for (const [prod, e] of Object.entries(est)) for (const t of e.tiempos) {
     const ms = tiempoMs(t); if (ms < desde || ms > ahoraMs + 15 * 60000) continue;
     const q = e.ind.tiempos[t]; if (q && (q.estado === 'completo' || (q.intentos || 0) >= MAX_INTENTOS)) continue;
-    if (e.ind.borrar.includes(t)) continue;
+    if (e.ind.borrar.some((b) => b.t === t)) continue;
     cola.push({ prod, t, ms });
   }
   cola.sort((a, b) => b.ms - a.ms || productos.indexOf(a.prod) - productos.indexOf(b.prod));
@@ -188,8 +227,9 @@ export async function correr({
       aEscribir.push({ s, png: codificarPng(TESELA, TESELA, rp.rgba) });
     }
     await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {
-      await almacen.escribir(claveTesela(prod, t, s.z, s.x, s.y), png, { tipo: 'image/png', cache: CACHE_TESELA });
-      escritas++; res.bytes += png.length;
+      const b = conEtiqueta(png, etiqueta(prod, t, s.z, s.x, s.y));   // [Codex · 3] la hora y el lugar, dentro del PNG
+      await almacen.escribir(claveTesela(prod, t, s.z, s.x, s.y), b, { tipo: 'image/png', cache: CACHE_TESELA });
+      escritas++; res.bytes += b.length;
     });
     res.teselas += escritas; res.teselas_faltantes += faltan;
     const estado = faltan === 0 ? 'completo' : 'incompleto', previo = e.ind.tiempos[t];
@@ -199,28 +239,31 @@ export async function correr({
     res.guardados++; if (estado === 'completo') res.completos++; else res.incompletos++;
   }
 
-  // 4) la retención: primero el índice (el tiempo deja de figurar), después las teselas; nunca con el reloj adelantado
-  if (!Number.isFinite(masNuevoMs) || ahoraMs - masNuevoMs > ADELANTO_MAX_MS) {
-    log('precocido · retención: el reloj no coincide con SLIDER (o no hay tiempos); no borro nada');
+  // 4) la retención, DIFERIDA y contra SLIDER: (a) se borran las teselas de lo que salió del índice en una corrida anterior (hace más de
+  //    ESPERA_BORRADO_MS), vencido según SLIDER; (b) lo que vence ahora sale del índice (y se borra en la próxima). Con el reloj lejos de
+  //    SLIDER (más de 1 h), o un índice que no valida, no se borra nada.
+  if (!refOk) {
+    log('precocido · retención: el reloj y SLIDER no coinciden (más de 1 h), o no hay tiempos; no borro nada');
   } else {
     let presupuesto = TOPE_BORRADOS, fallas = 0;
     for (const [prod, e] of Object.entries(est)) {
-      if (e.roto) { log(`precocido · retención: el índice de ${prod} no tiene la forma; no borro nada de ${prod}`); continue; }
-      const viejos = Object.keys(e.ind.tiempos).filter((t) => !(tiempoMs(t) >= desde));
-      if (viejos.length) {
-        viejos.forEach((t) => { delete e.ind.tiempos[t]; if (!e.ind.borrar.includes(t)) e.ind.borrar.push(t); });
-        res.sacados += viejos.length;
-        await almacen.escribir(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE });
-      }
+      if (e.roto) { log(`precocido · retención: el índice de ${prod} no valida; no borro nada de ${prod}`); continue; }
       let cambio = false;
-      for (const t of [...e.ind.borrar]) {
-        const claves = clavesTiempo(prod, t, Z_MIN, Math.max(zM, Number(e.ind.z_max) || Z_MAX));
+      for (const q of [...e.ind.borrar]) {
+        if (!(ahoraMs - q.salio > ESPERA_BORRADO_MS)) continue;              // salió hace poco: todavía puede haber un índice viejo en caché
+        if (!(tiempoMs(q.t) < desde) || e.ind.tiempos[q.t]) continue;        // sólo lo vencido según SLIDER y fuera del índice
+        const claves = clavesTiempo(prod, q.t, Z_MIN, Math.max(zM, Number(e.ind.z_max) || Z_MAX));
         if (claves.length > presupuesto) break;
         const r = await enParalelo(claves, PARALELO, (k) => almacen.borrar(k).then(() => true, () => false));
         const mal = r.filter((x) => !x).length;
         presupuesto -= claves.length; res.borrados += claves.length - mal;
         if (mal) { fallas += mal; continue; }   // queda en `borrar`: la próxima vuelve a probar
-        e.ind.borrar = e.ind.borrar.filter((x) => x !== t); cambio = true;
+        e.ind.borrar = e.ind.borrar.filter((x) => x.t !== q.t); cambio = true;
+      }
+      const viejos = Object.keys(e.ind.tiempos).filter((t) => !(tiempoMs(t) >= desde));
+      if (viejos.length) {
+        viejos.forEach((t) => { delete e.ind.tiempos[t]; if (!e.ind.borrar.some((x) => x.t === t)) e.ind.borrar.push({ t, salio: ahoraMs }); });
+        res.sacados += viejos.length; cambio = true;
       }
       if (cambio) await almacen.escribir(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE });
     }
@@ -228,6 +271,6 @@ export async function correr({
   }
   if (cortar) { res.estado = 'cortada'; }
   log(`precocido: ${res.pedidos} pedidos (${res.nativas} nativas, ${res.nativas_malas} malas) · ${res.pendientes} pendientes · ${res.guardados} tiempos guardados (${res.completos} completos, ${res.incompletos} incompletos) · ${res.teselas} teselas (${res.teselas_noche} de noche, ${res.teselas_faltantes} sin escribir) · ${(res.bytes / 1e6).toFixed(2)} MB · ${res.sacados} tiempos vencidos · ${res.borrados} borradas${cortar ? ' · CORTADA: ' + cortar : ''}`);
-  if (res.estado === 'borrado-con-fallas') throw new Error('R2 borrar: hubo fallas (quedan en el índice para la próxima)');
+  if (res.estado === 'borrado-con-fallas') { const e = new Error('R2 borrar: hubo fallas'); e.almacen = true; throw e; }
   return res;
 }

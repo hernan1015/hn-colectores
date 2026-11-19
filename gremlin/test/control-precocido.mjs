@@ -1,6 +1,7 @@
 // [r77] Control negativo CONTADO de test/precocido.test.mjs: rompe una cosa por vez en una copia de lib/ y exige rojo.
 // Antes corre la copia SIN romper (tiene que pasar entera). Correr: node test/control-precocido.mjs  (dentro de gremlin/)
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -23,18 +24,26 @@ const MUTANTES = [
   ['sin UA', F, "headers: { 'user-agent': UA, accept:", 'headers: { accept:'],
   ['no corta ante un 429', F, "if (r.status === 429 || r.status === 403) cortar = `SLIDER respondió ${r.status}`;\n      else ", ''],
   ['retención sin límite (no borra nunca)', F, "const viejos = Object.keys(e.ind.tiempos).filter((t) => !(tiempoMs(t) >= desde));", 'const viejos = [];'],
-  ['borra las teselas ANTES de sacar el tiempo del índice', F, "        res.sacados += viejos.length;\n        await almacen.escribir(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE });\n", '        res.sacados += viejos.length;\n'],
-  ['borra con el reloj adelantado', F, 'if (!Number.isFinite(masNuevoMs) || ahoraMs - masNuevoMs > ADELANTO_MAX_MS) {', 'if (false) {'],
   ['la retención sin acotar', F, 'export const acotarRetencion = (v) => acotar(v, RETENCION_DEF_H, RETENCION_MIN_H, RETENCION_MAX_H);', 'export const acotarRetencion = (v) => Number(v) || RETENCION_DEF_H;'],
   ['retención de 12 h por defecto', F, 'RETENCION_DEF_H = 6,', 'RETENCION_DEF_H = 12,'],
   ['el visible de noche pide nativas', F, "if (PRODUCTOS[prod].diurno && enteraDeNoche(z, x, y, ms)) {", 'if (false) {'],
   ['el índice antes de las teselas', F, "    await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {", "    await almacen.escribir(claveIndice(prod), '{}', { tipo: 'application/json' });\n    await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {"],
   ['cita sin GREMLIN', F, "cita: prod === 'gremlin' ? CITA_GREMLIN + ' · ' + CITA : CITA,", 'cita: CITA,'],
+  // [Codex n3-r77-colector] borrado diferido, retención contra SLIDER, índice estricto, la hora en el PNG, logs por categoría
+  ['borra en la misma corrida en que sale del índice', F, 'if (!(ahoraMs - q.salio > ESPERA_BORRADO_MS)) continue;', ''],
+  ['borra lo de borrar sin mirar si venció según SLIDER', F, 'if (!(tiempoMs(q.t) < desde) || e.ind.tiempos[q.t]) continue;', ''],
+  ['el reloj contra SLIDER con 1 día de tolerancia', F, 'Math.abs(ahoraMs - masNuevoMs) <= DESFASE_MAX_MS', 'ahoraMs - masNuevoMs <= 86400000'],
+  ['la retención contra el reloj local', F, 'const desde = (Number.isFinite(masNuevoMs) ? masNuevoMs : ahoraMs) - ret * HORA', 'const desde = ahoraMs - ret * HORA'],
+  ['tiempos y borrar sin ser disjuntos', F, 'if (vistos.has(b.t) || Object.prototype.hasOwnProperty.call(j.tiempos, b.t)) return nuevo;', 'if (vistos.has(b.t)) return nuevo;'],
+  ['borrar sin validar la forma', F, "if (!b || typeof b !== 'object' || !RE_T.test(String(b.t)) || !Number.isFinite(tiempoMs(b.t)) || !Number.isFinite(b.salio)) return nuevo;", 'if (!b) return nuevo;'],
+  ['el PNG sin la etiqueta de su hora', F, 'const b = conEtiqueta(png, etiqueta(prod, t, s.z, s.x, s.y));', 'const b = png;'],
+  ['la etiqueta con x e y cruzados', F, "export const etiqueta = (prod, t, z, x, y) => prod + '/' + t + '/' + z + '/' + x + '/' + y;", "export const etiqueta = (prod, t, z, x, y) => prod + '/' + t + '/' + z + '/' + y + '/' + x;"],
+  ['el log con el mensaje del error', F, "return cat + (http ? ' http ' + http[1] : '');", "return cat + ' ' + m;"],
   ['la copia de la lib tocada', 'satelite-slider.copia.mjs', 'export const BORDE_GRADOS = 1;', 'export const BORDE_GRADOS = 2;'],
 ];
 function correrCon(nombre, archivo, viejo, nuevo) {
-  const dir = path.join(RAIZ, '.mutante-precocido');
-  fs.rmSync(dir, { recursive: true, force: true });
+  // [Codex n3-r77-colector · 4] la copia mutada va a una carpeta TEMPORAL fuera del repo (os.tmpdir()), nunca dentro
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutante-precocido-'));
   fs.cpSync(path.join(RAIZ, 'lib'), path.join(dir, 'lib'), { recursive: true });
   if (archivo) {
     const p = path.join(dir, 'lib', archivo), txt = fs.readFileSync(p, 'utf8'), veces = txt.split(viejo).length - 1;

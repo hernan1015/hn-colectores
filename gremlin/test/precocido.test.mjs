@@ -64,7 +64,9 @@ test('real: las teselas en slider/{producto}/{tiempo}/{z}/{x}/{y}.png, PNG váli
   // la misma tesela, con la cuenta del relevo
   const { zs, lista } = SS.nativasDe('gremlin', 5, 10, 18), m = new Map();
   for (const q of lista) { const resp = await s.fetchFn('https://slider.cira.colostate.edu/' + SS.rutaNativa('gremlin', t, zs, q.f, q.c)); m.set(q.f + '_' + q.c, SS.decodificarPng(Buffer.from(await resp.arrayBuffer()))); }
-  assert.ok(Buffer.from(SS.codificarPng(256, 256, SS.reproyectar('gremlin', t, 5, 10, 18, m).rgba)).equals(b));
+  const cruda = Buffer.from(SS.codificarPng(256, 256, SS.reproyectar('gremlin', t, 5, 10, 18, m).rgba));
+  assert.ok(P.conEtiqueta(cruda, 'gremlin/' + t + '/5/10/18').equals(b), 'los píxeles del relevo, con la etiqueta de su hora');
+  assert.ok(b.includes(Buffer.from('tEXthn-slider\0gremlin/' + t + '/5/10/18', 'latin1')), 'la etiqueta: producto/tiempo/z/x/y');
   const ind = leerIndice(dir, 'gremlin');
   assert.equal(ind.v, 1); assert.equal(ind.z_min, 3); assert.equal(ind.z_max, 5); assert.equal(ind.ruta, 'slider/gremlin/{tiempo}/{z}/{x}/{y}.png');
   assert.equal(ind.cita, 'GREMLIN (CIRA) · GOES-19 · NOAA · imágenes CIRA/RAMMB SLIDER');
@@ -121,9 +123,10 @@ test('los intentos tienen tope (4) y fuera de la retención no se pide nada', as
   const s = sliderFalso({ tiempos: T.slice(-1), tesela: (t, f) => (f === 0 ? { status: 404 } : null) });
   for (let i = 0; i < 5; i++) await correr({ almacen: alm, fetchFn: s.fetchFn });
   assert.equal(leerIndice(dir, 'gremlin').tiempos[T.at(-1)].intentos, 4);
-  const viejo = sliderFalso({ tiempos: tiemposHasta(AHORA - 8 * 3600e3, 3) });
+  /* la retención se mide contra SLIDER: con el más nuevo a las 22:30, lo de 8 h antes queda afuera */
+  const viejo = sliderFalso({ tiempos: [...tiemposHasta(AHORA - 8 * 3600e3, 3), T.at(-1)] });
   const r = await correr({ almacen: ALM.almacenCarpeta(carpetaTemporal()), fetchFn: viejo.fetchFn });
-  assert.equal(r.pendientes, 0); assert.equal(viejo.teselasPedidas().length, 0);
+  assert.equal(r.pendientes, 1); assert.equal(viejo.teselasPedidas().length, 14);
 });
 
 test('un 429 corta la corrida', async () => {
@@ -132,21 +135,73 @@ test('un 429 corta la corrida', async () => {
   assert.equal(r.estado, 'cortada'); assert.equal(s.teselasPedidas().length, 1);
 });
 
-test('la retención: lo vencido sale del índice ANTES de borrar sus teselas, y se borra todo', async () => {
+/* [Codex n3-r77-colector · 1] EL BORRADO DIFERIDO: lo vencido sale del índice en una corrida y sus teselas se borran en una POSTERIOR */
+const nuevoSlider = (hhmm) => sliderFalso({ tiempos: [tiemposHasta(Date.parse('2026-11-19T' + hhmm + ':00Z'), 1)[0]], tesela: () => ({ status: 404 }) });
+test('la retención DIFERIDA: sale del índice en una corrida, se borra recién en la siguiente (a 10 min), y todo', async () => {
   const dir = carpetaTemporal(), base = ALM.almacenCarpeta(dir), orden = [];
-  const alm = { ...base, escribir: async (k, b, o) => { if (k.endsWith('indice.json')) orden.push(['indice', JSON.parse(b).tiempos]); return base.escribir(k, b, o); }, borrar: async (k) => { orden.push(['borrar', k]); return base.borrar(k); } };
-  const s = sliderFalso({ tiempos: T.slice(-2) });
-  await correr({ almacen: alm, fetchFn: s.fetchFn, retencionH: 6 });
+  const alm = { ...base, escribir: async (k, b, o) => { if (k.endsWith('indice.json')) orden.push(['indice', JSON.parse(b)]); return base.escribir(k, b, o); }, borrar: async (k) => { orden.push(['borrar', k]); return base.borrar(k); } };
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6 });
   assert.equal(pngs(dir).length, 2 * porTiempo);
+  // 05:05: SLIDER va por las 04:40 (vencen los dos: 6 h antes de las 04:40 son las 22:40). Salen del índice; NO se borra nada todavía
   orden.length = 0;
-  // 6 h y 15 min después: los dos vencen (retención 6 h); SLIDER ya tiene sólo uno nuevo, a las 04:40
-  const s2 = sliderFalso({ tiempos: [tiemposHasta(Date.parse('2026-11-19T04:40:00Z'), 1)[0]], tesela: () => ({ status: 404 }) });
-  const r = await correr({ almacen: alm, fetchFn: s2.fetchFn, retencionH: 6, ahoraMs: AHORA + 6.25 * 3600e3 });
-  assert.equal(r.sacados, 2); assert.equal(r.borrados, 2 * porTiempo);
-  const iInd = orden.findIndex((x) => x[0] === 'indice' && !x[1][T.at(-1)]), iBor = orden.findIndex((x) => x[0] === 'borrar');
-  assert.ok(iInd >= 0 && iInd < iBor, 'el índice deja de nombrarlo antes del primer borrado');
+  const r1 = await correr({ almacen: alm, fetchFn: nuevoSlider('04:40').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:05:00Z') });
+  assert.equal(r1.sacados, 2); assert.equal(r1.borrados, 0);
+  assert.equal(orden.filter((x) => x[0] === 'borrar').length, 0);
+  const ind = leerIndice(dir, 'gremlin');
+  assert.ok(!ind.tiempos[T.at(-1)] && !ind.tiempos[T.at(-2)]);
+  assert.deepEqual(ind.borrar.map((x) => x.t).sort(), T.slice(-2).sort());
+  assert.ok(ind.borrar.every((x) => x.salio === Date.parse('2026-11-19T05:05:00Z')));
+  assert.equal(pngs(dir).length, 2 * porTiempo, 'las teselas siguen: un índice viejo en caché todavía puede nombrarlas');
+  // 2 min después: tampoco (todavía no pasó la espera)
+  const r2 = await correr({ almacen: alm, fetchFn: nuevoSlider('04:40').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:07:00Z') });
+  assert.equal(r2.borrados, 0);
+  // la corrida siguiente (10 min): ahora sí, todo
+  const r3 = await correr({ almacen: alm, fetchFn: nuevoSlider('04:50').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:15:00Z') });
+  assert.equal(r3.borrados, 2 * porTiempo);
   assert.equal(pngs(dir).filter((k) => k.includes(T.at(-1)) || k.includes(T.at(-2))).length, 0);
   assert.deepEqual(leerIndice(dir, 'gremlin').borrar, []);
+});
+
+test('[Codex · 2] contra SLIDER: con el reloj 12 h adelantado (o 2 h atrasado) no se saca ni se borra nada', async () => {
+  for (const desfase of [12 * 3600e3, -2 * 3600e3]) {
+    const dir = carpetaTemporal(), alm = ALM.almacenCarpeta(dir);
+    await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6 });
+    const r = await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6, ahoraMs: AHORA + desfase });
+    assert.equal(r.sacados, 0); assert.equal(r.borrados, 0);
+    assert.equal(pngs(dir).length, 2 * porTiempo);
+    assert.ok(leerIndice(dir, 'gremlin').tiempos[T.at(-1)]);
+  }
+});
+
+test('[Codex · 1 y 2] el índice estricto: tiempos y borrar disjuntos, borrar con forma; si no valida, no se borra nada', () => {
+  const ok = { v: 1, producto: 'gremlin', tiempos: { [T[0]]: { estado: 'completo' } }, borrar: [{ t: T[1], salio: 1 }] };
+  assert.equal(P.indiceDe(ok, 'gremlin').roto, false);
+  const malos = [
+    { ...ok, borrar: [{ t: T[0], salio: 1 }] },                           // el mismo tiempo en los dos
+    { ...ok, borrar: [T[1]] },                                             // sin la hora de salida
+    { ...ok, borrar: [{ t: '../../otra', salio: 1 }] },                    // sin forma de tiempo
+    { ...ok, borrar: [{ t: T[1], salio: 1 }, { t: T[1], salio: 2 }] },     // repetido
+    { ...ok, borrar: [{ t: T[1], salio: 'ayer' }] },
+    { ...ok, tiempos: { malo: {} } },
+    { ...ok, borrar: {} },
+    { ...ok, producto: 'geocolor' },
+  ];
+  for (const m of malos) assert.equal(P.indiceDe(m, 'gremlin').roto, true, JSON.stringify(m));
+});
+
+test('[Codex · 2] con un índice que no valida (o una entrada de borrar no vencida según SLIDER) no se borra nada', async () => {
+  const dir = carpetaTemporal(), alm = ALM.almacenCarpeta(dir);
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6 });
+  // a) el índice dice «borrar» un tiempo que también está en «tiempos»: no valida
+  const ind = leerIndice(dir, 'gremlin');
+  fs.writeFileSync(path.join(dir, 'slider/gremlin/indice.json'), JSON.stringify({ ...ind, borrar: [{ t: T.at(-1), salio: 0 }] }));
+  const r = await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6, ahoraMs: AHORA + 600e3 });
+  assert.equal(r.borrados, 0); assert.equal(pngs(dir).length, 2 * porTiempo);
+  // b) un «borrar» con forma, fuera de «tiempos», pero NO vencido según SLIDER: no se borra
+  const { [T.at(-2)]: _q, ...resto } = ind.tiempos;
+  fs.writeFileSync(path.join(dir, 'slider/gremlin/indice.json'), JSON.stringify({ ...ind, tiempos: resto, borrar: [{ t: T.at(-2), salio: 0 }] }));
+  const r2 = await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-1), tesela: () => ({ status: 404 }) }).fetchFn, retencionH: 6, ahoraMs: AHORA + 600e3 });
+  assert.equal(r2.borrados, 0); assert.equal(pngs(dir).filter((k) => k.includes(T.at(-2))).length, porTiempo);
 });
 
 test('retención 12 h: a las 6 h y 15 min no se borra nada; con el reloj adelantado, tampoco', async () => {
@@ -169,6 +224,33 @@ test('el visible de noche: tesela transparente sin pedir nativas para ella', asy
   assert.equal(pngs(dir).length, porTiempo);
   const img = SS.decodificarPng(fs.readFileSync(path.join(dir, 'slider/band_02', noche[0], '5/10/18.png')));
   assert.ok(img.rgba.every((v, i) => i % 4 !== 3 || v === 0));
+});
+
+test('[Codex · 3] el registro es PÚBLICO: un error del almacén con URL firmada, cabeceras y secretos cortos sale como CATEGORÍA, sin nada de eso', async () => {
+  const { principal } = await import(new URL('../precocido.mjs', import.meta.url).href);
+  const SECRETOS = ['X-Amz-Signature=deadbeef', 'cuentaX.r2.cloudflarestorage.com', 'AKIDcorto', 's3cr', 'Credential=', 'authorization'];
+  const mensaje = 'fetch failed https://cuentaX.r2.cloudflarestorage.com/dep/slider/gremlin/indice.json?X-Amz-Signature=deadbeef&X-Amz-Credential=AKIDcorto authorization: AWS4-HMAC-SHA256 Credential=AKIDcorto/s3cr';
+  const casos = [
+    // el cliente R2 de verdad, con un fetch que falla con todo eso adentro (red)
+    ALM.almacenR2({ cuenta: 'cuentaX', clave: 'AKIDcorto', secreto: 's3cr', deposito: 'dep', fetchFn: async () => { throw new TypeError(mensaje); } }),
+    // un 403 del depósito (el cliente arma «R2 leer: HTTP 403»), y un error cualquiera con el mensaje sucio
+    ALM.almacenR2({ cuenta: 'cuentaX', clave: 'AKIDcorto', secreto: 's3cr', deposito: 'dep', fetchFn: async () => new Response('<Error>AKIDcorto s3cr</Error>', { status: 403 }) }),
+    { leer: async () => { throw new Error(mensaje + ' HTTP 500'); }, escribir: async () => {}, borrar: async () => {} },
+  ];
+  const vistos = [];
+  for (const almacen of casos) {
+    const lineas = [];
+    const cod = await principal({ env: { PRECOCIDO_ON: 'si' }, almacen, fetchFn: sliderFalso({ tiempos: T.slice(-1) }).fetchFn, log: (x) => lineas.push(String(x)), logError: (x) => lineas.push(String(x)) });
+    assert.equal(cod, 1);
+    const todo = lineas.join('\n');
+    for (const sec of SECRETOS) assert.ok(!todo.includes(sec), 'el log trae «' + sec + '»: ' + todo);
+    const f = lineas.find((l) => l.startsWith('precocido: falló'));
+    assert.match(f, /^precocido: falló \(error:(almacen|red|interno)( http \d{3})?\)$/);
+    vistos.push(f);
+  }
+  assert.deepEqual(vistos, ['precocido: falló (error:almacen)', 'precocido: falló (error:almacen http 403)', 'precocido: falló (error:almacen http 500)']);
+  assert.equal(P.categoriaError(new TypeError('x https://a?b')), 'error:red');
+  assert.equal(P.categoriaError(new Error('lo que sea s3cr')), 'error:interno');
 });
 
 test('el registro es PÚBLICO: el script no imprime ninguna llave, y sin llave no hace nada', () => {

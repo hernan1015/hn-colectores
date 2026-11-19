@@ -3,6 +3,7 @@
 // Antes se corre la copia SIN romper (tiene que pasar entera), así un fallo no es culpa de la copia.
 // Correr: node test/control-negativo.mjs  (dentro de gremlin/)
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -93,8 +94,8 @@ const MUTANTES = [
 ];
 
 function correrCon(nombre, archivo, viejo, nuevo) {
-  const dir = path.join(RAIZ, '.mutante');
-  fs.rmSync(dir, { recursive: true, force: true });
+  // [r77 · Codex n3-r77-colector · 4] la copia mutada va a una carpeta TEMPORAL fuera del repo
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mutante-gremlin-'));
   fs.cpSync(path.join(RAIZ, 'lib'), path.join(dir, 'lib'), { recursive: true });
   if (archivo) {
     const p = path.join(dir, 'lib', archivo);
