@@ -27,7 +27,7 @@ const MUTANTES = [
   ['la retención sin acotar', F, 'export const acotarRetencion = (v) => acotar(v, RETENCION_DEF_H, RETENCION_MIN_H, RETENCION_MAX_H);', 'export const acotarRetencion = (v) => Number(v) || RETENCION_DEF_H;'],
   ['retención de 12 h por defecto', F, 'RETENCION_DEF_H = 6,', 'RETENCION_DEF_H = 12,'],
   ['el visible de noche pide nativas', F, "if (PRODUCTOS[prod].diurno && enteraDeNoche(z, x, y, ms)) {", 'if (false) {'],
-  ['el índice antes de las teselas', F, "    await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {", "    await almacen.escribir(claveIndice(prod), '{}', { tipo: 'application/json' });\n    await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {"],
+  ["el índice antes de las teselas",F,"    await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {","    e.ind.tiempos[t] = { estado: 'completo', n: aEscribir.length, faltan: 0, intentos: 1 }; await almacen.escribir(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json' });\n    await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {"],
   ['cita sin GREMLIN', F, "cita: prod === 'gremlin' ? CITA_GREMLIN + ' · ' + CITA : CITA,", 'cita: CITA,'],
   // [Codex n3-r77-colector] borrado diferido, retención contra SLIDER, índice estricto, la hora en el PNG, logs por categoría
   ['borra en la misma corrida en que sale del índice', F, 'if (!(ahoraMs - q.salio > ESPERA_BORRADO_MS)) continue;', ''],

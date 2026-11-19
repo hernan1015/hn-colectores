@@ -78,6 +78,16 @@ test('real: las teselas en slider/{producto}/{tiempo}/{z}/{x}/{y}.png, PNG váli
   assert.ok(nat.every((p) => /\/0[012]\/\d{3}_\d{3}\.png$/.test(p.url)));
 });
 
+test('el orden: cada vez que se escribe el índice, las teselas de cada tiempo que nombra ya están', async () => {
+  const dir = carpetaTemporal(), base = ALM.almacenCarpeta(dir), malos = [];
+  const alm = { ...base, escribir: async (k, b, o) => {
+    if (k.endsWith('indice.json')) { const j = JSON.parse(b); for (const [t, q] of Object.entries(j.tiempos || {})) { const hay = pngs(dir).filter((x) => x.includes('/' + t + '/')).length; if (hay < (q.n || 0)) malos.push(t + ': ' + hay + ' de ' + q.n); } }
+    return base.escribir(k, b, o);
+  } };
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn });
+  assert.deepEqual(malos, []);
+});
+
 test('idempotente: la segunda corrida no pide nativas ni escribe', async () => {
   const dir = carpetaTemporal(), s = sliderFalso({ tiempos: T.slice(-1) }), alm = ALM.almacenCarpeta(dir);
   await correr({ almacen: alm, fetchFn: s.fetchFn });
@@ -171,6 +181,24 @@ test('[Codex · 2] contra SLIDER: con el reloj 12 h adelantado (o 2 h atrasado) 
     assert.equal(pngs(dir).length, 2 * porTiempo);
     assert.ok(leerIndice(dir, 'gremlin').tiempos[T.at(-1)]);
   }
+});
+
+test('[Codex · 2] el reloj saltado 12 h NO se saltea la espera del borrado diferido (con ±1 h contra SLIDER no se borra)', async () => {
+  const dir = carpetaTemporal(), alm = ALM.almacenCarpeta(dir);
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6 });
+  await correr({ almacen: alm, fetchFn: nuevoSlider('04:40').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:05:00Z') });
+  assert.equal(leerIndice(dir, 'gremlin').borrar.length, 2);
+  // 2 min después de verdad, pero el reloj dice 12 h más: no se borra (el índice viejo puede seguir en caché)
+  const r = await correr({ almacen: alm, fetchFn: nuevoSlider('04:40').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T17:07:00Z') });
+  assert.equal(r.borrados, 0); assert.equal(pngs(dir).length, 2 * porTiempo);
+});
+
+test('[Codex · 2] la retención se mide contra SLIDER, no contra el reloj: con el reloj 55 min adelante, lo de hace 5 h 45 min se queda', async () => {
+  const dir = carpetaTemporal(), alm = ALM.almacenCarpeta(dir), viejo = tiemposHasta(Date.parse('2026-11-18T16:45:00Z'), 1)[0];
+  await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: [viejo, T.at(-1)] }).fetchFn, retencionH: 6 });
+  assert.ok(leerIndice(dir, 'gremlin').tiempos[viejo]);
+  const r = await correr({ almacen: alm, fetchFn: sliderFalso({ tiempos: [viejo, T.at(-1)] }).fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-18T23:25:00Z') });
+  assert.equal(r.sacados, 0); assert.ok(leerIndice(dir, 'gremlin').tiempos[viejo]);
 });
 
 test('[Codex · 1 y 2] el índice estricto: tiempos y borrar disjuntos, borrar con forma; si no valida, no se borra nada', () => {
