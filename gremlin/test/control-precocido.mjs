@@ -39,6 +39,16 @@ const MUTANTES = [
   ['el PNG sin la etiqueta de su hora', F, 'const b = conEtiqueta(png, etiqueta(prod, t, s.z, s.x, s.y));', 'const b = png;'],
   ['la etiqueta con x e y cruzados', F, "export const etiqueta = (prod, t, z, x, y) => prod + '/' + t + '/' + z + '/' + x + '/' + y;", "export const etiqueta = (prod, t, z, x, y) => prod + '/' + t + '/' + z + '/' + y + '/' + x;"],
   ['el log con el mensaje del error', F, "return cat + (http ? ' http ' + http[1] : '');", "return cat + ' ' + m;"],
+  // [r77 · reintento] los 5xx y la red de R2 se reintentan; un 4xx no; lo que no quedó no se publica; con el índice caído no se borra
+  ['sin reintento', F, 'if (!reintentable(e) || i >= REINTENTO_ESPERAS_MS.length) throw e;', 'throw e;'],
+  ['reintenta un 4xx', F, 'if (st != null) return st >= 500;', 'if (st != null) return st >= 400;'],
+  ['sin jitter ni espera exponencial', F, 'const ms = Math.round(REINTENTO_ESPERAS_MS[i] * (0.75 + 0.5 * azar()));', 'const ms = 500;'],
+  ['el reintento ignora el presupuesto', F, 'if (reloj() + ms > vence) throw e;', ''],
+  ['DELETE sin reintento', F, '(k) => conReintento(() => almacen.borrar(k), reint).then(', '(k) => almacen.borrar(k).then('],
+  ['publica el tiempo con teselas que no quedaron', F, 'no lo publico`);\n      continue;', 'no lo publico`);'],
+  ['borra aunque falle el índice', F, 'if (noBorrar || cortarAlmacen) {', 'if (false) {'],
+  ['sin tope de escrituras fallidas', F, 'if (res.escrituras_fallidas >= TOPE_ESCRITURAS_FALLIDAS) cortarAlmacen = true;', ''],
+  ['el log del reintento con el mensaje', F, "log(`precocido: reintento:${categoriaError(e).replace(/^error:/, '')} (${i + 2}/${total})`);", 'log(`precocido: reintento:${e.message} (${i + 2}/${total})`);'],
   ['la copia de la lib tocada', 'satelite-slider.copia.mjs', 'export const BORDE_GRADOS = 1;', 'export const BORDE_GRADOS = 2;'],
 ];
 function correrCon(nombre, archivo, viejo, nuevo) {

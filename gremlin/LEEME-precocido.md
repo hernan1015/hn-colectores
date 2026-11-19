@@ -28,6 +28,13 @@ slider/{producto}/indice.json                 { v, producto, z_min, z_max, recor
   - Las claves salen de la geometría, sin listar. El DELETE de R2 es gratis.
 - **La hora en el PNG:** cada tesela lleva un chunk `tEXt` `hn-slider` = `producto/tiempo/z/x/y`. El relevo sirve una tesela del depósito sólo si la etiqueta es exactamente la pedida y el tiempo está en `latest_times`.
 - **Cortesía:** UA `hn-colector/1.0`, 1 s entre pedidos y un tope por corrida (`TOPE`, 120 por defecto, de 20 a 400). Un 429 o un 403 cortan la corrida, y también 3 fallas seguidas.
+- **Los 5xx y los errores de red de R2 se reintentan** (la primera corrida real cortó con un 500, 18/11):
+  - Cada PUT y cada DELETE: hasta 4 intentos, con esperas de 0,5 s, 1,5 s y 4 s (± 25 % de jitter), sin pasarse del presupuesto de la corrida (7 min; el workflow corta a los 9). Con el presupuesto gastado no se empieza otro tiempo.
+  - Un 4xx no se reintenta: un 403 o un 400 es configuración y corta la corrida.
+  - Si una tesela no quedó después de los reintentos, su tiempo **no se publica** en el índice ni gasta un intento: la próxima corrida lo rehace. La corrida sigue con el tiempo siguiente y termina en rojo (`error:almacen escritura-con-fallas`).
+  - Con 20 escrituras fallidas en la corrida, se corta (`error:almacen tope-de-fallas`).
+  - El índice se reintenta igual. Si al final no se pudo escribir, en esa corrida no se borra nada.
+  - En el registro: `reintento:almacen http 500 (2/4)` y, al final, el total de reintentos y de escrituras fallidas.
 - **El registro de Actions es público:** sólo se imprimen cantidades. Un error sale como una categoría fija (`error:almacen`, `error:red` o `error:interno`) y, si lo hay, el código HTTP numérico. Nunca sale el mensaje.
 
 ## Probar sin R2 (la llave seca)
@@ -41,7 +48,7 @@ PRECOCIDO_ON=si MODO=seco PUBLICO_CARPETA=/una/carpeta node gremlin/precocido.mj
 
 ```
 cd gremlin
-node --test test/precocido.test.mjs     # 20 tests, sin red
+node --test test/precocido.test.mjs     # 31 tests, sin red
 node test/control-precocido.mjs         # control negativo contado (mutantes), en una carpeta temporal fuera del repo
 ```
 

@@ -19,6 +19,13 @@
 // NADA. DELETE de R2 es gratis; con un tope por corrida, lo que no se llegó a borrar queda para la próxima.
 // [Codex n3-r77 pelicula · 3] LA HORA EN EL PNG: cada tesela lleva un chunk tEXt «hn-slider» = «producto/tiempo/z/x/y»; el relevo de hn-agro
 // sirve una tesela del depósito sólo si su etiqueta es exactamente la pedida (un PNG íntegro de otra hora o de otro lugar no pasa).
+// [r77 · reintento, 18/11] LOS 5xx Y LOS ERRORES DE RED DE R2 SE REINTENTAN (la primera corrida real cortó con un 500 al 5.º tiempo):
+// cada PUT y cada DELETE, hasta REINTENTO_ESPERAS_MS.length + 1 intentos, con espera exponencial y jitter, sin pasarse del presupuesto de
+// la corrida (PRESUPUESTO_MS, debajo del timeout de 9 min del workflow). Un 4xx NO se reintenta: es configuración (403, 400) y corta,
+// como antes. Una tesela que no se pudo escribir deja su tiempo SIN PUBLICAR (el índice no lo nombra ni le cuenta un intento: la
+// próxima corrida lo rehace) y la corrida sigue con el siguiente; con TOPE_ESCRITURAS_FALLIDAS fallidas en la corrida, se corta
+// (error:almacen tope-de-fallas). La escritura del índice se reintenta igual; si al final falla, en esa corrida NO SE BORRA NADA.
+// En el registro: «reintento:almacen http 500 (2/4)» y el total al final. Nunca el mensaje.
 // El almacén (R2 o carpeta) y fetch vienen de afuera, para probar sin red. Se imprimen SÓLO CANTIDADES (el registro de Actions es público).
 import { crc32 } from './slider.mjs';
 import {
@@ -54,9 +61,36 @@ export function conEtiqueta(png, texto) {
 }
 /** [Codex · 3] el error, en una CATEGORÍA FIJA y un código HTTP numérico si lo hay: nunca el mensaje (el registro de Actions es público) */
 export function categoriaError(e) {
+  if (e && typeof e.categoria === 'string' && /^error:[a-z]+( [a-z-]+)?$/.test(e.categoria)) return e.categoria;
   const m = String((e && e.message) || ''), http = /\bHTTP (\d{3})\b/.exec(m);
   const cat = /^R2 |almac/i.test(m) || (e && e.almacen) ? 'error:almacen' : e && (e.name === 'AbortError' || e.name === 'TimeoutError' || e.name === 'TypeError') ? 'error:red' : 'error:interno';
   return cat + (http ? ' http ' + http[1] : '');
+}
+// ---------- el reintento ante R2 (5xx o red; un 4xx no) ----------
+export const REINTENTO_ESPERAS_MS = Object.freeze([500, 1500, 4000]);   // 4 intentos en total
+export const TOPE_ESCRITURAS_FALLIDAS = 20;   // PUT que fallaron después de los reintentos, en la corrida: se corta
+export const PRESUPUESTO_MS = 7 * 60e3;       // el workflow corta a los 9 min: lo que no entra queda para la próxima
+/** el código HTTP del error del almacén («R2 escribir: HTTP 500»), o null */
+export const httpDe = (e) => { const h = /\bHTTP (\d{3})\b/.exec(String((e && e.message) || '')); return h ? Number(h[1]) : null; };
+/** se reintenta un 5xx o un error de red (fetch falló, se colgó); un 4xx u otra cosa, no */
+export function reintentable(e) {
+  const st = httpDe(e);
+  if (st != null) return st >= 500;
+  return !!e && (e.name === 'TypeError' || e.name === 'AbortError' || e.name === 'TimeoutError');
+}
+/** fn() con reintentos: la espera i es REINTENTO_ESPERAS_MS[i] × (0,75 a 1,25); no espera más allá de `vence` (reloj()). */
+export async function conReintento(fn, { esperar, log, reloj = Date.now, vence = Infinity, azar = Math.random, cuenta = { reintentos: 0 } } = {}) {
+  const total = REINTENTO_ESPERAS_MS.length + 1;
+  for (let i = 0; ; i++) {
+    try { return await fn(); } catch (e) {
+      if (!reintentable(e) || i >= REINTENTO_ESPERAS_MS.length) throw e;
+      const ms = Math.round(REINTENTO_ESPERAS_MS[i] * (0.75 + 0.5 * azar()));
+      if (reloj() + ms > vence) throw e;   // el presupuesto de la corrida
+      cuenta.reintentos++;
+      log(`precocido: reintento:${categoriaError(e).replace(/^error:/, '')} (${i + 2}/${total})`);
+      await esperar(ms);
+    }
+  }
 }
 export const CACHE_TESELA = 'public, max-age=86400, immutable';
 export const CACHE_INDICE = 'public, max-age=30';
@@ -147,13 +181,26 @@ async function enParalelo(lista, n, fn) {
 export async function correr({
   almacen, fetchFn = fetch, ahoraMs = Date.now(), llave, modo = 'real', tope = TOPE_DEFECTO, retencionH = RETENCION_DEF_H,
   productos = PRODUCTOS_PRE, pausaMs = PAUSA_MS, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log, zMax = Z_MAX,
+  reloj = Date.now, presupuestoMs = PRESUPUESTO_MS, azar = Math.random,
 }) {
+  const vence = reloj() + presupuestoMs;
   const res = { estado: 'ok', pedidos: 0, nativas: 0, nativas_malas: 0, tiempos_slider: 0, pendientes: 0, guardados: 0, completos: 0, incompletos: 0,
-    teselas: 0, teselas_noche: 0, teselas_faltantes: 0, bytes: 0, sacados: 0, borrados: 0, productos_caidos: 0 };
+    teselas: 0, teselas_noche: 0, teselas_faltantes: 0, bytes: 0, sacados: 0, borrados: 0, productos_caidos: 0,
+    reintentos: 0, escrituras_fallidas: 0, sin_publicar: 0, indices_fallidos: 0 };
   if (llave !== 'si') { log('precocido: llave apagada (PRECOCIDO_ON no vale «si»): no hago nada'); return { ...res, estado: 'apagado' }; }
   if (!almacen) throw new Error('precocido: sin almacén (faltan las llaves del depósito público o PUBLICO_CARPETA)');
   const maxPedidos = acotarTope(tope), ret = acotarRetencion(retencionH), zM = Math.max(Z_MIN, Math.min(6, Number(zMax) || Z_MAX));
-  let fallasSeguidas = 0, cortar = null;
+  let fallasSeguidas = 0, cortar = null, cortarAlmacen = false, noBorrar = false;
+  const reint = { esperar, log, reloj, vence, azar, cuenta: res };
+  /** un PUT con reintentos: true si quedó; false si un 5xx/red siguió hasta el final (un 4xx, o lo que no es del almacén, sube y corta) */
+  const escribirR = async (k, b, o) => {
+    try { await conReintento(() => almacen.escribir(k, b, o), reint); return true; } catch (e) {
+      if (!reintentable(e)) throw e;
+      res.escrituras_fallidas++;
+      if (res.escrituras_fallidas >= TOPE_ESCRITURAS_FALLIDAS) cortarAlmacen = true;
+      return false;
+    }
+  };
   const pedir = async (ruta, tipo) => {
     if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs);
     res.pedidos++;
@@ -204,7 +251,8 @@ export async function correr({
 
   // 3) cada tiempo: sus nativas (si no entran en el tope, queda para la próxima), la reproyección y las teselas
   for (const { prod, t } of cola) {
-    if (cortar) break;
+    if (cortar || cortarAlmacen) break;
+    if (reloj() > vence) { log('precocido: se terminó el presupuesto de tiempo; lo que falta queda para la próxima corrida'); break; }
     const e = est[prod], plan = planTiempo(prod, t, Z_MIN, zM);
     if (res.pedidos + plan.nativas.size > maxPedidos) { log(`precocido: tope de ${maxPedidos} pedidos; lo que falta queda para la próxima corrida`); break; }
     const imgs = new Map();
@@ -226,23 +274,33 @@ export async function correr({
       if (rp.faltan > 0) { faltan++; continue; }   // a un píxel le faltó su nativa: NO se escribe (la regla de la _v1829)
       aEscribir.push({ s, png: codificarPng(TESELA, TESELA, rp.rgba) });
     }
+    let fallidas = 0;
     await enParalelo(aEscribir, PARALELO_ESCRITURA, async ({ s, png }) => {
+      if (cortarAlmacen) { fallidas++; return; }
       const b = conEtiqueta(png, etiqueta(prod, t, s.z, s.x, s.y));   // [Codex · 3] la hora y el lugar, dentro del PNG
-      await almacen.escribir(claveTesela(prod, t, s.z, s.x, s.y), b, { tipo: 'image/png', cache: CACHE_TESELA });
+      if (!(await escribirR(claveTesela(prod, t, s.z, s.x, s.y), b, { tipo: 'image/png', cache: CACHE_TESELA }))) { fallidas++; return; }
       escritas++; res.bytes += b.length;
     });
     res.teselas += escritas; res.teselas_faltantes += faltan;
+    if (fallidas > 0) {   // [reintento] el almacén no tomó alguna tesela: el tiempo NO se publica ni gasta un intento; la próxima lo rehace
+      res.sin_publicar++; log(`precocido: un tiempo con ${fallidas} teselas que el almacén no tomó; no lo publico`);
+      continue;
+    }
     const estado = faltan === 0 ? 'completo' : 'incompleto', previo = e.ind.tiempos[t];
     e.ind.tiempos[t] = { estado, n: escritas, faltan, intentos: (previo?.intentos || 0) + 1, z: [Z_MIN, zM] };
     e.ind.actualizado = new Date(ahoraMs).toISOString();
-    await almacen.escribir(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE });   // después de las teselas
+    if (!(await escribirR(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE }))) {   // después de las teselas
+      res.indices_fallidos++; noBorrar = true; continue;   // [reintento] el índice no quedó: en esta corrida no se borra nada
+    }
     res.guardados++; if (estado === 'completo') res.completos++; else res.incompletos++;
   }
 
   // 4) la retención, DIFERIDA y contra SLIDER: (a) se borran las teselas de lo que salió del índice en una corrida anterior (hace más de
   //    ESPERA_BORRADO_MS), vencido según SLIDER; (b) lo que vence ahora sale del índice (y se borra en la próxima). Con el reloj lejos de
   //    SLIDER (más de 1 h), o un índice que no valida, no se borra nada.
-  if (!refOk) {
+  if (noBorrar || cortarAlmacen) {
+    log('precocido · retención: el almacén falló al escribir; en esta corrida no borro nada');
+  } else if (!refOk) {
     log('precocido · retención: el reloj y SLIDER no coinciden (más de 1 h), o no hay tiempos; no borro nada');
   } else {
     let presupuesto = TOPE_BORRADOS, fallas = 0;
@@ -254,7 +312,7 @@ export async function correr({
         if (!(tiempoMs(q.t) < desde) || e.ind.tiempos[q.t]) continue;        // sólo lo vencido según SLIDER y fuera del índice
         const claves = clavesTiempo(prod, q.t, Z_MIN, Math.max(zM, Number(e.ind.z_max) || Z_MAX));
         if (claves.length > presupuesto) break;
-        const r = await enParalelo(claves, PARALELO, (k) => almacen.borrar(k).then(() => true, () => false));
+        const r = await enParalelo(claves, PARALELO, (k) => conReintento(() => almacen.borrar(k), reint).then(() => true, (err) => { if (!reintentable(err)) throw err; return false; }));
         const mal = r.filter((x) => !x).length;
         presupuesto -= claves.length; res.borrados += claves.length - mal;
         if (mal) { fallas += mal; continue; }   // queda en `borrar`: la próxima vuelve a probar
@@ -265,12 +323,18 @@ export async function correr({
         viejos.forEach((t) => { delete e.ind.tiempos[t]; if (!e.ind.borrar.some((x) => x.t === t)) e.ind.borrar.push({ t, salio: ahoraMs }); });
         res.sacados += viejos.length; cambio = true;
       }
-      if (cambio) await almacen.escribir(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE });
+      if (cambio && !(await escribirR(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE }))) res.indices_fallidos++;
     }
     if (fallas) { res.estado = 'borrado-con-fallas'; log(`precocido · retención: ${fallas} borrados fallaron; quedan para la próxima`); }
   }
   if (cortar) { res.estado = 'cortada'; }
-  log(`precocido: ${res.pedidos} pedidos (${res.nativas} nativas, ${res.nativas_malas} malas) · ${res.pendientes} pendientes · ${res.guardados} tiempos guardados (${res.completos} completos, ${res.incompletos} incompletos) · ${res.teselas} teselas (${res.teselas_noche} de noche, ${res.teselas_faltantes} sin escribir) · ${(res.bytes / 1e6).toFixed(2)} MB · ${res.sacados} tiempos vencidos · ${res.borrados} borradas${cortar ? ' · CORTADA: ' + cortar : ''}`);
+  if (res.escrituras_fallidas) res.estado = cortarAlmacen ? 'cortada-almacen' : 'escritura-con-fallas';
+  log(`precocido: ${res.pedidos} pedidos (${res.nativas} nativas, ${res.nativas_malas} malas) · ${res.pendientes} pendientes · ${res.guardados} tiempos guardados (${res.completos} completos, ${res.incompletos} incompletos) · ${res.teselas} teselas (${res.teselas_noche} de noche, ${res.teselas_faltantes} sin escribir) · ${(res.bytes / 1e6).toFixed(2)} MB · ${res.sacados} tiempos vencidos · ${res.borrados} borradas · ${res.reintentos} reintentos · ${res.escrituras_fallidas} escrituras fallidas (${res.sin_publicar} tiempos sin publicar, ${res.indices_fallidos} índices)${cortar ? ' · CORTADA: ' + cortar : ''}${cortarAlmacen ? ' · CORTADA: ' + TOPE_ESCRITURAS_FALLIDAS + ' escrituras fallidas' : ''}`);
+  if (res.escrituras_fallidas) {
+    const e = new Error('R2 escribir: hubo fallas'); e.almacen = true; e.resumen = res;
+    e.categoria = cortarAlmacen ? 'error:almacen tope-de-fallas' : 'error:almacen escritura-con-fallas';
+    throw e;
+  }
   if (res.estado === 'borrado-con-fallas') { const e = new Error('R2 borrar: hubo fallas'); e.almacen = true; throw e; }
   return res;
 }

@@ -298,3 +298,136 @@ test('el workflow: nace apagado, a mano corre en seco, usa las llaves del depós
   assert.ok(!/echo .*secrets/.test(y));
   assert.match(y, /node gremlin\/precocido\.mjs/);
 });
+
+/* [r77 · reintento] R2 FALSO: el cliente R2 de verdad (almacen.mjs) contra un fetch de mentira con un Map; `regla(metodo, clave, n)`
+ * decide (n = cuántas veces se pidió esa clave con ese método): null = anda, un número = ese HTTP, 'red' = fetch que falla. */
+function r2Falso(regla = () => null) {
+  const datos = new Map(), veces = new Map(), pedidos = [];
+  const fetchFn = async (url, o = {}) => {
+    const clave = decodeURIComponent(new URL(url).pathname.replace(/^\/dep\/?/, '')), metodo = o.method || 'GET';
+    const id = metodo + ' ' + clave, n = (veces.get(id) || 0) + 1; veces.set(id, n); pedidos.push(id);
+    const r = regla(metodo, clave, n);
+    if (r === 'red') throw new TypeError('fetch failed https://cuentaX.r2.cloudflarestorage.com/dep/' + clave + '?X-Amz-Signature=deadbeef');
+    if (r) return new Response('<Error><Code>InternalError</Code> AKIDcorto s3cr</Error>', { status: r });
+    if (metodo === 'PUT') { datos.set(clave, Buffer.from(o.body)); return new Response('', { status: 200 }); }
+    if (metodo === 'DELETE') { datos.delete(clave); return new Response(null, { status: 204 }); }
+    return datos.has(clave) ? new Response(datos.get(clave), { status: 200 }) : new Response('no', { status: 404 });
+  };
+  const almacen = ALM.almacenR2({ cuenta: 'cuentaX', clave: 'AKIDcorto', secreto: 's3cr', deposito: 'dep', fetchFn });
+  return { almacen, datos, veces, pedidos, intentos: (m, k) => veces.get(m + ' ' + k) || 0,
+    teselas: () => [...datos.keys()].filter((k) => k.endsWith('.png')), indice: (p = 'gremlin') => datos.has('slider/' + p + '/indice.json') ? JSON.parse(datos.get('slider/' + p + '/indice.json').toString('utf8')) : null };
+}
+
+test('[reintento] un 500 intermitente de R2 se reintenta y el tiempo queda completo', async () => {
+  const f = r2Falso((m, k, n) => (m === 'PUT' && n <= (k.endsWith('indice.json') ? 2 : (k.length % 3)) ? 500 : null));
+  const lineas = [];
+  const r = await correr({ almacen: f.almacen, fetchFn: sliderFalso({ tiempos: T.slice(-1) }).fetchFn, log: (x) => lineas.push(x) });
+  assert.equal(r.completos, 1); assert.equal(r.escrituras_fallidas, 0); assert.equal(r.sin_publicar, 0);
+  assert.ok(r.reintentos > 0); assert.equal(f.teselas().length, porTiempo);
+  assert.equal(f.intentos('PUT', 'slider/gremlin/indice.json'), 3);
+  assert.deepEqual(f.indice().tiempos[T.at(-1)], { estado: 'completo', n: porTiempo, faltan: 0, intentos: 1, z: [3, 5] });
+  assert.ok(lineas.some((l) => l === 'precocido: reintento:almacen http 500 (2/4)'));
+  assert.ok(lineas.at(-1).includes(r.reintentos + ' reintentos · 0 escrituras fallidas'));
+});
+
+test('[reintento] la espera: exponencial con jitter (0,5 · 1,5 · 4 s ± 25 %), 4 intentos, y nunca más allá del presupuesto', async () => {
+  for (const [azar, esperadas] of [[0, [375, 1125, 3000]], [1, [625, 1875, 5000]], [0.5, [500, 1500, 4000]]]) {
+    const esperas = []; let n = 0;
+    await assert.rejects(P.conReintento(async () => { n++; throw new Error('R2 escribir: HTTP 503'); }, { esperar: async (ms) => { esperas.push(ms); }, log: callado, azar: () => azar }));
+    assert.equal(n, 4); assert.deepEqual(esperas, esperadas);
+  }
+  // el presupuesto: con 1 s de margen se hace el primer reintento (500 ms) pero no el segundo (1,5 s)
+  let reloj = 0, n = 0;
+  await assert.rejects(P.conReintento(async () => { n++; throw new TypeError('fetch failed'); }, { esperar: async (ms) => { reloj += ms; }, log: callado, reloj: () => reloj, vence: 1000, azar: () => 0.5 }));
+  assert.equal(n, 2);
+  // y la corrida entera: con el presupuesto ya gastado, no empieza ningún tiempo
+  const s = sliderFalso({ tiempos: T.slice(-2) });
+  const r = await correr({ almacen: ALM.almacenCarpeta(carpetaTemporal()), fetchFn: s.fetchFn, presupuestoMs: -1 });
+  assert.equal(r.guardados, 0); assert.equal(s.teselasPedidas().length, 0);
+  assert.equal(P.reintentable(new Error('R2 escribir: HTTP 500')), true); assert.equal(P.reintentable(new Error('R2 borrar: HTTP 502')), true);
+  assert.equal(P.reintentable(new TypeError('fetch failed')), true); assert.equal(P.reintentable(Object.assign(new Error('x'), { name: 'TimeoutError' })), true);
+  for (const st of [400, 403, 404, 409, 412, 429]) assert.equal(P.reintentable(new Error('R2 escribir: HTTP ' + st)), false, String(st));
+  assert.equal(P.reintentable(Object.assign(new Error('EACCES'), { code: 'EACCES' })), false);
+});
+
+test('[reintento] 500 persistentes en UNA tesela: el tiempo NO se publica (ni gasta un intento), la corrida sigue con el siguiente', async () => {
+  const mala = P.claveTesela('gremlin', T.at(-1), 5, 10, 18);
+  let romper = true;
+  const f = r2Falso((m, k) => (romper && m === 'PUT' && k === mala ? 500 : null));
+  const e = await correr({ almacen: f.almacen, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn }).then(() => null, (x) => x);
+  assert.ok(e, 'la corrida termina en rojo (para que se vea)'); assert.equal(P.categoriaError(e), 'error:almacen escritura-con-fallas');
+  assert.equal(f.intentos('PUT', mala), 4, '4 intentos y no más');
+  const r = e.resumen;
+  assert.equal(r.escrituras_fallidas, 1); assert.equal(r.sin_publicar, 1); assert.equal(r.completos, 1); assert.equal(r.guardados, 1);
+  const ind = f.indice();
+  assert.equal(ind.tiempos[T.at(-1)], undefined, 'el tiempo con la tesela que no quedó no figura en el índice');
+  assert.equal(ind.tiempos[T.at(-2)].estado, 'completo', 'el siguiente se hizo igual');
+  // la próxima corrida, con R2 sano, lo rehace como primer intento
+  romper = false;
+  const r2 = await correr({ almacen: f.almacen, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn });
+  assert.equal(r2.completos, 1); assert.deepEqual(f.indice().tiempos[T.at(-1)], { estado: 'completo', n: porTiempo, faltan: 0, intentos: 1, z: [3, 5] });
+});
+
+test('[reintento] con 20 escrituras fallidas en la corrida se corta (error:almacen tope-de-fallas) y no se empieza otro tiempo', async () => {
+  const f = r2Falso((m) => (m === 'PUT' ? 'red' : null)), s = sliderFalso({ tiempos: T.slice(-3) });
+  const e = await correr({ almacen: f.almacen, fetchFn: s.fetchFn }).then(() => null, (x) => x);
+  assert.equal(P.TOPE_ESCRITURAS_FALLIDAS, 20);
+  assert.equal(P.categoriaError(e), 'error:almacen tope-de-fallas');
+  assert.ok(e.resumen.escrituras_fallidas >= 20 && e.resumen.escrituras_fallidas < 20 + P.PARALELO_ESCRITURA, String(e.resumen.escrituras_fallidas));
+  assert.equal(e.resumen.guardados, 0); assert.equal(s.teselasPedidas().length, 14, 'sólo las nativas del primer tiempo');
+  assert.ok(f.pedidos.filter((p) => p.startsWith('PUT')).length <= 4 * (20 + P.PARALELO_ESCRITURA));
+  assert.equal(f.indice(), null);
+});
+
+test('[reintento] un 403 (o un 400) de R2 NO se reintenta y corta la corrida, como antes', async () => {
+  for (const st of [403, 400]) {
+    const f = r2Falso((m) => (m === 'PUT' ? st : null)), s = sliderFalso({ tiempos: T.slice(-2) });
+    const e = await correr({ almacen: f.almacen, fetchFn: s.fetchFn }).then(() => null, (x) => x);
+    assert.ok(e); assert.equal(P.categoriaError(e), 'error:almacen http ' + st);
+    const puts = f.pedidos.filter((p) => p.startsWith('PUT'));
+    assert.ok(puts.length >= 1 && puts.length <= P.PARALELO_ESCRITURA); assert.equal(new Set(puts).size, puts.length, 'ninguna clave dos veces');
+    assert.equal(f.indice(), null); assert.equal(s.teselasPedidas().length, 14);
+  }
+});
+
+test('[reintento] el índice que falla hasta el final: no se borra nada en esa corrida', async () => {
+  let indiceRoto = false;
+  const f = r2Falso((m, k) => (indiceRoto && m === 'PUT' && k.endsWith('indice.json') ? 503 : null));
+  await correr({ almacen: f.almacen, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6 });
+  await correr({ almacen: f.almacen, fetchFn: nuevoSlider('04:40').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:05:00Z') });
+  assert.equal(f.indice().borrar.length, 2); assert.equal(f.teselas().length, 2 * porTiempo);
+  const antes = f.intentos('PUT', 'slider/gremlin/indice.json');
+  indiceRoto = true;
+  const e = await correr({ almacen: f.almacen, fetchFn: nuevoSlider('04:50').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:15:00Z') }).then(() => null, (x) => x);
+  assert.ok(e); assert.equal(P.categoriaError(e), 'error:almacen escritura-con-fallas');
+  assert.equal(e.resumen.indices_fallidos, 1); assert.equal(e.resumen.borrados, 0);
+  assert.equal(f.pedidos.filter((p) => p.startsWith('DELETE')).length, 0, 'ni un DELETE');
+  assert.equal(f.teselas().length, 2 * porTiempo); assert.equal(f.indice().borrar.length, 2);
+  assert.equal(f.intentos('PUT', 'slider/gremlin/indice.json') - antes, 4, 'el índice: 4 intentos');
+});
+
+test('[reintento] un DELETE con 500 o error de red intermitente se reintenta y el borrado diferido termina', async () => {
+  const f = r2Falso((m, k, n) => (m === 'DELETE' && n === 1 ? (k.length % 2 ? 500 : 'red') : null));
+  await correr({ almacen: f.almacen, fetchFn: sliderFalso({ tiempos: T.slice(-2) }).fetchFn, retencionH: 6 });
+  await correr({ almacen: f.almacen, fetchFn: nuevoSlider('04:40').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:05:00Z') });
+  const r = await correr({ almacen: f.almacen, fetchFn: nuevoSlider('04:50').fetchFn, retencionH: 6, ahoraMs: Date.parse('2026-11-19T05:15:00Z') });
+  assert.equal(r.borrados, 2 * porTiempo); assert.equal(r.reintentos, 2 * porTiempo); assert.equal(f.teselas().length, 0);
+  assert.deepEqual(f.indice().borrar, []);
+});
+
+test('[reintento] el registro: «reintento:almacen http 500 (n/4)» o «reintento:red (n/4)», el total, y NUNCA el mensaje', async () => {
+  const { principal } = await import(new URL('../precocido.mjs', import.meta.url).href);
+  const SECRETOS = ['X-Amz-Signature', 'deadbeef', 'cuentaX', 'AKIDcorto', 's3cr', 'InternalError', 'fetch failed', 'slider/gremlin/'];
+  for (const modo of [500, 'red']) {
+    const f = r2Falso((m) => (m === 'PUT' ? modo : null)), lineas = [];
+    const cod = await principal({ env: { PRECOCIDO_ON: 'si' }, almacen: f.almacen, fetchFn: sliderFalso({ tiempos: T.slice(-1) }).fetchFn, log: (x) => lineas.push(String(x)), logError: (x) => lineas.push(String(x)) });
+    assert.equal(cod, 1);
+    const todo = lineas.join('\n');
+    for (const sec of SECRETOS) assert.ok(!todo.includes(sec), 'el log trae «' + sec + '»');
+    const re = lineas.filter((l) => l.includes('reintento:'));
+    assert.ok(re.length > 0);
+    for (const l of re) assert.match(l, modo === 'red' ? /^precocido: reintento:(almacen|red) \([234]\/4\)$/ : /^precocido: reintento:almacen http 500 \([234]\/4\)$/);
+    assert.ok(lineas.some((l) => / \d+ reintentos · \d+ escrituras fallidas/.test(l)));
+    assert.equal(lineas.at(-1), 'precocido: falló (error:almacen tope-de-fallas)');
+  }
+});
