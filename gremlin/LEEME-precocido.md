@@ -65,3 +65,35 @@ node test/control-precocido.mjs         # control negativo contado (mutantes), e
      $cron$select public.gh_colector_disparo('precocido.yml', '{"modo":"real"}'::jsonb, 'precocido')$cron$);
    ```
 6. **En hn-agro (Netlify):** `SATCHI_SLIDER_PRECOCIDO_URL` = la URL pública del depósito, sin la barra final. Sin esa variable, el relevo y la página quedan exactamente como antes.
+
+## r79 · los cuadros enteros y las metateselas WebP (la película en < 10 s)
+
+**Para qué:** con las teselas sueltas, una película de 18 cuadros son ~1260 pedidos a r2.dev (250 ms cada uno, de a 6): ~1 min. Ahora cada cuadro es **una imagen**.
+
+**Qué suma por tiempo y producto** (con `PRECOCIDO_CUADROS` distinto de `no`; prendido por defecto):
+
+```
+slider/{producto}/{tiempo}/c/{z}.webp             el cuadro ENTERO del recorte, z4 (1280 × 1280) y z5 (2048 × 2304)
+slider/{producto}/{tiempo}/m/{z}/{mx}/{my}.webp   metateselas de 1024 px (4 × 4 teselas) sobre la Argentina
+```
+
+- **Las metateselas** cubren la caja de la Argentina (`CAJA_META`: −74° a −53°, −21,5° a −55,2°) en GeoColor z6-z7, el visible z6-z8 y GREMLIN z6. **Sólo el zoom más alto se reproyecta** (la misma cuenta del relevo); los de abajo salen de reducirlo a la mitad (2 × 2, con el alfa). Así las nativas por tiempo son: GeoColor ~37, visible ~69, GREMLIN ~23 (de día; ~130 en total, contra ~42 de la r77).
+- **La cobertura** va en el índice en TESELAS por zoom (`meta.cobertura`): una tesela fuera de ella queda transparente en la metatesela y la página la pide suelta, como hoy.
+- **Las mismas reglas:** un cuadro o una metatesela se escribe sólo si todas sus teselas salieron enteras; primero las imágenes, después el índice (`c`: los zooms de cuadro escritos; `m`: `{ n, faltan, vacias, noche }`); el borrado diferido las incluye.
+- **La etiqueta:** cada WebP lleva un chunk XMP `<hn-slider>producto/tiempo/c/z</hn-slider>` (o `…/m/z/mx/my`). La página la exige exacta.
+- **El visible de noche:** una metatesela entera sin sol no se escribe ni pide nativas (`m.vacias`; con la caja entera de noche, `m.noche`).
+- **La calidad:** GeoColor y el visible, WebP con pérdida (q 82); GREMLIN, **sin pérdida** (es una paleta de dBZ).
+- **La cortesía con CIRA:** las nativas van de a 3 en vuelo, con una por segundo como máximo (contada desde el comienzo de cada pedido). El tope por corrida pasa a 300 (`PRECOCIDO_TOPE`).
+- **El codificador:** `gremlin/webp.mjs` con `sharp` (versión fija en `gremlin/package-lock.json`; el workflow hace `npm ci --prefix gremlin`). La lib no tiene dependencias.
+
+**Lo que pesa (medido el 19/11 con nativas reales de un tiempo de día):**
+
+| | PNG z3-z5 (r77) | cuadros c4 + c5 | metateselas |
+|---|---|---|---|
+| GeoColor | 8,33 MB | 0,24 + 0,86 MB | z6 0,32 + z7 1,33 MB (19) |
+| visible | 5,14 MB | 0,28 + 1,00 MB | z6 0,24 + z7 0,95 + z8 3,74 MB (61) |
+| GREMLIN | 0,45 MB | 0,05 + 0,12 MB | z6 0,06 MB (6) |
+
+**Probar sin R2:** como siempre, con `PUBLICO_CARPETA`. **Rollback:** `PRECOCIDO_CUADROS=no` (el colector queda exactamente como en la r77).
+
+**Tests:** `node --test test/precocido-cuadros.test.mjs` (13) y el control `node test/control-cuadros.mjs` (mutantes en una carpeta temporal fuera del repo).

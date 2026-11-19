@@ -129,27 +129,39 @@ export function cajaCuadro(prod, z) {
   const l = teselasDe(prod, z), r = { x0: Math.min(...l.map((q) => q[0])), x1: Math.max(...l.map((q) => q[0])), y0: Math.min(...l.map((q) => q[1])), y1: Math.max(...l.map((q) => q[1])) };
   memoCaja.set(k, r); return r;
 }
-/** el rango de metateselas { x0, x1, y0, y1 } (en índices de metatesela) del zoom z: el del zoom más alto, alineado para que cada
- *  metatesela de un zoom menor tenga sus 4 hijas adentro */
-export function rangoMeta(prod, z) {
+/** LA COBERTURA de las metateselas del zoom z, EN TESELAS { x0, x1, y0, y1 }: en el zoom más alto, las teselas de la caja de la Argentina;
+ *  en cada zoom de abajo, las teselas cuyas 4 hijas están en la cobertura de arriba (así cada tesela cubierta tiene su dato entero).
+ *  Una tesela fuera de la cobertura va transparente en la metatesela, y la página la pide suelta, como hoy. */
+export function coberturaMeta(prod, z) {
   const zs = Z_META[prod]; if (!zs || zs.indexOf(z) < 0) return null;
-  const top = zs[zs.length - 1], al = 2 ** (top - zs[0]);
-  const x0 = Math.floor(Math.floor(tx(CAJA_META.oeste, top) / META_LADO) / al) * al, x1 = (Math.floor(Math.floor(tx(CAJA_META.este, top) / META_LADO) / al) + 1) * al - 1;
-  const y0 = Math.floor(Math.floor(ty(CAJA_META.norte, top) / META_LADO) / al) * al, y1 = (Math.floor(Math.floor(ty(CAJA_META.sur, top) / META_LADO) / al) + 1) * al - 1;
-  const d = 2 ** (top - z);
-  return { x0: x0 / d, x1: (x1 + 1) / d - 1, y0: y0 / d, y1: (y1 + 1) / d - 1 };
+  const top = zs[zs.length - 1];
+  let c = { x0: tx(CAJA_META.oeste, top), x1: tx(CAJA_META.este, top), y0: ty(CAJA_META.norte, top), y1: ty(CAJA_META.sur, top) };
+  for (let q = top; q > z; q--) c = { x0: Math.ceil(c.x0 / 2), x1: Math.floor((c.x1 + 1) / 2) - 1, y0: Math.ceil(c.y0 / 2), y1: Math.floor((c.y1 + 1) / 2) - 1 };
+  return c;
 }
-/** todas las metateselas [mx, my] del zoom z */
-export function metasDe(prod, z) { const r = rangoMeta(prod, z), out = []; if (!r) return out; for (let mx = r.x0; mx <= r.x1; mx++) for (let my = r.y0; my <= r.y1; my++) out.push([mx, my]); return out; }
+export const enCobertura = (c, x, y) => !!c && x >= c.x0 && x <= c.x1 && y >= c.y0 && y <= c.y1;
+/** todas las metateselas [mx, my] del zoom z (las que tocan su cobertura) */
+export function metasDe(prod, z) {
+  const c = coberturaMeta(prod, z), out = []; if (!c) return out;
+  for (let mx = Math.floor(c.x0 / META_LADO); mx <= Math.floor(c.x1 / META_LADO); mx++) for (let my = Math.floor(c.y0 / META_LADO); my <= Math.floor(c.y1 / META_LADO); my++) out.push([mx, my]);
+  return out;
+}
+/** PURA. deja transparentes las teselas de una metatesela (lado META_PX) que quedan fuera de la cobertura c */
+export function limpiarFuera(buf, c, mx, my) {
+  for (let j = 0; j < META_LADO; j++) for (let i = 0; i < META_LADO; i++) {
+    if (enCobertura(c, mx * META_LADO + i, my * META_LADO + j)) continue;
+    for (let f = 0; f < 256; f++) buf.fill(0, ((j * 256 + f) * META_PX + i * 256) * 4, ((j * 256 + f) * META_PX + i * 256 + 256) * 4);
+  }
+}
 /** el plan de las metateselas del zoom más alto de un tiempo: sus 16 teselas (fuera / noche / con sus nativas) y las nativas */
 export function planMeta(prod, t) {
   const zs = Z_META[prod]; if (!zs) return { z: null, metas: [], nativas: new Map() };
-  const z = zs[zs.length - 1], ms = tiempoMs(t), metas = [], nativas = new Map();
+  const z = zs[zs.length - 1], ms = tiempoMs(t), metas = [], nativas = new Map(), cob = coberturaMeta(prod, z);
   for (const [mx, my] of metasDe(prod, z)) {
     const tes = [];
     for (let j = 0; j < META_LADO; j++) for (let i = 0; i < META_LADO; i++) {
       const x = mx * META_LADO + i, y = my * META_LADO + j;
-      if (validarTesela(prod, z, x, y)) { tes.push({ x, y, fuera: true, nat: [] }); continue; }
+      if (!enCobertura(cob, x, y) || validarTesela(prod, z, x, y)) { tes.push({ x, y, fuera: true, nat: [] }); continue; }
       if (PRODUCTOS[prod].diurno && enteraDeNoche(z, x, y, ms)) { tes.push({ x, y, noche: true, nat: [] }); continue; }
       const { zs: zsl, lista } = nativasTesela(prod, z, x, y);
       if (!lista.length) { tes.push({ x, y, fuera: true, nat: [] }); continue; }
@@ -160,6 +172,12 @@ export function planMeta(prod, t) {
     metas.push({ mx, my, tes, vacia: tes.every((s) => s.noche || s.fuera) && tes.some((s) => s.noche) });
   }
   return { z, metas, nativas };
+}
+/** cuántas metateselas hijas (del zoom z + 1) tiene la metatesela (z, mx, my) */
+export function hijasDe(prod, z, mx, my) {
+  const set = new Set(metasDe(prod, z + 1).map((q) => q[0] + '/' + q[1])); let n = 0;
+  for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) if (set.has((2 * mx + a) + '/' + (2 * my + b))) n++;
+  return n;
 }
 /** PURA. pega una tesela de 256 × 256 (RGBA) en un mosaico de ancho W, en la posición (px, py) */
 export function pegar(dst, W, src, px, py) {
@@ -270,7 +288,7 @@ const cabecera = (prod, conCuadros) => Object.assign({
   /* [r79 · 1-bis] lo que la página necesita para pedir un cuadro entero o una metatesela (y saber qué teselas cubre cada una) */
   cuadro: { ruta: `${RAIZ}/${prod}/{tiempo}/c/{z}.webp`, z: [...Z_CUADRO], cajas: Object.fromEntries(Z_CUADRO.map((z) => [z, cajaCuadro(prod, z)])) },
   meta: { ruta: `${RAIZ}/${prod}/{tiempo}/m/{z}/{x}/{y}.webp`, z: [...(Z_META[prod] || [])], lado: META_LADO, caja: { ...CAJA_META },
-    rangos: Object.fromEntries((Z_META[prod] || []).map((z) => [z, rangoMeta(prod, z)])) },
+    cobertura: Object.fromEntries((Z_META[prod] || []).map((z) => [z, coberturaMeta(prod, z)])) },
 } : {});
 const leerJSON = async (almacen, clave) => {
   const b = await almacen.leer(clave); if (!b) return null;
@@ -346,7 +364,7 @@ export async function correr({
   const ritmo = async () => { const a = reloj(), espera = Math.max(0, proximo - a); proximo = Math.max(a, proximo) + pausaMs; if (espera > 0) await esperar(espera); };
   const pedir = async (ruta, tipo, conRitmo) => {
     if (conRitmo) { if (pausaMs > 0) await ritmo(); }
-    else if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs);
+    else { if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs); proximo = reloj() + pausaMs; }
     res.pedidos++;
     try {
       const r = await fetchFn(BASE + ruta, { headers: { 'user-agent': UA, accept: tipo === 'json' ? 'application/json' : 'image/png' }, signal: AbortSignal.timeout(30000) });
@@ -435,7 +453,7 @@ export async function correr({
     if (cuadros && fallidas === 0) {
       const escribirWebp = async (clave, rgba, w, h, et, cual) => {
         if (cortarAlmacen) { fallidas++; return false; }
-        const b = await codificarWebp(rgba, w, h, et, prod);
+        const b = await codificarWebp(rgba, w, h, et, prod, xmpDe(et));   // el XMP lo arma esta lib (la etiqueta exacta)
         if (!(await escribirR(clave, b, { tipo: 'image/webp', cache: CACHE_TESELA }))) { fallidas++; return false; }
         res['bytes_' + cual] += b.length; return true;
       };
@@ -452,7 +470,7 @@ export async function correr({
       const subir = (z, mx, my, buf, estado) => {
         if (z <= zs[0]) return;
         const k = (z - 1) + '/' + (mx >> 1) + '/' + (my >> 1);
-        let Q = padres.get(k); if (!Q) { Q = { z: z - 1, mx: mx >> 1, my: my >> 1, buf: null, mal: false, vacias: 0, n: 0 }; padres.set(k, Q); }
+        let Q = padres.get(k); if (!Q) { Q = { z: z - 1, mx: mx >> 1, my: my >> 1, buf: null, mal: false, vacias: 0, n: 0 }; padres.set(k, Q); }   // [cada hija que existe pasa por acá]
         Q.n++;
         if (estado === 'mal') Q.mal = true;
         else if (estado === 'vacia') Q.vacias++;
@@ -482,7 +500,10 @@ export async function correr({
           for (const [k, Q] of [...padres]) {
             if (Q.z !== z) continue;
             padres.delete(k);
-            await cerrar(z, Q.mx, Q.my, Q.buf, Q.mal || Q.n < 4 ? 'mal' : Q.vacias === 4 ? 'vacia' : 'ok');
+            if (!metasDe(prod, z).some((q) => q[0] === Q.mx && q[1] === Q.my)) continue;   // fuera de la cobertura de este zoom: no hace falta
+            const hijas = hijasDe(prod, z, Q.mx, Q.my);
+            if (Q.buf) limpiarFuera(Q.buf, coberturaMeta(prod, z), Q.mx, Q.my);   // lo que no tiene sus 4 hijas enteras no se muestra (la página lo pide suelto)
+            await cerrar(z, Q.mx, Q.my, Q.buf, Q.mal || Q.n < hijas ? 'mal' : Q.vacias === Q.n ? 'vacia' : 'ok');
             Q.buf = null;
           }
         }

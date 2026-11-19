@@ -13,9 +13,9 @@ export const AJUSTE_WEBP = Object.freeze({
   gremlin: Object.freeze({ lossless: true, effort: 4 }),
 });
 
-/** rgba (Uint8Array w × h × 4) → Buffer WebP con la etiqueta en su XMP */
-export async function codificarWebp(rgba, w, h, etiqueta, prod) {
+/** rgba (Uint8Array w × h × 4) → Buffer WebP con la etiqueta en su XMP (xmp: el texto ya armado por lib/precocido.mjs, xmpDe) */
+export async function codificarWebp(rgba, w, h, etiqueta, prod, xmp) {
   const ajuste = AJUSTE_WEBP[prod] || AJUSTE_WEBP.geocolor;
   const crudo = Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength);
-  return sharp(crudo, { raw: { width: w, height: h, channels: 4 } }).webp(ajuste).withXmp(xmpDe(etiqueta)).toBuffer();
+  return sharp(crudo, { raw: { width: w, height: h, channels: 4 } }).webp(ajuste).withXmp(xmp || xmpDe(etiqueta)).toBuffer();
 }

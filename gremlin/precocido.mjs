@@ -3,6 +3,8 @@
 // RETENCION_H (horas que se guardan, 1 a 24; 6 por defecto), PRECOCIDO_DEPOSITO (el depósito público; «satchi-slider» por defecto),
 // R2_OPERA_CUENTA · R2_OPERA_ACCESS_KEY_ID · R2_OPERA_SECRET_ACCESS_KEY (las del depósito público de SATCHI; nunca se imprimen)
 // o PUBLICO_CARPETA=/una/carpeta para probar SIN R2 (la llave seca: escribe en esa carpeta y nada más).
+// [r79 · 1-bis] PRECOCIDO_CUADROS (todo menos «no»): además, el cuadro entero WebP (z4, z5) y las metateselas de 1024 px sobre la Argentina;
+// con ellos el tope por defecto es TOPE_CUADROS (300). «no»: exactamente la r77. Ver gremlin/LEEME-precocido.md.
 // [Codex n3-r77-colector · 3] El registro de Actions es PÚBLICO: se imprimen sólo cantidades y, si algo falla, UNA CATEGORÍA FIJA
 // (error:almacen, error:red, error:interno) y el código HTTP numérico si lo hay. NUNCA el mensaje del error (puede traer una URL firmada,
 // una cabecera o un secreto). Si falla el depósito, sale con error (corrida en rojo); si falla SLIDER, sigue con lo que pueda y sale bien.

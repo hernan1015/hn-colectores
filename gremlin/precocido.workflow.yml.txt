@@ -5,6 +5,9 @@
 # APAGADO POR DEFECTO: el schedule corre sólo si la VARIABLE del repo PRECOCIDO_ON vale «si». A mano (Run workflow) corre en SECO por defecto.
 # El cron de GitHub es poco confiable con los colectores nuevos (17/11): el disparo de verdad va por pg_cron, como gremlin (0159), con una
 # migración nueva que decide el maker. El registro de Actions es PÚBLICO: se imprimen sólo cantidades.
+# [r79 · 1-bis] LOS CUADROS ENTEROS Y LAS METATESELAS WebP (sharp, versión fija en gremlin/package-lock.json, se instala con npm ci): prendidos
+# por defecto; la VARIABLE del repo PRECOCIDO_CUADROS=no los apaga (el colector queda como en la r77). Con ellos el tope por corrida es 300
+# (un tiempo de los 3 productos pide ~180 nativas de día; PRECOCIDO_TOPE lo cambia).
 name: colector-precocido
 on:
   schedule:
@@ -17,9 +20,9 @@ on:
         options: [seco, real]
         default: seco
       tope:
-        description: 'pedidos a SLIDER por corrida (20 a 400; 120 por defecto)'
+        description: 'pedidos a SLIDER por corrida (20 a 600; 300 con los cuadros)'
         required: false
-        default: '120'
+        default: '300'
       retencion_h:
         description: 'horas que se guardan (1 a 24; 6 por defecto)'
         required: false
@@ -43,6 +46,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: sharp (el codificador WebP, con su lock)
+        if: ${{ (vars.PRECOCIDO_CUADROS || 'si') != 'no' }}
+        run: npm ci --prefix gremlin --no-audit --no-fund
       - name: Precocer
         env:
           R2_OPERA_CUENTA: ${{ secrets.R2_OPERA_CUENTA }}
@@ -51,6 +57,7 @@ jobs:
           PRECOCIDO_DEPOSITO: ${{ vars.PRECOCIDO_DEPOSITO || 'satchi-slider' }}
           PRECOCIDO_ON: ${{ github.event_name == 'workflow_dispatch' && 'si' || vars.PRECOCIDO_ON }}
           MODO: ${{ github.event_name == 'schedule' && 'real' || inputs.modo }}
-          TOPE: ${{ github.event_name == 'schedule' && '120' || inputs.tope }}
+          TOPE: ${{ github.event_name == 'schedule' && (vars.PRECOCIDO_TOPE || '300') || inputs.tope }}
+          PRECOCIDO_CUADROS: ${{ vars.PRECOCIDO_CUADROS || 'si' }}
           RETENCION_H: ${{ github.event_name == 'schedule' && (vars.PRECOCIDO_RETENCION_H || '6') || inputs.retencion_h }}
         run: node gremlin/precocido.mjs
