@@ -1,0 +1,10 @@
+{
+ "leido": "2026-01-10T15:11:30.000Z",
+ "partes": {
+  "mapa": {
+   "status": 200,
+   "tipo": "text/plain; charset=UTF-8",
+   "cuerpo": "<html><head><script type=\"text/javascript\">\nvar vEstaciones =[[9301,\"Prueba 31\",-34.4,-60.4,new Date(1768057200000),20.0,0.0,\"REM\",0,0,0,0,0],[9302,\"Prueba 32\",-35.2,-61.2,new Date(1768057200000),null,0.0,\"SLA\",0,0,0,0,0],[9399,\"Prueba 39\",-35.3,-61.3,new Date(946684800000),20.0,0.0,\"PRONO\",0,0,0,0,0]];\n</script></head><body>Prueba</body></html>"
+  }
+ }
+}

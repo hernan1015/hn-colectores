@@ -1,0 +1,3 @@
+{"id":"prueba-wl-1","leido":"2026-01-10T15:20:00.000Z","d":{"stationName":"Prueba 61","lastTimestamp":1768057200,"temperature":"68.0","humidity":"50","windSpeed":"10","windGust":"20","windDirection":"S","barometer":"29.92","rainDay":"0.00"}}
+{"id":"prueba-wl-2","leido":"2026-01-10T15:21:00.000Z","d":{"stationName":"Prueba 62","ageInSeconds":50000,"temperature":"68.0"}}
+{"id":"prueba-wl-3","leido":"2026-01-10T15:22:00.000Z","d":{"otraCosa":1}}

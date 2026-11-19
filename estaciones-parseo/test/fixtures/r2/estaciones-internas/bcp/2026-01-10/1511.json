@@ -1,0 +1,10 @@
+{
+ "leido": "2026-01-10T15:11:30.000Z",
+ "partes": {
+  "mapa": {
+   "status": 200,
+   "tipo": "text/plain; charset=UTF-8",
+   "cuerpo": "<html><script>\n/* casilleros */\n    iEstacionLat     = 0\n    iEstacionLong    = 1\n    iEstacionDesact  = 2\n    iEstacionNoOper  = 3\n    iEstacionInstal  = 4\n    iSensorTemp      = 5\n    iSensorTpMin     = 6\n    iSensorTpMax     = 7\n    iSensorPpDia     = 10\n    iSensorHum_Rel   = 14\n    iSensorPresion   = 16\n    iSensorDir_Vto   = 18\n    iSensorVel_Vto   = 19\n    iSensorRaf_Vto   = 20\n    iEstacionUltAct  = 25\n    htmlEstacion[0] = 'Estaci&oacute;n 1 - Prueba 41 (Prueba)'\n    habilEstacion[0] =  1\n    sitioEstacion[0] =  9401\n    jsDatos[0][0][0] = -34.6\n    jsDatos[0][1][0] = -60.4\n    jsDatos[0][25][0] = '10/01/2026 12:00:00'\n    jsDatos[0][5][0] = '20.0 &ordm;C'\n    jsDatos[0][6][0] = '15.0 &ordm;C'\n    jsDatos[0][6][1] = '10/01/2026 6:00:00'\n    jsDatos[0][10][0] = '0.0 mm'\n    jsDatos[0][14][0] = '50 %'\n    jsDatos[0][16][0] = '1013.0 hPa'\n    jsDatos[0][18][0] = '180 &ordm;'\n    jsDatos[0][19][0] = '18 km/h'\n    jsDatos[0][20][0] = '36 km/h'\n    htmlEstacion[1] = 'Estaci&oacute;n 2 - Prueba 42 (Prueba)'\n    habilEstacion[1] =  0\n    sitioEstacion[1] =  9402\n    jsDatos[1][0][0] = -34.7\n    jsDatos[1][1][0] = -60.3\n    jsDatos[1][25][0] = '10/01/2026 12:00:00'\n    jsDatos[1][5][0] = '20.0 &ordm;C'\n    jsDatos[1][6][0] = '15.0 &ordm;C'\n    jsDatos[1][6][1] = '10/01/2026 6:00:00'\n    jsDatos[1][10][0] = '0.0 mm'\n    jsDatos[1][14][0] = '50 %'\n    jsDatos[1][16][0] = 'N/D'\n    jsDatos[1][18][0] = '180 &ordm;'\n    jsDatos[1][19][0] = '18 km/h'\n    jsDatos[1][20][0] = '36 km/h'\n</script></html>"
+  }
+ }
+}

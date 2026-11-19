@@ -1,0 +1,10 @@
+{
+ "leido": "2026-01-10T15:11:30.000Z",
+ "partes": {
+  "instantaneas": {
+   "status": 200,
+   "tipo": "text/plain; charset=UTF-8",
+   "cuerpo": "[{\"estacion\":\"9201\",\"lat\":\"-35.5\",\"lng\":\"-61.5\",\"Nombre\":\"Prueba 21\",\"fecha\":\"10/01/2026 12:00\",\"tempAire\":\"20.0\",\"humedad\":\"50\",\"direccionViento\":\"180\",\"velocidadViento\":\"5.0\",\"precipitacion\":\"0.0\",\"fechaIngles\":\"2026-01-10 12:00:00\",\"Latitud\":\"-35.5\",\"Longitud\":\"-61.5\",\"Altura\":\"50\",\"Correccion_Viento\":\"0\",\"web\":\"1\",\"atraso_max\":\"60\",\"atraso\":\"5\",\"bateria\":\"12.5\",\"puntoRocio\":\"9.3\",\"direccionVientoTexto\":\"S\"},{\"estacion\":\"9202\",\"lat\":\"-35.6\",\"lng\":\"-61.6\",\"Nombre\":\"Prueba 22\",\"fecha\":\"10/01/2026 12:00\",\"tempAire\":\"\",\"humedad\":\"\",\"direccionViento\":\"999.9\",\"velocidadViento\":\"999.9\",\"precipitacion\":\"0.0\",\"fechaIngles\":\"2026-01-10 12:00:00\",\"Latitud\":\"-35.6\",\"Longitud\":\"-61.6\",\"Altura\":\"50\",\"Correccion_Viento\":\"0\",\"web\":\"1\",\"atraso_max\":\"60\",\"atraso\":\"5\",\"bateria\":\"12.5\",\"puntoRocio\":\"9.3\",\"direccionVientoTexto\":\"S\"}]"
+  }
+ }
+}
