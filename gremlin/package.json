@@ -7,5 +7,10 @@
     "colectar": "node gremlin.mjs",
     "test": "node --test test/gremlin.test.mjs"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "sharp": "0.35.5"
+  }
 }

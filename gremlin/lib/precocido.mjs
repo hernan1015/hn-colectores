@@ -27,6 +27,26 @@
 // (error:almacen tope-de-fallas). La escritura del índice se reintenta igual; si al final falla, en esa corrida NO SE BORRA NADA.
 // En el registro: «reintento:almacen http 500 (2/4)» y el total al final. Nunca el mensaje.
 // El almacén (R2 o carpeta) y fetch vienen de afuera, para probar sin red. Se imprimen SÓLO CANTIDADES (el registro de Actions es público).
+//
+// [r79 · punto 1 · la opción 1-bis del maker, 19/11] LA PELÍCULA EN MENOS DE 10 s: además de las teselas, por cada tiempo,
+//   · UN CUADRO ENTERO en WebP por zoom de Z_CUADRO (4 y 5): el mosaico de TODAS las teselas de ese zoom del recorte, en una sola imagen
+//         slider/{producto}/{tiempo}/c/{z}.webp          (z4: 1280 × 1280 px; z5: 2048 × 2304 px; la página dibuja z3 con el de z4)
+//   · METATESELAS de 1024 px (4 × 4 teselas) sobre la Argentina (CAJA_META), en los zooms de Z_META (6-7; 6-8 en el visible; 6 en GREMLIN)
+//         slider/{producto}/{tiempo}/m/{z}/{mx}/{my}.webp   (mx = x div 4, my = y div 4)
+//     Sólo el zoom más alto de cada producto se reproyecta (con la cuenta del relevo); los de abajo salen de REDUCIR a la mitad el de
+//     arriba (promedio 2 × 2 con el alfa): así no se piden más nativas que las del zoom más alto.
+//   Así la película pide 18 imágenes (o unas pocas metateselas por cuadro) en lugar de ~70 teselas por cuadro.
+//   LAS MISMAS REGLAS: un cuadro o una metatesela se escribe SÓLO si todas sus teselas salieron enteras (la regla de la _v1829: lo que
+//   no está, la página lo pide tesela por tesela, como hoy); se escribe ANTES del índice, que lo nombra después (`c`: los zooms de cuadro
+//   escritos; `m`: las metateselas escritas, las que faltan y las vacías de noche); el borrado diferido las incluye; cada WebP lleva su
+//   ETIQUETA en un chunk XMP (<hn-slider>producto/tiempo/c/z</hn-slider> o …/m/z/mx/my), que la página exige exacta.
+//   EL VISIBLE DE NOCHE: una metatesela entera sin sol no se escribe (ni se piden sus nativas): el índice la nombra en `m.vacias`, y con la
+//   caja entera de noche, `m.noche` = true. La página la dibuja transparente y dice «sin luz solar», como hoy.
+//   LA LLAVE: `cuadros` (en el script, PRECOCIDO_CUADROS; «no» la apaga y el colector queda exactamente como en la r77). Con la llave
+//   prendida, las nativas de SLIDER se piden de a EN_VUELO_SLIDER (3) a la vez, con el mismo ritmo de cortesía: una por PAUSA_MS como
+//   máximo (1 s), contadas desde el comienzo de cada pedido; así un tiempo de los tres productos (~180 nativas) entra en la corrida.
+//   El WebP lo arma `codificarWebp(rgba, w, h, etiqueta, producto)`, que viene de afuera (gremlin/webp.mjs, con sharp): esta lib no tiene
+//   dependencias.
 import { crc32 } from './slider.mjs';
 import {
   PRODUCTOS, RECORTE, TESELA, TESELA_SLIDER, CITA, CITA_GREMLIN, UA as UA_RELEVO,
@@ -40,7 +60,8 @@ export const RAIZ = 'slider';
 export const PRODUCTOS_PRE = Object.freeze(['geocolor', 'band_02', 'gremlin']);
 export const Z_MIN = 3, Z_MAX = 5;                   // la vista continente: hasta el zoom 6 del mapa la página pide z5 como máximo
 export const RETENCION_DEF_H = 6, RETENCION_MIN_H = 1, RETENCION_MAX_H = 24;
-export const TOPE_DEFECTO = 120, TOPE_MIN = 20, TOPE_MAX = 400;   // pedidos a SLIDER por corrida (los latest_times incluidos)
+export const TOPE_DEFECTO = 120, TOPE_MIN = 20, TOPE_MAX = 600;   // pedidos a SLIDER por corrida (los latest_times incluidos)
+export const TOPE_CUADROS = 300;   // [r79] con los cuadros y las metateselas, un tiempo de los 3 productos pide ~180 nativas de día
 export const PAUSA_MS = 1000;
 export const MAX_INTENTOS = 4;
 export const FALLAS_SEGUIDAS_CORTE = 3;
@@ -70,6 +91,107 @@ export function categoriaError(e) {
 export const REINTENTO_ESPERAS_MS = Object.freeze([500, 1500, 4000]);   // 4 intentos en total
 export const TOPE_ESCRITURAS_FALLIDAS = 20;   // PUT que fallaron después de los reintentos, en la corrida: se corta
 export const PRESUPUESTO_MS = 7 * 60e3;       // el workflow corta a los 9 min: lo que no entra queda para la próxima
+// ---------- [r79 · 1-bis] los cuadros enteros y las metateselas ----------
+export const Z_CUADRO = Object.freeze([4, 5]);
+export const META_LADO = 4, META_PX = META_LADO * 256;   // 4 × 4 teselas = 1024 px
+export const CAJA_META = Object.freeze({ oeste: -74, este: -53, norte: -21.5, sur: -55.2 });   // la Argentina continental y Tierra del Fuego
+export const Z_META = Object.freeze({ geocolor: Object.freeze([6, 7]), band_02: Object.freeze([6, 7, 8]), gremlin: Object.freeze([6]) });
+export const EN_VUELO_SLIDER = 3;
+export const claveCuadro = (prod, t, z) => `${RAIZ}/${prod}/${t}/c/${z}.webp`;
+export const claveMeta = (prod, t, z, mx, my) => `${RAIZ}/${prod}/${t}/m/${z}/${mx}/${my}.webp`;
+export const etiquetaCuadro = (prod, t, z) => prod + '/' + t + '/c/' + z;
+export const etiquetaMeta = (prod, t, z, mx, my) => prod + '/' + t + '/m/' + z + '/' + mx + '/' + my;
+/** el texto XMP de la etiqueta (lo único que va en el chunk «XMP » del WebP) */
+export const xmpDe = (et) => '<x:xmpmeta xmlns:x="adobe:ns:meta/"><hn-slider>' + et + '</hn-slider></x:xmpmeta>';
+/** PURA. la etiqueta de un WebP (el texto de <hn-slider> en su único chunk XMP), o null (no es un WebP RIFF, no la trae o trae dos) */
+export function etiquetaWebp(u) {
+  const b = u instanceof Uint8Array ? u : new Uint8Array(u || []);
+  if (b.length < 20 || String.fromCharCode(b[0], b[1], b[2], b[3]) !== 'RIFF' || String.fromCharCode(b[8], b[9], b[10], b[11]) !== 'WEBP') return null;
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  if (dv.getUint32(4, true) + 8 !== b.length) return null;
+  let o = 12, hallada = null, n = 0;
+  while (o + 8 <= b.length) {
+    const tipo = String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]), len = dv.getUint32(o + 4, true);
+    if (o + 8 + len > b.length) return null;
+    if (tipo === 'XMP ') {
+      n++;
+      const m = /^<x:xmpmeta xmlns:x="adobe:ns:meta\/"><hn-slider>([A-Za-z0-9_/]{1,80})<\/hn-slider><\/x:xmpmeta>$/.exec(Buffer.from(b.subarray(o + 8, o + 8 + len)).toString('latin1'));
+      hallada = m ? m[1] : null;
+    }
+    o += 8 + len + (len & 1);
+  }
+  return n === 1 ? hallada : null;
+}
+/** la caja (en teselas) del cuadro entero del zoom z: el rectángulo de todas las teselas del recorte de ese zoom */
+const memoCaja = new Map();
+export function cajaCuadro(prod, z) {
+  const k = prod + '/' + z; if (memoCaja.has(k)) return memoCaja.get(k);
+  const l = teselasDe(prod, z), r = { x0: Math.min(...l.map((q) => q[0])), x1: Math.max(...l.map((q) => q[0])), y0: Math.min(...l.map((q) => q[1])), y1: Math.max(...l.map((q) => q[1])) };
+  memoCaja.set(k, r); return r;
+}
+/** el rango de metateselas { x0, x1, y0, y1 } (en índices de metatesela) del zoom z: el del zoom más alto, alineado para que cada
+ *  metatesela de un zoom menor tenga sus 4 hijas adentro */
+export function rangoMeta(prod, z) {
+  const zs = Z_META[prod]; if (!zs || zs.indexOf(z) < 0) return null;
+  const top = zs[zs.length - 1], al = 2 ** (top - zs[0]);
+  const x0 = Math.floor(Math.floor(tx(CAJA_META.oeste, top) / META_LADO) / al) * al, x1 = (Math.floor(Math.floor(tx(CAJA_META.este, top) / META_LADO) / al) + 1) * al - 1;
+  const y0 = Math.floor(Math.floor(ty(CAJA_META.norte, top) / META_LADO) / al) * al, y1 = (Math.floor(Math.floor(ty(CAJA_META.sur, top) / META_LADO) / al) + 1) * al - 1;
+  const d = 2 ** (top - z);
+  return { x0: x0 / d, x1: (x1 + 1) / d - 1, y0: y0 / d, y1: (y1 + 1) / d - 1 };
+}
+/** todas las metateselas [mx, my] del zoom z */
+export function metasDe(prod, z) { const r = rangoMeta(prod, z), out = []; if (!r) return out; for (let mx = r.x0; mx <= r.x1; mx++) for (let my = r.y0; my <= r.y1; my++) out.push([mx, my]); return out; }
+/** el plan de las metateselas del zoom más alto de un tiempo: sus 16 teselas (fuera / noche / con sus nativas) y las nativas */
+export function planMeta(prod, t) {
+  const zs = Z_META[prod]; if (!zs) return { z: null, metas: [], nativas: new Map() };
+  const z = zs[zs.length - 1], ms = tiempoMs(t), metas = [], nativas = new Map();
+  for (const [mx, my] of metasDe(prod, z)) {
+    const tes = [];
+    for (let j = 0; j < META_LADO; j++) for (let i = 0; i < META_LADO; i++) {
+      const x = mx * META_LADO + i, y = my * META_LADO + j;
+      if (validarTesela(prod, z, x, y)) { tes.push({ x, y, fuera: true, nat: [] }); continue; }
+      if (PRODUCTOS[prod].diurno && enteraDeNoche(z, x, y, ms)) { tes.push({ x, y, noche: true, nat: [] }); continue; }
+      const { zs: zsl, lista } = nativasTesela(prod, z, x, y);
+      if (!lista.length) { tes.push({ x, y, fuera: true, nat: [] }); continue; }
+      const nat = lista.map((q) => zsl + ':' + q.f + '_' + q.c);
+      nat.forEach((k, n) => { if (!nativas.has(k)) nativas.set(k, { zs: zsl, f: lista[n].f, c: lista[n].c }); });
+      tes.push({ x, y, nat });
+    }
+    metas.push({ mx, my, tes, vacia: tes.every((s) => s.noche || s.fuera) && tes.some((s) => s.noche) });
+  }
+  return { z, metas, nativas };
+}
+/** PURA. pega una tesela de 256 × 256 (RGBA) en un mosaico de ancho W, en la posición (px, py) */
+export function pegar(dst, W, src, px, py) {
+  for (let j = 0; j < 256; j++) dst.set(src.subarray(j * 1024, j * 1024 + 1024), ((py + j) * W + px) * 4);
+}
+/** PURA. reduce a la mitad (2 × 2 → 1, promediando con el alfa: el color de lo transparente no tiñe) la imagen src (lado S) y la pega
+ *  en dst (lado D) en (ox, oy) */
+export function reducirEn(dst, D, src, S, ox, oy) {
+  const h = S / 2;
+  for (let j = 0; j < h; j++) for (let i = 0; i < h; i++) {
+    let a = 0, r = 0, g = 0, b = 0;
+    for (let q = 0; q < 4; q++) {
+      const s = (((2 * j + (q >> 1)) * S) + 2 * i + (q & 1)) * 4, al = src[s + 3];
+      a += al; r += src[s] * al; g += src[s + 1] * al; b += src[s + 2] * al;
+    }
+    const d = ((oy + j) * D + ox + i) * 4;
+    if (a > 0) { dst[d] = Math.round(r / a); dst[d + 1] = Math.round(g / a); dst[d + 2] = Math.round(b / a); dst[d + 3] = Math.round(a / 4); }
+    else { dst[d] = 0; dst[d + 1] = 0; dst[d + 2] = 0; dst[d + 3] = 0; }
+  }
+}
+/** todas las claves de los cuadros y las metateselas de un tiempo (para el borrado diferido, sin listar) */
+export function clavesCuadros(prod, t) {
+  const out = Z_CUADRO.map((z) => claveCuadro(prod, t, z));
+  for (const z of Z_META[prod] || []) for (const [mx, my] of metasDe(prod, z)) out.push(claveMeta(prod, t, z, mx, my));
+  return out;
+}
+/** ¿el tiempo ya no hace falta rehacerlo? (con la llave de los cuadros, también sus cuadros y sus metateselas) */
+export function hecho(q, conCuadros) {
+  if (!q || q.estado !== 'completo') return false;
+  if (!conCuadros) return true;
+  return Array.isArray(q.c) && Z_CUADRO.every((z) => q.c.indexOf(z) >= 0) && !!q.m && q.m.faltan === 0;
+}
 /** el código HTTP del error del almacén («R2 escribir: HTTP 500»), o null */
 export const httpDe = (e) => { const h = /\bHTTP (\d{3})\b/.exec(String((e && e.message) || '')); return h ? Number(h[1]) : null; };
 /** se reintenta un 5xx o un error de red (fetch falló, se colgó); un 4xx u otra cosa, no */
@@ -139,12 +261,17 @@ export function planTiempo(prod, t, zMin = Z_MIN, zMax = Z_MAX) {
   return { teselas, nativas };
 }
 
-const cabecera = (prod) => ({
+const cabecera = (prod, conCuadros) => Object.assign({
   v: 1, producto: prod, titulo: PRODUCTOS[prod].titulo, z_min: Z_MIN, z_max: Z_MAX, tesela_px: TESELA, recorte: { ...RECORTE },
   ruta: `${RAIZ}/${prod}/{tiempo}/{z}/{x}/{y}.png`,
   cita: prod === 'gremlin' ? CITA_GREMLIN + ' · ' + CITA : CITA,
   nota: 'Teselas de Leaflet reproyectadas desde CIRA/RAMMB SLIDER con la misma cuenta que el relevo de SATCHI. Una tesela que falta no es «despejado»: es sin dato.',
-});
+}, conCuadros ? {
+  /* [r79 · 1-bis] lo que la página necesita para pedir un cuadro entero o una metatesela (y saber qué teselas cubre cada una) */
+  cuadro: { ruta: `${RAIZ}/${prod}/{tiempo}/c/{z}.webp`, z: [...Z_CUADRO], cajas: Object.fromEntries(Z_CUADRO.map((z) => [z, cajaCuadro(prod, z)])) },
+  meta: { ruta: `${RAIZ}/${prod}/{tiempo}/m/{z}/{x}/{y}.webp`, z: [...(Z_META[prod] || [])], lado: META_LADO, caja: { ...CAJA_META },
+    rangos: Object.fromEntries((Z_META[prod] || []).map((z) => [z, rangoMeta(prod, z)])) },
+} : {});
 const leerJSON = async (almacen, clave) => {
   const b = await almacen.leer(clave); if (!b) return null;
   try { return JSON.parse(b.toString('utf8')); } catch { return null; }
@@ -152,8 +279,8 @@ const leerJSON = async (almacen, clave) => {
 const RE_T = /^20\d{12}$/;
 /** [Codex · 1 y 2] el índice leído, VALIDADO: tiempos con forma, `borrar` = [{ t, salio }] con forma, y los dos disjuntos. Si no valida,
  *  se arma uno nuevo y `roto` = true: con un índice roto no se borra nada. */
-export function indiceDe(j, prod) {
-  const nuevo = { ind: { ...cabecera(prod), tiempos: {}, borrar: [] }, roto: j != null };
+export function indiceDe(j, prod, conCuadros) {
+  const nuevo = { ind: { ...cabecera(prod, conCuadros), tiempos: {}, borrar: [] }, roto: j != null, conC: !!(j && j.cuadro) };
   if (!j || j.v !== 1 || j.producto !== prod || !j.tiempos || typeof j.tiempos !== 'object' || Array.isArray(j.tiempos)) return nuevo;
   const borrar = j.borrar === undefined ? [] : j.borrar;
   if (!Array.isArray(borrar)) return nuevo;
@@ -164,7 +291,7 @@ export function indiceDe(j, prod) {
     if (vistos.has(b.t) || Object.prototype.hasOwnProperty.call(j.tiempos, b.t)) return nuevo;   // disjuntos, sin repetidos
     vistos.add(b.t);
   }
-  return { ind: { ...cabecera(prod), tiempos: { ...j.tiempos }, borrar: borrar.map((b) => ({ t: String(b.t), salio: b.salio })) }, roto: false };
+  return { ind: { ...cabecera(prod, conCuadros), tiempos: { ...j.tiempos }, borrar: borrar.map((b) => ({ t: String(b.t), salio: b.salio })) }, roto: false, conC: !!j.cuadro };
 }
 async function enParalelo(lista, n, fn) {
   const out = new Array(lista.length); let i = 0;
@@ -182,6 +309,7 @@ export async function correr({
   almacen, fetchFn = fetch, ahoraMs = Date.now(), llave, modo = 'real', tope = TOPE_DEFECTO, retencionH = RETENCION_DEF_H,
   productos = PRODUCTOS_PRE, pausaMs = PAUSA_MS, esperar = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log, zMax = Z_MAX,
   reloj = Date.now, presupuestoMs = PRESUPUESTO_MS, azar = Math.random,
+  cuadros = false, codificarWebp = null,   // [r79 · 1-bis] la llave de los cuadros enteros y las metateselas, y el codificador WebP
 }) {
   const vence = reloj() + presupuestoMs;
   const res = { estado: 'ok', pedidos: 0, nativas: 0, nativas_malas: 0, tiempos_slider: 0, pendientes: 0, guardados: 0, completos: 0, incompletos: 0,
@@ -189,9 +317,21 @@ export async function correr({
     reintentos: 0, escrituras_fallidas: 0, sin_publicar: 0, indices_fallidos: 0 };
   if (llave !== 'si') { log('precocido: llave apagada (PRECOCIDO_ON no vale «si»): no hago nada'); return { ...res, estado: 'apagado' }; }
   if (!almacen) throw new Error('precocido: sin almacén (faltan las llaves del depósito público o PUBLICO_CARPETA)');
+  cuadros = cuadros === true;
+  if (cuadros && typeof codificarWebp !== 'function') throw new Error('precocido: los cuadros necesitan el codificador WebP');
+  Object.assign(res, { cuadros: 0, cuadros_faltantes: 0, metas: 0, metas_faltantes: 0, metas_vacias: 0, bytes_cuadros: 0, bytes_metas: 0 });
   const maxPedidos = acotarTope(tope), ret = acotarRetencion(retencionH), zM = Math.max(Z_MIN, Math.min(6, Number(zMax) || Z_MAX));
   let fallasSeguidas = 0, cortar = null, cortarAlmacen = false, noBorrar = false;
   const reint = { esperar, log, reloj, vence, azar, cuenta: res };
+  /** [r79] el plan de un tiempo (las teselas z3-z5 y, con la llave, las metateselas) y TODAS sus nativas, sin repetir */
+  const planes = new Map();
+  const planDe = (prod, t) => {
+    const k = prod + '/' + t; if (planes.has(k)) return planes.get(k);
+    const p = planTiempo(prod, t, Z_MIN, zM), pm = cuadros ? planMeta(prod, t) : null, nativas = new Map(p.nativas);
+    if (pm) for (const [kk, q] of pm.nativas) if (!nativas.has(kk)) nativas.set(kk, q);
+    const r = { p, pm, nativas }; planes.set(k, r); return r;
+  };
+  const nativasDelTiempo = (prod, t) => planDe(prod, t).nativas;
   /** un PUT con reintentos: true si quedó; false si un 5xx/red siguió hasta el final (un 4xx, o lo que no es del almacén, sube y corta) */
   const escribirR = async (k, b, o) => {
     try { await conReintento(() => almacen.escribir(k, b, o), reint); return true; } catch (e) {
@@ -201,8 +341,12 @@ export async function correr({
       return false;
     }
   };
-  const pedir = async (ruta, tipo) => {
-    if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs);
+  /* [r79] el ritmo de cortesía con varios en vuelo: cada pedido empieza, como pronto, PAUSA_MS después del comienzo del anterior */
+  let proximo = 0;
+  const ritmo = async () => { const a = reloj(), espera = Math.max(0, proximo - a); proximo = Math.max(a, proximo) + pausaMs; if (espera > 0) await esperar(espera); };
+  const pedir = async (ruta, tipo, conRitmo) => {
+    if (conRitmo) { if (pausaMs > 0) await ritmo(); }
+    else if (res.pedidos > 0 && pausaMs > 0) await esperar(pausaMs);
     res.pedidos++;
     try {
       const r = await fetchFn(BASE + ruta, { headers: { 'user-agent': UA, accept: tipo === 'json' ? 'application/json' : 'image/png' }, signal: AbortSignal.timeout(30000) });
@@ -229,7 +373,7 @@ export async function correr({
     if (!tiempos || !tiempos.length) { res.productos_caidos++; log(`precocido: ${prod}: SLIDER no dio la lista de tiempos; sigo con los otros`); continue; }
     res.tiempos_slider += tiempos.length;
     masNuevoMs = Math.max(masNuevoMs, tiempoMs(tiempos.at(-1)));
-    est[prod] = { tiempos, ...indiceDe(await leerJSON(almacen, claveIndice(prod)), prod) };
+    est[prod] = { tiempos, ...indiceDe(await leerJSON(almacen, claveIndice(prod)), prod, cuadros) };
   }
   // 2) qué falta: dentro de la retención, sin completar y sin agotar los intentos; del más nuevo al más viejo, intercalando productos
   // [Codex · 2] la retención se mide contra SLIDER (el más nuevo de latest_times); el reloj sólo sirve si coincide (± 1 h)
@@ -237,15 +381,15 @@ export async function correr({
   const desde = (Number.isFinite(masNuevoMs) ? masNuevoMs : ahoraMs) - ret * HORA, cola = [];
   for (const [prod, e] of Object.entries(est)) for (const t of e.tiempos) {
     const ms = tiempoMs(t); if (ms < desde || ms > ahoraMs + 15 * 60000) continue;
-    const q = e.ind.tiempos[t]; if (q && (q.estado === 'completo' || (q.intentos || 0) >= MAX_INTENTOS)) continue;
+    const q = e.ind.tiempos[t]; if (q && (hecho(q, cuadros) || (q.intentos || 0) >= MAX_INTENTOS)) continue;
     if (e.ind.borrar.some((b) => b.t === t)) continue;
     cola.push({ prod, t, ms });
   }
   cola.sort((a, b) => b.ms - a.ms || productos.indexOf(a.prod) - productos.indexOf(b.prod));
   res.pendientes = cola.length;
   if (modo === 'seco') {
-    const nat = cola.reduce((a, q) => a + planTiempo(q.prod, q.t, Z_MIN, zM).nativas.size, 0);
-    log(`precocido (SECO): ${Object.keys(est).length} productos · ${res.tiempos_slider} tiempos en SLIDER · ${cola.length} por hacer (${nat} nativas) · retención ${ret} h · z${Z_MIN}-${zM} · no bajo ni guardo nada`);
+    const nat = cola.reduce((a, q) => a + nativasDelTiempo(q.prod, q.t).size, 0);
+    log(`precocido (SECO): ${Object.keys(est).length} productos · ${res.tiempos_slider} tiempos en SLIDER · ${cola.length} por hacer (${nat} nativas) · retención ${ret} h · z${Z_MIN}-${zM}${cuadros ? ' · con cuadros y metateselas' : ''} · no bajo ni guardo nada`);
     return { ...res, estado: 'seco' };
   }
 
@@ -253,25 +397,29 @@ export async function correr({
   for (const { prod, t } of cola) {
     if (cortar || cortarAlmacen) break;
     if (reloj() > vence) { log('precocido: se terminó el presupuesto de tiempo; lo que falta queda para la próxima corrida'); break; }
-    const e = est[prod], plan = planTiempo(prod, t, Z_MIN, zM);
-    if (res.pedidos + plan.nativas.size > maxPedidos) { log(`precocido: tope de ${maxPedidos} pedidos; lo que falta queda para la próxima corrida`); break; }
+    const e = est[prod], { p: plan, pm, nativas: todas } = planDe(prod, t);
+    if (res.pedidos + todas.size > maxPedidos) { log(`precocido: tope de ${maxPedidos} pedidos; lo que falta queda para la próxima corrida`); break; }
     const imgs = new Map();
-    for (const [k, q] of plan.nativas) {
-      if (cortar) break;
-      const r = await pedir(rutaNativa(prod, t, q.zs, q.f, q.c), 'png');
+    const unaNativa = async ([k, q], conRitmo) => {
+      if (cortar) return;
+      const r = await pedir(rutaNativa(prod, t, q.zs, q.f, q.c), 'png', conRitmo);
       res.nativas++;
       const img = r.status === 200 && !motivoPngMalo(r.buf) ? decodificarPng(r.buf) : null;
-      if (!img || img.w !== TESELA_SLIDER || img.h !== TESELA_SLIDER) { res.nativas_malas++; continue; }
+      if (!img || img.w !== TESELA_SLIDER || img.h !== TESELA_SLIDER) { res.nativas_malas++; return; }
       imgs.set(k, img);
-    }
+    };
+    /* [r79] con los cuadros, de a EN_VUELO_SLIDER a la vez y con el ritmo de cortesía; sin la llave, de a una, como en la r77 */
+    if (cuadros) await enParalelo([...todas], EN_VUELO_SLIDER, (kq) => unaNativa(kq, true));
+    else for (const kq of todas) { if (cortar) break; await unaNativa(kq, false); }
     let faltan = 0, escritas = 0;
     const transparente = codificarPng(TESELA, TESELA, new Uint8Array(TESELA * TESELA * 4));
-    const aEscribir = [];
+    const aEscribir = [], rgbaDe = new Map(), malZ = new Set();
     for (const s of plan.teselas) {
       if (s.noche) { aEscribir.push({ s, png: transparente }); res.teselas_noche++; continue; }
       const m = new Map(s.nat.map((k) => [k.slice(k.indexOf(':') + 1), imgs.get(k)]));
       const rp = reproyectar(prod, t, s.z, s.x, s.y, m);
-      if (rp.faltan > 0) { faltan++; continue; }   // a un píxel le faltó su nativa: NO se escribe (la regla de la _v1829)
+      if (rp.faltan > 0) { faltan++; malZ.add(s.z); continue; }   // a un píxel le faltó su nativa: NO se escribe (la regla de la _v1829)
+      if (cuadros && Z_CUADRO.indexOf(s.z) >= 0) rgbaDe.set(s.z + '/' + s.x + '/' + s.y, rp.rgba);
       aEscribir.push({ s, png: codificarPng(TESELA, TESELA, rp.rgba) });
     }
     let fallidas = 0;
@@ -281,13 +429,74 @@ export async function correr({
       if (!(await escribirR(claveTesela(prod, t, s.z, s.x, s.y), b, { tipo: 'image/png', cache: CACHE_TESELA }))) { fallidas++; return; }
       escritas++; res.bytes += b.length;
     });
+    /* [r79 · 1-bis] LOS CUADROS ENTEROS Y LAS METATESELAS: después de las teselas y antes del índice; cada uno, sólo si TODAS sus
+       teselas salieron enteras (si no, no se escribe: la página va tesela por tesela, como hoy) */
+    let cEsc = null, mInfo = null;
+    if (cuadros && fallidas === 0) {
+      const escribirWebp = async (clave, rgba, w, h, et, cual) => {
+        if (cortarAlmacen) { fallidas++; return false; }
+        const b = await codificarWebp(rgba, w, h, et, prod);
+        if (!(await escribirR(clave, b, { tipo: 'image/webp', cache: CACHE_TESELA }))) { fallidas++; return false; }
+        res['bytes_' + cual] += b.length; return true;
+      };
+      cEsc = [];
+      for (const z of Z_CUADRO) {
+        if (z > zM || malZ.has(z)) { res.cuadros_faltantes++; continue; }
+        const cj = cajaCuadro(prod, z), W = (cj.x1 - cj.x0 + 1) * TESELA, H = (cj.y1 - cj.y0 + 1) * TESELA, buf = new Uint8Array(W * H * 4);
+        for (const [x, y] of teselasDe(prod, z)) { const r = rgbaDe.get(z + '/' + x + '/' + y); if (r) pegar(buf, W, r, (x - cj.x0) * TESELA, (y - cj.y0) * TESELA); }
+        if (await escribirWebp(claveCuadro(prod, t, z), buf, W, H, etiquetaCuadro(prod, t, z), 'cuadros')) { cEsc.push(z); res.cuadros++; }
+      }
+      rgbaDe.clear();
+      const zs = Z_META[prod] || [], top = pm ? pm.z : null, vacias = [], padres = new Map();
+      let mEsc = 0, mFal = 0;
+      const subir = (z, mx, my, buf, estado) => {
+        if (z <= zs[0]) return;
+        const k = (z - 1) + '/' + (mx >> 1) + '/' + (my >> 1);
+        let Q = padres.get(k); if (!Q) { Q = { z: z - 1, mx: mx >> 1, my: my >> 1, buf: null, mal: false, vacias: 0, n: 0 }; padres.set(k, Q); }
+        Q.n++;
+        if (estado === 'mal') Q.mal = true;
+        else if (estado === 'vacia') Q.vacias++;
+        else { if (!Q.buf) Q.buf = new Uint8Array(META_PX * META_PX * 4); reducirEn(Q.buf, META_PX, buf, META_PX, (mx - 2 * Q.mx) * META_PX / 2, (my - 2 * Q.my) * META_PX / 2); }
+      };
+      const cerrar = async (z, mx, my, buf, estado) => {
+        if (estado === 'vacia') { vacias.push(z + '/' + mx + '/' + my); res.metas_vacias++; }
+        else if (estado === 'mal') { mFal++; res.metas_faltantes++; }
+        else if (await escribirWebp(claveMeta(prod, t, z, mx, my), buf, META_PX, META_PX, etiquetaMeta(prod, t, z, mx, my), 'metas')) { mEsc++; res.metas++; }
+        else { estado = 'mal'; mFal++; }
+        subir(z, mx, my, buf, estado);
+      };
+      if (top != null) {
+        for (const mt of pm.metas) {
+          if (mt.vacia) { await cerrar(top, mt.mx, mt.my, null, 'vacia'); continue; }
+          const buf = new Uint8Array(META_PX * META_PX * 4); let mal = false;
+          for (const s of mt.tes) {
+            if (s.fuera || s.noche) continue;
+            const m = new Map(s.nat.map((k) => [k.slice(k.indexOf(':') + 1), imgs.get(k)]));
+            const rp = reproyectar(prod, t, top, s.x, s.y, m);
+            if (rp.faltan > 0) { mal = true; break; }   // la regla de la _v1829: una metatesela con un hueco no se escribe
+            pegar(buf, META_PX, rp.rgba, (s.x - mt.mx * META_LADO) * TESELA, (s.y - mt.my * META_LADO) * TESELA);
+          }
+          await cerrar(top, mt.mx, mt.my, mal ? null : buf, mal ? 'mal' : 'ok');
+        }
+        for (let z = top - 1; z >= zs[0]; z--) {
+          for (const [k, Q] of [...padres]) {
+            if (Q.z !== z) continue;
+            padres.delete(k);
+            await cerrar(z, Q.mx, Q.my, Q.buf, Q.mal || Q.n < 4 ? 'mal' : Q.vacias === 4 ? 'vacia' : 'ok');
+            Q.buf = null;
+          }
+        }
+      }
+      const noche = vacias.length > 0 && mEsc === 0 && mFal === 0;
+      mInfo = { n: mEsc, faltan: mFal, vacias: noche ? [] : vacias, noche };
+    }
     res.teselas += escritas; res.teselas_faltantes += faltan;
     if (fallidas > 0) {   // [reintento] el almacén no tomó alguna tesela: el tiempo NO se publica ni gasta un intento; la próxima lo rehace
       res.sin_publicar++; log(`precocido: un tiempo con ${fallidas} teselas que el almacén no tomó; no lo publico`);
       continue;
     }
     const estado = faltan === 0 ? 'completo' : 'incompleto', previo = e.ind.tiempos[t];
-    e.ind.tiempos[t] = { estado, n: escritas, faltan, intentos: (previo?.intentos || 0) + 1, z: [Z_MIN, zM] };
+    e.ind.tiempos[t] = { estado, n: escritas, faltan, intentos: (previo?.intentos || 0) + 1, z: [Z_MIN, zM], ...(cuadros ? { c: cEsc || [], m: mInfo || { n: 0, faltan: 0, vacias: [], noche: false } } : {}) };
     e.ind.actualizado = new Date(ahoraMs).toISOString();
     if (!(await escribirR(claveIndice(prod), JSON.stringify(e.ind), { tipo: 'application/json', cache: CACHE_INDICE }))) {   // después de las teselas
       res.indices_fallidos++; noBorrar = true; continue;   // [reintento] el índice no quedó: en esta corrida no se borra nada
@@ -310,7 +519,7 @@ export async function correr({
       for (const q of [...e.ind.borrar]) {
         if (!(ahoraMs - q.salio > ESPERA_BORRADO_MS)) continue;              // salió hace poco: todavía puede haber un índice viejo en caché
         if (!(tiempoMs(q.t) < desde) || e.ind.tiempos[q.t]) continue;        // sólo lo vencido según SLIDER y fuera del índice
-        const claves = clavesTiempo(prod, q.t, Z_MIN, Math.max(zM, Number(e.ind.z_max) || Z_MAX));
+        const claves = clavesTiempo(prod, q.t, Z_MIN, Math.max(zM, Number(e.ind.z_max) || Z_MAX)).concat(cuadros || e.conC ? clavesCuadros(prod, q.t) : []);   // [r79] con sus cuadros y metateselas
         if (claves.length > presupuesto) break;
         const r = await enParalelo(claves, PARALELO, (k) => conReintento(() => almacen.borrar(k), reint).then(() => true, (err) => { if (!reintentable(err)) throw err; return false; }));
         const mal = r.filter((x) => !x).length;
@@ -329,7 +538,7 @@ export async function correr({
   }
   if (cortar) { res.estado = 'cortada'; }
   if (res.escrituras_fallidas) res.estado = cortarAlmacen ? 'cortada-almacen' : 'escritura-con-fallas';
-  log(`precocido: ${res.pedidos} pedidos (${res.nativas} nativas, ${res.nativas_malas} malas) · ${res.pendientes} pendientes · ${res.guardados} tiempos guardados (${res.completos} completos, ${res.incompletos} incompletos) · ${res.teselas} teselas (${res.teselas_noche} de noche, ${res.teselas_faltantes} sin escribir) · ${(res.bytes / 1e6).toFixed(2)} MB · ${res.sacados} tiempos vencidos · ${res.borrados} borradas · ${res.reintentos} reintentos · ${res.escrituras_fallidas} escrituras fallidas (${res.sin_publicar} tiempos sin publicar, ${res.indices_fallidos} índices)${cortar ? ' · CORTADA: ' + cortar : ''}${cortarAlmacen ? ' · CORTADA: ' + TOPE_ESCRITURAS_FALLIDAS + ' escrituras fallidas' : ''}`);
+  log(`precocido: ${res.pedidos} pedidos (${res.nativas} nativas, ${res.nativas_malas} malas) · ${res.pendientes} pendientes · ${res.guardados} tiempos guardados (${res.completos} completos, ${res.incompletos} incompletos) · ${res.teselas} teselas (${res.teselas_noche} de noche, ${res.teselas_faltantes} sin escribir) · ${(res.bytes / 1e6).toFixed(2)} MB · ${res.sacados} tiempos vencidos · ${res.borrados} borradas${cuadros ? ` · ${res.cuadros} cuadros (${res.cuadros_faltantes} sin escribir, ${(res.bytes_cuadros / 1e6).toFixed(2)} MB) · ${res.metas} metateselas (${res.metas_faltantes} sin escribir, ${res.metas_vacias} de noche, ${(res.bytes_metas / 1e6).toFixed(2)} MB)` : ''} · ${res.reintentos} reintentos · ${res.escrituras_fallidas} escrituras fallidas (${res.sin_publicar} tiempos sin publicar, ${res.indices_fallidos} índices)${cortar ? ' · CORTADA: ' + cortar : ''}${cortarAlmacen ? ' · CORTADA: ' + TOPE_ESCRITURAS_FALLIDAS + ' escrituras fallidas' : ''}`);
   if (res.escrituras_fallidas) {
     const e = new Error('R2 escribir: hubo fallas'); e.almacen = true; e.resumen = res;
     e.categoria = cortarAlmacen ? 'error:almacen tope-de-fallas' : 'error:almacen escritura-con-fallas';

@@ -9,7 +9,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { almacenCarpeta, almacenR2 } from '../rayos-hora/lib/almacen.mjs';
-import { correr, categoriaError } from './lib/precocido.mjs';
+import { correr, categoriaError, TOPE_CUADROS } from './lib/precocido.mjs';
 
 export async function principal({ env = process.env, almacen, fetchFn, log = console.log, logError = console.error } = {}) {
   const DEPOSITO = String(env.PRECOCIDO_DEPOSITO || 'satchi-slider').trim();
@@ -22,8 +22,13 @@ export async function principal({ env = process.env, almacen, fetchFn, log = con
   /* el almacén marca sus errores: así se clasifican como error:almacen aunque el mensaje no lo diga */
   const marcado = almacen && Object.fromEntries(['leer', 'escribir', 'borrar', 'listar'].filter((k) => typeof almacen[k] === 'function')
     .map((k) => [k, (...a) => Promise.resolve().then(() => almacen[k](...a)).catch((e) => { try { e.almacen = true; } catch { /* */ } throw e; })]));
+  /* [r79 · 1-bis] los cuadros enteros y las metateselas WebP: prendidos salvo PRECOCIDO_CUADROS=no (el rollback: la r77 tal cual).
+     El codificador (sharp) se carga sólo si hace falta: con la llave apagada no se toca ninguna dependencia. */
+  const cuadros = env.PRECOCIDO_ON === 'si' && env.PRECOCIDO_CUADROS !== 'no';
+  const tope = env.TOPE || (cuadros ? String(TOPE_CUADROS) : undefined);
   try {
-    await correr({ almacen: marcado ? { ...almacen, ...marcado } : almacen, llave: env.PRECOCIDO_ON, modo: env.MODO === 'seco' ? 'seco' : 'real', tope: env.TOPE, retencionH: env.RETENCION_H, ...(fetchFn ? { fetchFn } : {}), log });
+    const codificarWebp = cuadros ? (await import('./webp.mjs')).codificarWebp : null;
+    await correr({ almacen: marcado ? { ...almacen, ...marcado } : almacen, llave: env.PRECOCIDO_ON, modo: env.MODO === 'seco' ? 'seco' : 'real', tope, retencionH: env.RETENCION_H, cuadros, codificarWebp, ...(fetchFn ? { fetchFn } : {}), log });
     return 0;
   } catch (e) {
     logError('precocido: falló (' + categoriaError(e) + ')');
