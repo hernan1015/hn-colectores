@@ -59,7 +59,9 @@ def leer_zona(z, calado_dir=None):
 
 
 def obs_opera(meta, shape, fecha, indice):
-    """el agua abierta (clase 1) de la última pasada con ≥ 50 % de la caja, hasta OPERA_DIAS antes de la fecha → (uint8 0/1, fecha, cob)"""
+    """el agua abierta (clase 1) de la última pasada con ≥ 50 % de la caja, hasta OPERA_DIAS antes de la fecha → (uint8 0/1, fecha, cob, False).
+    [r79 · maker 19/11, (b)] si no hay ninguna en esos días (las fechas de pronóstico lejanas), LA ÚLTIMA PASADA DISPONIBLE anterior, con su
+    fecha (el cuarto valor es True: «última pasada dd/mm» en la página). Nunca un tramo vacío que parezca seco por falta de una pasada nueva."""
     import rasterio
     from rasterio.warp import reproject, Resampling
     from rasterio.transform import from_bounds
@@ -68,9 +70,9 @@ def obs_opera(meta, shape, fecha, indice):
     por = {}
     for g in indice.values():
         b = g['bbox']
-        if f0 <= g['fecha'] <= f1 and not (b[2] < meta['oeste'] or b[0] > meta['este'] or b[3] < meta['sur'] or b[1] > meta['norte']):
+        if g['fecha'] <= f1 and not (b[2] < meta['oeste'] or b[0] > meta['este'] or b[3] < meta['sur'] or b[1] > meta['norte']):
             por.setdefault(g['fecha'], []).append(g['archivo'])
-    for f in sorted(por, reverse=True):
+    for f in sorted(por, reverse=True):   # primero las de la ventana (de la más nueva); si ninguna sirve, las anteriores (la última disponible)
         mos = np.full((H, W), 255, np.uint8)
         for t in por[f]:
             with rasterio.open(t) as s:
@@ -79,8 +81,8 @@ def obs_opera(meta, shape, fecha, indice):
             tmp = np.where(np.isin(tmp, (0, 1, 3)), tmp, 255); ll = (mos == 255) | ((tmp == 1) & (mos != 1)); ll &= tmp != 255; mos[ll] = tmp[ll]
         cob = float((mos != 255).mean())
         if cob >= OPERA_COB:
-            return (mos == 1).astype(np.uint8), f[:4] + '-' + f[4:6] + '-' + f[6:], round(100 * cob, 1)
-    return None, None, None
+            return (mos == 1).astype(np.uint8), f[:4] + '-' + f[4:6] + '-' + f[6:], round(100 * cob, 1), f < f0
+    return None, None, None, False
 
 
 def factor_borde(meta, U, bordes):
@@ -270,22 +272,22 @@ def precocer(alt, ind, fechas, salida, zmin=6, zmax=11, zonas=None, calado_dir=N
                 fuentes.append({'meta': Z[z]['meta'], 'rgb': rgb, 'a': al, 'w': Z[z]['w'], 'peso': None, 'fijo': None, 'rayado': True, 'sd': sdm})
                 continue
             if a.get('tipo') == 'pronostico': tipo = 'pronostico'
-            obs, fo, cob = (None, None, None)
-            if Z[z]['R']['px_meseta'] or Z[z]['R']['px_pico']: obs, fo, cob = obs_opera(Z[z]['meta'], Z[z]['U'].shape, fecha, ind)
+            obs, fo, cob, ult = (None, None, None, False)
+            if Z[z]['R']['px_meseta'] or Z[z]['R']['px_pico']: obs, fo, cob, ult = obs_opera(Z[z]['meta'], Z[z]['U'].shape, fecha, ind)
             rgb, al, fj = pintar_zona(Z[z]['U'], Z[z]['marca'], int(math.floor(a['h'] * 100 + 0.5)), obs, Z[z]['fb'])
             fuentes.append({'meta': Z[z]['meta'], 'rgb': rgb, 'a': al, 'w': Z[z]['w'], 'peso': None, 'fijo': fj, 'veto': Z[z]['marca'] > 0})
-            det[z] = {'h': a['h'], 'opera': fo, 'opera_cob': cob}
+            det[z] = {'h': a['h'], 'opera': fo, 'opera_cob': cob, 'opera_ultima': bool(ult)}
         sueltas = dict(('av:' + k, ampliar(c['caja'])) for k, c in av.items()); sueltas.update(corredores(Z))
         for k, caja in sueltas.items():   # el agua vista sin modelo (cajas de agua vista y los tramos del río entre zonas), en el color fijo
             o, s, e, n = caja; px = 0.00054; W = int(round((e - o) / px)); H = int(round((n - s) / px))
             meta = {'oeste': o, 'sur': s, 'este': e, 'norte': n, 'pixel_m': [px * 111320 * math.cos(math.radians((s + n) / 2)), px * 110950]}
-            obs, fo, cob = obs_opera(meta, (H, W), fecha, ind)
+            obs, fo, cob, ult = obs_opera(meta, (H, W), fecha, ind)
             if obs is None: det[k] = {'opera': None}; continue
             obs = unida_al_rio(obs)   # sólo los cuerpos de agua grandes (el río y su planicie): fuera los charcos sueltos
             rgb = np.zeros((H, W, 3), np.uint8); rgb[obs == 1] = FIJO
             al = obs.astype(np.float32) * factor_borde(meta, obs, ('oeste', 'este', 'norte', 'sur'))   # sin cortes rectos: se esfuma en ~1 km
             fuentes.append({'meta': meta, 'rgb': rgb, 'a': al, 'w': None, 'peso': PESO_AGUA_VISTA, 'fijo': None})
-            det[k] = {'opera': fo, 'opera_cob': cob}
+            det[k] = {'opera': fo, 'opera_cob': cob, 'opera_ultima': bool(ult)}
         cajas = [(F['meta']['oeste'], F['meta']['sur'], F['meta']['este'], F['meta']['norte']) for F in fuentes]
         n = 0; bytes_ = 0
         for zz in range(A.zmin, A.zmax + 1):
@@ -297,7 +299,8 @@ def precocer(alt, ind, fechas, salida, zmin=6, zmax=11, zonas=None, calado_dir=N
                     if im is None: continue
                     d = os.path.join(base, fecha, str(zz), str(x)); os.makedirs(d, exist_ok=True)
                     f = os.path.join(d, f'{y}.png'); Image.fromarray(im, 'RGBA').save(f, optimize=True); n += 1; bytes_ += os.path.getsize(f)
-        indice['fechas'].append({'fecha': fecha, 'tipo': tipo, 'sin_dato': sin, 'zonas': det})
+        ultimas = sorted({d['opera'] for d in det.values() if d.get('opera_ultima') and d.get('opera')})
+        indice['fechas'].append({'fecha': fecha, 'tipo': tipo, 'sin_dato': sin, 'zonas': det, 'opera_ultima': ultimas})   # [b] las pasadas viejas usadas ese día
         indice['mb'][fecha] = {'teselas': n, 'mb': round(bytes_ / 1e6, 3)}
         log(f'{fecha}: {n} teselas · {bytes_ / 1e6:.2f} MB · sin dato {len(sin)} · {time.time() - t0:.0f} s')
     if extra: indice.update(extra)
