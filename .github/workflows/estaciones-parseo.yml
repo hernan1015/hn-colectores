@@ -1,0 +1,72 @@
+# HN AGRO · el parseo de las estaciones internas: R2 → base (estaciones + estaciones_lecturas, migración 0161). USO INTERNO.
+# ⚠ ESTE ARCHIVO ES .txt A PROPÓSITO: lo instala local (hace falta el permiso `workflow`):
+#     git mv estaciones-parseo/estaciones-parseo.workflow.yml.txt .github/workflows/estaciones-parseo.yml
+# Corre SOLO cuando termina cada cadena de rondas de `colector-estaciones-privadas` (workflow_run; la cadena dura ~5 h, por
+# eso la ventana es de 8 h) y a mano (workflow_dispatch, en SECO por defecto).
+# LA LLAVE: la variable del repo ESTACIONES_PARSEO_ON tiene que ser 'si'. Mientras no exista, no escribe nada en la base
+# (sólo se puede correr a mano en SECO, que lee R2 y escribe en una PGlite en memoria que se tira al terminar).
+# Los secretos (sólo por nombre; los carga local, nunca se imprimen):
+#   R2_ACCOUNT_ID, R2_BUCKET                                  (ya existen)
+#   PARSEO_R2_ACCESS_KEY_ID, PARSEO_R2_SECRET_ACCESS_KEY      NUEVOS: un token de R2 de SÓLO LECTURA
+#   SIPAN_PG_URL                                              (ya existe) el rol colector_estaciones, por el pooler
+# El registro de Actions es PÚBLICO: el job imprime sólo cantidades y categorías (parsear.mjs · soloCantidades).
+name: parseo-estaciones
+on:
+  workflow_run:
+    workflows: [colector-estaciones-privadas]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'seco (R2 → PGlite en memoria, no toca la base) o real'
+        type: choice
+        options: [seco, real]
+        default: seco
+      horas:
+        description: 'cuántas horas de rondas leer (1 a 72)'
+        default: '8'
+permissions:
+  contents: read
+concurrency:
+  group: parseo-estaciones
+  cancel-in-progress: false
+jobs:
+  parseo:
+    # a mano en SECO corre aunque la llave esté apagada (no toca la base); todo lo demás, sólo con la llave en 'si'
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && inputs.modo == 'seco') ||
+          (vars.ESTACIONES_PARSEO_ON == 'si' &&
+           (github.event_name == 'workflow_dispatch' ||
+            (github.event.workflow_run.conclusion != 'skipped' && github.event.workflow_run.event != 'pull_request'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            estaciones-parseo
+            sipan-alto-valle/lib
+            sipan-alto-valle/migracion
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Dependencias
+        run: |
+          npm ci --prefix estaciones-parseo --omit=dev --no-audit --no-fund
+          if [ "${MODO}" = "seco" ]; then npm i --prefix estaciones-parseo --no-save --no-audit --no-fund @electric-sql/pglite@0.5.16; fi
+        env:
+          MODO: ${{ github.event_name == 'workflow_dispatch' && inputs.modo || 'real' }}
+      - name: Parseo
+        env:
+          MODO: ${{ github.event_name == 'workflow_dispatch' && inputs.modo || 'real' }}
+          HORAS: ${{ github.event_name == 'workflow_dispatch' && inputs.horas || '8' }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          PARSEO_R2_ACCESS_KEY_ID: ${{ secrets.PARSEO_R2_ACCESS_KEY_ID }}
+          PARSEO_R2_SECRET_ACCESS_KEY: ${{ secrets.PARSEO_R2_SECRET_ACCESS_KEY }}
+          PARSEO_PG_URL: ${{ (github.event_name != 'workflow_dispatch' || inputs.modo == 'real') && secrets.SIPAN_PG_URL || '' }}
+        run: |
+          case "$HORAS" in ''|*[!0-9]*) echo '{"ok":false,"error":"horas_no_es_un_numero"}'; exit 1;; esac
+          if [ "$MODO" = "seco" ]; then node estaciones-parseo/parsear.mjs --seco --horas "$HORAS"
+          else node estaciones-parseo/parsear.mjs --horas "$HORAS"; fi
