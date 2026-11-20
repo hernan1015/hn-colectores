@@ -15,7 +15,7 @@ Uso: python -I litoral.py"""
 import datetime, hashlib, json, os, sys, time, urllib.error, urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-METODO_V = 'r79c-4'   # sube si cambia el método (marcas, fusión, paleta): obliga a regenerar
+METODO_V = 'r79c-5'   # sube si cambia el método (marcas, fusión, paleta): obliga a regenerar
 ZONAS = ['corrientes', 'bellavista', 'reconquista', 'goya', 'esquina', 'lapaz', 'santotome', 'alvear', 'libres', 'caseros', 'concordia', 'colon', 'cdeluruguay']
 CMR = 'https://cmr.earthdata.nasa.gov/search/granules.umm_json?collection_concept_id=C2949811996-POCLOUD&page_size=200'
 UA = 'hn-agro-colector-litoral/1'
