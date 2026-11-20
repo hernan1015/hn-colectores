@@ -11,6 +11,7 @@ import path from 'node:path';
 import { RAIZ, FIX, archivos } from './ayuda.mjs';
 import { FUENTES } from '../fuentes/index.mjs';
 import { crear as crearWC, FORMATO } from '../fuentes/weathercloud.mjs';
+import { crear as crearWL, FORMATO as FORMATO_WL } from '../fuentes/weatherlink.mjs';
 
 /** Todo lo que los módulos sacan de una carpeta con la forma de R2. */
 function extraer(dir) {
@@ -25,7 +26,8 @@ function extraer(dir) {
     if (fs.existsSync(pIdx)) for (const a of fs.readdirSync(pIdx)) {
       for (const s of JSON.parse(fs.readFileSync(path.join(pIdx, a), 'utf8'))) indice.set(String(s.id), { lat: s.lat, lon: s.lng, tb: s.tb });
     }
-    const mod = f.id === 'weathercloud' ? crearWC({ ...FORMATO, verificado: true, posiciones: { ...FORMATO.posiciones, id: 0, nombre: 1 } }) : f;
+    // con el formato «verificado» a la fuerza, para que también salgan los nombres que traería el detalle
+    const mod = f.id === 'weathercloud' ? crearWC({ ...FORMATO, verificado: true, posiciones: { ...FORMATO.posiciones, id: 0, nombre: 1 } }) : f.id === 'weatherlink' ? crearWL({ ...FORMATO_WL, verificado: true }) : f;
     for (const a of archivos(d).filter((p) => !p.includes(path.sep + 'indices' + path.sep))) {
       const t = fs.readFileSync(a, 'utf8');
       const obj = f.abrir ? f.abrir(t) : JSON.parse(t);

@@ -21,16 +21,16 @@ test('el job en seco: primera corrida escribe, la segunda NO escribe nada (idemp
   const almacen = almacenDeCarpeta(FIX);
   const r1 = await correr({ almacen, db, ahora: AHORA });
   assert.equal(r1.ok, true);
-  assert.equal(r1.total.nuevas, 24);
+  assert.equal(r1.total.nuevas, 23);   // 23: la de WeatherLink ya no entra (formato sin verificar, 0152 obs. 6)
   assert.equal(r1.total.estaciones, 17);
   const r2 = await correr({ almacen, db, ahora: AHORA });
   assert.equal(r2.ok, true);
   assert.equal(r2.total.estaciones, 0);
   assert.equal(r2.total.nuevas, 0);
   assert.equal(r2.total.cambiadas, 0);
-  assert.equal(r2.total.iguales, 24);
+  assert.equal(r2.total.iguales, 23);
   const n = await comoAdmin(db, () => db.q('select count(*)::int as n from estaciones_lecturas'));
-  assert.equal(n[0].n, 24);
+  assert.equal(n[0].n, 23);
   const reg = await comoAdmin(db, () => db.q("select count(*)::int as n from registro_procesos where proceso = 'estaciones_parseo' and ok"));
   assert.equal(reg[0].n, 2);
   await db.cerrar();

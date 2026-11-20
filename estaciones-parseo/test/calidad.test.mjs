@@ -87,9 +87,9 @@ test('la clave de una ronda: <día ARG>/<HHMM UTC>; de 00 a 02 UTC es del día A
 });
 
 test('el log público: sólo números y categorías; un nombre, una lista o un id en una clave lo frenan', () => {
-  assert.doesNotThrow(() => soloCantidades({ a: 1, b: { c: true, d: 'base:23514' } }));
-  assert.throws(() => soloCantidades({ a: 'Prueba 1' }));
-  assert.throws(() => soloCantidades({ a: ['9001'] }));
+  assert.doesNotThrow(() => soloCantidades({ horas: 1, fuentes: { eeaoc: { ok: true, error: 'base:23514' } } }));
+  assert.throws(() => soloCantidades({ error: 'Prueba 1' }));
+  assert.throws(() => soloCantidades({ horas: ['9001'] }));
   assert.throws(() => soloCantidades({ 'est_9001': 1 }));
-  assert.throws(() => soloCantidades({ a: '-34.5' }));
+  assert.throws(() => soloCantidades({ fuentes: { eeaoc: { error: '-34.5' } } }));
 });

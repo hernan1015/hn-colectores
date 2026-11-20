@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ronda } from './ayuda.mjs';
-import weatherlink from '../fuentes/weatherlink.mjs';
+import weatherlink, { crear as crearWL, FORMATO as WL_FORMATO, convertir as convertirWL } from '../fuentes/weatherlink.mjs';
 import weathercloud, { crear as crearWC, FORMATO } from '../fuentes/weathercloud.mjs';
 import siga from '../fuentes/siga.mjs';
 import eeaoc from '../fuentes/eeaoc.mjs';
@@ -142,22 +142,62 @@ test('SIGA: la fecha con «Z[UTC]», la convencional sin lectura, la no visible 
   assert.deepEqual(r.lecturas[0].crudo, { precipitacion: 0 });
 });
 
-test('WeatherLink: °F → °C, mph → m/s, inHg → hPa, in → mm, rumbo → grados; coordenadas del índice', () => {
-  const r = weatherlink.leer(ronda('weatherlink/2026-01-10/1511.jsonl', weatherlink.abrir),
-    { indice: new Map([['prueba-wl-1', { lat: -34.505, lon: -60.505, tb: 1 }], ['prueba-wl-4', { lat: -34.1, lon: -60.1, tb: -1 }]]) });
+const IDX_WL = () => new Map([['prueba-wl-1', { lat: -34.505, lon: -60.505, tb: 1 }], ['prueba-wl-4', { lat: -34.1, lon: -60.1, tb: -1 }]]);
+const WL_OK = { ...WL_FORMATO, verificado: true };
+/** Un .jsonl sintético de WeatherLink, ya abierto. */
+const wl = (...renglones) => weatherlink.abrir(renglones.map((d, i) => JSON.stringify({ id: 'prueba-wl-' + (i + 1), leido: '2026-01-10T15:20:00.000Z', d })).join('\n'));
+
+test('[0152 obs. 6] WeatherLink con el formato SIN verificar: guarda las estaciones (del índice) y NINGUNA lectura', () => {
+  assert.equal(WL_FORMATO.verificado, false);
+  const r = weatherlink.leer(ronda('weatherlink/2026-01-10/1511.jsonl', weatherlink.abrir), { indice: IDX_WL() });
+  assert.equal(r.lecturas.length, 0);
+  assert.deepEqual(r.estaciones.map((e) => e.estacion_id), ['prueba-wl-1', 'prueba-wl-2', 'prueba-wl-3', 'prueba-wl-4']);
+  const e1 = r.estaciones.find((e) => e.estacion_id === 'prueba-wl-1');
+  assert.deepEqual([e1.lat, e1.lon, e1.activa, e1.nombre], [-34.505, -60.505, true, null]);   // el nombre del detalle tampoco
+  assert.equal(r.estaciones.find((e) => e.estacion_id === 'prueba-wl-4').activa, false);
+  assert.deepEqual(r.descartadas, { formato_sin_verificar: 3 });
+  // los NOMBRES de las claves del detalle se anotan (para verificar el formato; parsear.mjs los manda sólo a la base)
+  assert.equal(r.claves_vistas.otraCosa, 1);
+  assert.equal(r.claves_vistas.temperature, 2);
+});
+
+test('WeatherLink verificado, con la unidad ESCRITA: °F → °C, mph → m/s, inHg → hPa, in → mm (y °C, km/h, hPa, mm tal cual)', () => {
+  const r = crearWL(WL_OK).leer(wl(
+    { lastTimestamp: 1768057200, temperature: '68.0 °F', humidity: '50', windSpeed: '10 mph', windGust: '36 km/h', windDirection: 'S', barometer: '29.92 inHg', rainDay: '0.10 in' },
+    { lastTimestamp: 1768057200, temperature: '20.5 °C', windSpeed: '3 m/s', barometer: '1013.0 hPa', rainDay: '2.5 mm' }), { indice: IDX_WL() });
+  const [a] = de(r, 'prueba-wl-1'), [b] = de(r, 'prueba-wl-2');
+  assert.equal(a.instante, Date.parse('2026-01-10T15:00:00Z'));
+  assert.ok(Math.abs(a.temp_c - 20) < 1e-9);
+  assert.ok(Math.abs(a.viento_ms - 4.4704) < 1e-9);
+  assert.ok(Math.abs(a.racha_ms - 10) < 1e-9);
+  assert.ok(Math.abs(a.presion_hpa - 1013.21) < 0.01);
+  assert.ok(Math.abs(a.lluvia_dia_mm - 2.54) < 1e-9);
+  assert.equal(a.viento_dir_gr, 180);
+  assert.equal(a.hum_pct, 50);
+  assert.deepEqual(a.crudo, {});
+  assert.deepEqual([b.temp_c, b.viento_ms, b.presion_hpa, b.lluvia_dia_mm], [20.5, 3, 1013, 2.5]);
+  assert.equal(r.descartadas.sin_unidad, undefined);
+});
+
+test('WeatherLink verificado, SIN unidad: NUNCA se convierte (ni se supone °F, mph, in ni inHg); el número queda en crudo', () => {
+  // la fixture del repo trae los valores sin unidad («68.0», «29.92»), como un detalle cuya forma no se conoce
+  const r = crearWL(WL_OK).leer(ronda('weatherlink/2026-01-10/1511.jsonl', weatherlink.abrir), { indice: IDX_WL() });
   const [l] = de(r, 'prueba-wl-1');
-  assert.equal(l.instante, Date.parse('2026-01-10T15:00:00Z'));
-  assert.ok(Math.abs(l.temp_c - 20) < 1e-9);
-  assert.ok(Math.abs(l.viento_ms - 4.4704) < 1e-9);
-  assert.ok(Math.abs(l.presion_hpa - 1013.21) < 0.01);
-  assert.equal(l.lluvia_dia_mm, 0);
-  assert.equal(l.viento_dir_gr, 180);
-  // la de ageInSeconds: el instante se calcula desde la edad (y la regla de las 12 h la saca después)
+  assert.deepEqual([l.temp_c, l.viento_ms, l.racha_ms, l.presion_hpa, l.lluvia_dia_mm], [null, null, null, null, null]);
+  assert.deepEqual(l.crudo, { temp_c_sin_unidad: 68, viento_ms_sin_unidad: 10, racha_ms_sin_unidad: 20, presion_hpa_sin_unidad: 29.92, lluvia_dia_mm_sin_unidad: 0 });
+  assert.equal(l.hum_pct, 50);                                      // la humedad es % (no hay unidad que adivinar)
+  assert.equal(r.descartadas.sin_unidad, 6);                         // 5 de prueba-wl-1 + la temperatura de prueba-wl-2
+  // un número JSON tampoco trae unidad; ni una unidad que no es de la variable (hPa en el viento)
+  for (const v of [68, '68', '68.0F?', '10 hPa']) assert.equal(convertirWL(v, 'temp_c').valor, null, String(v));
+  assert.equal(convertirWL('10 hPa', 'viento_ms').valor, null);
+  // la clave buscada «un nivel adentro» de CUALQUIER subobjeto ya no: sólo en el subobjeto nombrado
+  const anidado = wl({ lastTimestamp: 1768057200, actual: { temperature: '68 °F' } });
+  assert.equal(de(crearWL(WL_OK).leer(anidado), 'prueba-wl-1')[0].temp_c, null);
+  assert.ok(Math.abs(de(crearWL({ ...WL_OK, subobjeto: 'actual' }).leer(anidado), 'prueba-wl-1')[0].temp_c - 20) < 1e-9);
+  // y la de ageInSeconds: el instante se calcula desde la edad
   assert.equal(de(r, 'prueba-wl-2')[0].instante, Date.parse('2026-01-10T15:21:00Z') - 50000e3);
   assert.equal(r.descartadas.sin_instante, 1);
   assert.deepEqual(r.claves_vistas, { otraCosa: 1 });
-  const e4 = r.estaciones.find((e) => e.estacion_id === 'prueba-wl-4');
-  assert.equal(e4.activa, false);
 });
 
 test('Weathercloud: con el formato SIN verificar no guarda nada, sólo cuenta', () => {

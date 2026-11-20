@@ -3,13 +3,19 @@
 //   · SÓLO LEE R2 (token de sólo lectura y, además, un almacén congelado con leer/listar). No le pide nada a ninguna fuente.
 //   · Las reglas de calidad de la 139 (lib/calidad.mjs), iguales para las 9 fuentes. Idempotente por la firma.
 //   · EL LOG DE ACTIONS ES PÚBLICO: se imprime sólo un resumen de CANTIDADES y CATEGORÍAS (nunca nombres, ids ni
-//     coordenadas). `soloCantidades` lo verifica antes de imprimir.
+//     coordenadas). `soloCantidades` lo verifica antes de imprimir, con una lista CERRADA de claves (PERMITIDAS).
+//   · [0152 obs. 2, 20/11] Los NOMBRES de las claves desconocidas del crudo (WeatherLink, SIGA, EEAOC) NO van al log:
+//     el log lleva sólo cuántas son por fuente (`claves_desconocidas`). Los nombres van a registro_procesos (la base,
+//     privada) bajo `privado.claves_desconocidas`; en --seco, si se pide, a un archivo FUERA del repo (--claves-a).
 //
 // Uso:
 //   node estaciones-parseo/parsear.mjs                       real: R2 → base (PARSEO_PG_URL, el rol colector_estaciones)
 //   node estaciones-parseo/parsear.mjs --seco                seco: R2 → PGlite en memoria (no toca la base)
 //   node estaciones-parseo/parsear.mjs --seco --carpeta D    seco: una carpeta con la forma de R2 → PGlite
 //   opciones: --horas N (8 por defecto: la cadena de la ronda dura ~5 h; máx. 72) · --ahora ISO · --fuentes a,b
+//             --claves-a ARCHIVO (sólo con --seco; fuera del repo): los nombres de las claves desconocidas, en JSON
+import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FUENTES } from './fuentes/index.mjs';
 import { limpiar } from './lib/calidad.mjs';
@@ -47,7 +53,25 @@ export async function clavesDeVentana(almacen, fuente, ahoraMs, horas) {
   return { claves: claves.sort((a, b) => a.t - b.t), dias: [...dias] };
 }
 
-/** El log público: sólo números, booleanos y categorías (texto corto en minúscula). Lanza si hay otra cosa. */
+/** Las ÚNICAS claves que puede llevar el log público: las del resumen, los ids de las fuentes y los motivos de descarte
+ *  que escribe el código (un test controla que cada `sumar(descartadas, '…')` del código esté acá). Una clave que no
+ *  está, aunque sea de letras, frena el log: así un nombre que venga del crudo nunca sale. */
+export const PERMITIDAS = new Set([
+  // el resumen
+  'horas', 'fuentes', 'total', 'ok', 'modo', 'error', 'error_cierre',
+  'estaciones', 'lecturas', 'nuevas', 'cambiadas', 'iguales', 'duplicadas_cambiadas', 'lecturas_podadas',
+  'rondas', 'rondas_rotas', 'imposibles', 'descartadas', 'claves_desconocidas', 'guardado',
+  'estaciones_escritas', 'lecturas_nuevas', 'lecturas_cambiadas', 'lecturas_iguales', 'sin_estacion',
+  // las fuentes
+  ...FUENTES.map((f) => f.id),
+  // los motivos de descarte (fuentes/*.mjs y lib/calidad.mjs)
+  'sin_id', 'sin_instante', 'sin_detalle', 'sin_parte', 'sin_fecha', 'sin_valor', 'sin_variables', 'sin_unidad',
+  'no_es_json', 'no_es_device', 'formato_cambiado', 'formato_sin_verificar', 'renglon_roto', 'serie_desconocida',
+  'lluvia_sin_dia', 'deshabilitada', 'de_prueba', 'fuera_de_linea', 'fila_corta', 'pronostico', 'repetida',
+  'futura', 'vieja_12h', 'vieja_8d', 'ronda_sin_hora',
+]);
+
+/** El log público: sólo números, booleanos y categorías (texto corto en minúscula), con claves de PERMITIDAS. Lanza si hay otra cosa. */
 export function soloCantidades(o, camino = 'resumen') {
   if (o == null || typeof o === 'number' || typeof o === 'boolean') return o;
   if (typeof o === 'string') {
@@ -56,15 +80,17 @@ export function soloCantidades(o, camino = 'resumen') {
   }
   if (Array.isArray(o)) throw new Error(`el resumen no lleva listas (${camino})`);
   for (const [k, v] of Object.entries(o)) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,40}$/.test(k) || /\d{3,}/.test(k)) throw new Error(`clave no permitida en el resumen (${camino})`);
+    if (!PERMITIDAS.has(k)) throw new Error(`clave no permitida en el resumen (${camino})`);
     soloCantidades(v, camino + '.' + k);
   }
   return o;
 }
 
 /** Una corrida: para cada fuente, lee sus rondas de la ventana, limpia, une y guarda. → el resumen (sólo cantidades). */
-export async function correr({ almacen, db, ahora = Date.now(), horas = 8, fuentes = FUENTES }) {
+/** `privado` (opcional) se llena con lo que NO va al log: { claves_desconocidas: { <fuente>: { <clave del crudo>: n } } }. */
+export async function correr({ almacen, db, ahora = Date.now(), horas = 8, fuentes = FUENTES, privado = {} }) {
   const resumen = { horas, fuentes: {}, total: { estaciones: 0, lecturas: 0, nuevas: 0, cambiadas: 0, iguales: 0 } };
+  privado.claves_desconocidas = {};
   let ok = true;
   for (const f of fuentes) {
     const r = { rondas: 0, rondas_rotas: 0, estaciones: 0, lecturas: 0, imposibles: 0, descartadas: {} };
@@ -83,8 +109,9 @@ export async function correr({ almacen, db, ahora = Date.now(), horas = 8, fuent
         const res = f.leer(obj, ctx);
         for (const [k, n] of Object.entries(res.descartadas || {})) sumar(r.descartadas, k, n);
         if (res.claves_vistas && Object.keys(res.claves_vistas).length) {
-          r.claves_sin_instante ||= {};
-          for (const [k, n] of Object.entries(res.claves_vistas)) sumar(r.claves_sin_instante, k, n);
+          const c = (privado.claves_desconocidas[f.id] ||= {});
+          for (const [k, n] of Object.entries(res.claves_vistas)) sumar(c, k, n);
+          r.claves_desconocidas = Object.keys(c).length;     // al log, SÓLO la cantidad
         }
         for (const e of res.estaciones) ests.set(e.estacion_id, e);
         const l = limpiar(res.lecturas, leido, r.descartadas);
@@ -113,8 +140,9 @@ export async function correr({ almacen, db, ahora = Date.now(), horas = 8, fuent
     }
   }
   try {
-    Object.assign(resumen.total, await cerrarCorrida(db, { ok, resumen: soloCantidades(structuredClone(resumen)),
-      podar: Math.abs(Date.now() - ahora) < 3 * 3600e3 }));
+    /* a la base: el resumen público (verificado) y, aparte, los nombres (privado: registro_procesos no se publica) */
+    const aLaBase = { ...soloCantidades(structuredClone(resumen)), privado: { claves_desconocidas: privado.claves_desconocidas } };
+    Object.assign(resumen.total, await cerrarCorrida(db, { ok, resumen: aLaBase, podar: Math.abs(Date.now() - ahora) < 3 * 3600e3 }));
   } catch (e) {
     ok = false;
     resumen.total.error_cierre = e && e.codigo ? 'base:' + e.codigo : 'error';
@@ -123,8 +151,15 @@ export async function correr({ almacen, db, ahora = Date.now(), horas = 8, fuent
   return soloCantidades(resumen);
 }
 
+/** La raíz del repo (la carpeta de arriba de estaciones-parseo/). Un archivo con nombres del crudo no puede caer adentro. */
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+export function dentroDelRepo(p) {
+  const rel = path.relative(REPO.toLowerCase(), path.resolve(p).toLowerCase());
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 function opciones(argv) {
-  const o = { seco: false, carpeta: null, horas: 8, ahora: Date.now(), fuentes: null };
+  const o = { seco: false, carpeta: null, horas: 8, ahora: Date.now(), fuentes: null, clavesA: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--seco') o.seco = true;
@@ -132,6 +167,7 @@ function opciones(argv) {
     else if (a === '--horas') o.horas = Math.min(72, Math.max(1, Number(argv[++i]) || 8));
     else if (a === '--ahora') { const t = Date.parse(argv[++i]); if (Number.isFinite(t)) o.ahora = t; else throw new Error('--ahora no es una fecha'); }
     else if (a === '--fuentes') o.fuentes = String(argv[++i]).split(',');
+    else if (a === '--claves-a') o.clavesA = argv[++i];
     else throw new Error('opción desconocida');
   }
   return o;
@@ -142,11 +178,15 @@ async function principal() {
   const { almacenDeR2, almacenDeCarpeta } = await import('./lib/almacen.mjs');
   const { conectarPg, conectarPglite } = await import('./lib/base.mjs');
   if (o.carpeta && !o.seco) throw new Error('--carpeta va sólo con --seco');
+  if (o.clavesA && !o.seco) throw new Error('--claves-a va sólo con --seco');
+  if (o.clavesA && dentroDelRepo(o.clavesA)) throw new Error('--claves-a no puede ir dentro del repo');
   const almacen = o.carpeta ? almacenDeCarpeta(o.carpeta) : almacenDeR2();
   const db = o.seco ? await conectarPglite() : await conectarPg({ url: process.env.PARSEO_PG_URL });
   const fuentes = o.fuentes ? FUENTES.filter((f) => o.fuentes.includes(f.id)) : FUENTES;
   try {
-    const r = await correr({ almacen, db, ahora: o.ahora, horas: o.horas, fuentes });
+    const privado = {};
+    const r = await correr({ almacen, db, ahora: o.ahora, horas: o.horas, fuentes, privado });
+    if (o.clavesA) fs.writeFileSync(o.clavesA, JSON.stringify(privado, null, 1) + '\n');   // nunca al stdout
     console.log(JSON.stringify({ modo: o.seco ? 'seco' : 'real', ...r }));
     if (!r.ok) process.exitCode = 1;
   } finally { await db.cerrar(); }
@@ -158,7 +198,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     const m = String(e && e.message || '');
     const cat = e && e.codigo ? 'base:' + String(e.codigo).slice(0, 16)
       : /^faltan? /.test(m) ? 'falta_secreto' : /PARSEO_PG_URL/.test(m) ? 'url_de_la_base_no_permitida'
-      : /otro usuario/.test(m) ? 'usuario_de_la_base_no_es_el_rol' : (/^R2 \w+: HTTP (\d{3})$/.exec(m) ? 'r2_http_' + /\d{3}$/.exec(m)[0] : 'error_al_arrancar');
+      : /otro usuario/.test(m) ? 'usuario_de_la_base_no_es_el_rol' : /^--claves-a /.test(m) ? 'claves_a_no_permitido' : (/^R2 \w+: HTTP (\d{3})$/.exec(m) ? 'r2_http_' + /\d{3}$/.exec(m)[0] : 'error_al_arrancar');
     console.log(JSON.stringify({ ok: false, error: cat }));
     process.exitCode = 1;
   });

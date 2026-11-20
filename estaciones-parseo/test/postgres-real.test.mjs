@@ -49,13 +49,13 @@ test('CON POSTGRES DE VERDAD: el job escribe (antes del arreglo, 22023 en todas 
       const r1 = await correr({ almacen, db, ahora: AHORA });
       for (const [f, x] of Object.entries(r1.fuentes)) assert.equal(x.error, undefined, `${f}: ${x.error}`);
       assert.equal(r1.ok, true);
-      assert.equal(r1.total.nuevas, 24);
+      assert.equal(r1.total.nuevas, 23);   // 23: la de WeatherLink ya no entra (formato sin verificar, 0152 obs. 6)
       const r2 = await correr({ almacen, db, ahora: AHORA });
       assert.equal(r2.ok, true);
       assert.equal(r2.total.nuevas + r2.total.cambiadas + r2.total.estaciones, 0);
     } finally { await db.cerrar(); }
     const n = await b.sup.unsafe('select count(*)::int as n from estaciones_lecturas');
-    assert.equal(n[0].n, 24);
+    assert.equal(n[0].n, 23);
     // el resumen de registro_procesos llega como OBJETO, no como un string JSON
     const t = await b.sup.unsafe("select jsonb_typeof(resumen) as t from registro_procesos where proceso = 'estaciones_parseo'");
     assert.deepEqual(t.map((x) => x.t), ['object', 'object']);
