@@ -16,7 +16,18 @@ export function leer(obj) {
   if (c == null) return vacio('sin_parte');
   let a;
   try { a = JSON.parse(c); } catch { return vacio('no_es_json'); }
-  if (!Array.isArray(a) || !a.length || OBLIGATORIAS.some((k) => !(k in a[0]))) return vacio('formato_cambiado');
+  // [19/11] la primera corrida real dio formato_cambiado en las 8 rondas (con la muestra del 15/11 anda). Más tolerante:
+  // la lista puede venir envuelta ({ data | estaciones | rows: [...] }) y las claves se buscan en TODAS las estaciones
+  // (una estación parada puede venir sin algunas). Si igual no cierra, se anotan los NOMBRES de las claves que vinieron.
+  if (a && !Array.isArray(a) && typeof a === 'object') a = [a.data, a.estaciones, a.rows].find(Array.isArray) ?? a;
+  const vistas = {};
+  if (Array.isArray(a)) for (const x of a.slice(0, 200)) if (x && typeof x === 'object') for (const k of Object.keys(x)) vistas[k] = true;
+  if (!Array.isArray(a) || !a.length || OBLIGATORIAS.some((k) => !vistas[k])) {
+    const claves_vistas = {};
+    const origen = Array.isArray(a) ? Object.keys(vistas) : a && typeof a === 'object' ? Object.keys(a) : ['_' + (Array.isArray(a) ? 'lista_vacia' : typeof a)];
+    for (const k of origen.slice(0, 40)) if (/^[A-Za-z_]{1,40}$/.test(k)) claves_vistas[k] = 1;
+    return { ...vacio('formato_cambiado'), claves_vistas };
+  }
   const estaciones = [], lecturas = [], descartadas = {};
   for (const x of a) {
     const id = String(x.id ?? '').trim();

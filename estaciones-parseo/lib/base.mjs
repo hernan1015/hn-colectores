@@ -36,7 +36,7 @@ export function errorLimpio(e, que = 'base') {
   return err;
 }
 
-export async function conectarPg({ url, conectar, hostPermitido = (h) => HOST_POOLER.test(h) }) {
+export async function conectarPg({ url, conectar, hostPermitido = (h) => HOST_POOLER.test(h), ssl = 'require' }) {
   if (!url) throw new Error('falta PARSEO_PG_URL');
   const u = usuarioDeUrl(url);
   if (!u || !(u === ROL || u.startsWith(ROL + '.'))) throw new Error(`PARSEO_PG_URL tiene que ser del usuario ${ROL}: no se usa otro`);
@@ -45,7 +45,7 @@ export async function conectarPg({ url, conectar, hostPermitido = (h) => HOST_PO
   if (!conectar) conectar = (await import('postgres')).default;
   let sql;
   try {
-    sql = conectar(url, { max: 1, prepare: false, ssl: 'require', idle_timeout: 20, connect_timeout: 20, onnotice: () => {},
+    sql = conectar(url, { max: 1, prepare: false, ssl, idle_timeout: 20, connect_timeout: 20, onnotice: () => {},
       connection: { application_name: 'estaciones-parseo' } });
   } catch (e) { throw errorLimpio(e, 'conectar'); }
   const cerrar = async () => { try { await sql.end({ timeout: 5 }); } catch { /* nada */ } };
