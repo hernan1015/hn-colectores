@@ -1,0 +1,15 @@
+{
+ "leido": "2026-01-10T15:11:30.000Z",
+ "partes": {
+  "series": {
+   "status": 200,
+   "tipo": "text/plain; charset=UTF-8",
+   "cuerpo": "{\"rows\":[{\"tipo\":\"puntual\",\"id\":99001,\"estacion\":{\"id\":9501,\"nombre\":\"Prueba 51\",\"id_externo\":\"P\",\"geom\":{\"type\":\"Point\",\"coordinates\":[-60.45,-34.45]},\"tabla\":\"prueba\",\"pais\":\"Argentina\",\"rio\":null,\"has_obs\":true,\"tipo\":\"A\",\"automatica\":true,\"propietario\":\"Prueba\",\"public\":true,\"red\":{\"id\":1,\"nombre\":\"Prueba\",\"public\":true}},\"var\":{\"id\":53,\"nombre\":\"Prueba\"},\"procedimiento\":{\"id\":1},\"unidades\":{\"id\":1}},{\"tipo\":\"puntual\",\"id\":99002,\"estacion\":{\"id\":9501,\"nombre\":\"Prueba 51\",\"id_externo\":\"P\",\"geom\":{\"type\":\"Point\",\"coordinates\":[-60.45,-34.45]},\"tabla\":\"prueba\",\"pais\":\"Argentina\",\"rio\":null,\"has_obs\":true,\"tipo\":\"A\",\"automatica\":true,\"propietario\":\"Prueba\",\"public\":true,\"red\":{\"id\":1,\"nombre\":\"Prueba\",\"public\":true}},\"var\":{\"id\":58,\"nombre\":\"Prueba\"},\"procedimiento\":{\"id\":1},\"unidades\":{\"id\":1}},{\"tipo\":\"puntual\",\"id\":99003,\"estacion\":{\"id\":9501,\"nombre\":\"Prueba 51\",\"id_externo\":\"P\",\"geom\":{\"type\":\"Point\",\"coordinates\":[-60.45,-34.45]},\"tabla\":\"prueba\",\"pais\":\"Argentina\",\"rio\":null,\"has_obs\":true,\"tipo\":\"A\",\"automatica\":true,\"propietario\":\"Prueba\",\"public\":true,\"red\":{\"id\":1,\"nombre\":\"Prueba\",\"public\":true}},\"var\":{\"id\":1,\"nombre\":\"Prueba\"},\"procedimiento\":{\"id\":1},\"unidades\":{\"id\":1}},{\"tipo\":\"puntual\",\"id\":99004,\"estacion\":{\"id\":9502,\"nombre\":\"Prueba 52\",\"id_externo\":\"P\",\"geom\":{\"type\":\"Point\",\"coordinates\":[-57,-33]},\"tabla\":\"prueba\",\"pais\":\"Uruguay\",\"rio\":null,\"has_obs\":true,\"tipo\":\"A\",\"automatica\":true,\"propietario\":\"Prueba\",\"public\":true,\"red\":{\"id\":1,\"nombre\":\"Prueba\",\"public\":true}},\"var\":{\"id\":53,\"nombre\":\"Prueba\"},\"procedimiento\":{\"id\":1},\"unidades\":{\"id\":1}}]}"
+  },
+  "obs_0": {
+   "status": 200,
+   "tipo": "text/plain; charset=UTF-8",
+   "cuerpo": "[{\"id\":1,\"tipo\":\"puntual\",\"series_id\":99001,\"timestart\":\"2026-01-10T15:00:00.000Z\",\"timeend\":\"2026-01-10T15:00:00.000Z\",\"nombre\":\"Prueba\",\"valor\":20.5},{\"id\":1,\"tipo\":\"puntual\",\"series_id\":99002,\"timestart\":\"2026-01-10T15:00:00.000Z\",\"timeend\":\"2026-01-10T15:00:00.000Z\",\"nombre\":\"Prueba\",\"valor\":60},{\"id\":1,\"tipo\":\"puntual\",\"series_id\":99003,\"timestart\":\"2026-01-09T12:00:00.000Z\",\"timeend\":\"2026-01-10T12:00:00.000Z\",\"nombre\":\"Prueba\",\"valor\":0},{\"id\":1,\"tipo\":\"puntual\",\"series_id\":99004,\"timestart\":\"2026-01-10T15:00:00.000Z\",\"timeend\":\"2026-01-10T15:00:00.000Z\",\"nombre\":\"Prueba\",\"valor\":20}]"
+  }
+ }
+}

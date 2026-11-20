@@ -1,0 +1,10 @@
+{
+ "leido": "2026-01-10T16:11:30.000Z",
+ "partes": {
+  "estaciones": {
+   "status": 200,
+   "tipo": "text/plain; charset=UTF-8",
+   "cuerpo": "[{\"id\":\"9001\",\"Identificacion\":\"P9001\",\"nombre\":\"Prueba 1\",\"lat\":\"-34.5\",\"lon\":\"-60.5\",\"alt\":\"50\",\"foto\":\"\",\"ultregrecibido\":\"\",\"habilitada\":\"1\",\"fecha_I\":\"2026-01-10 13:00:00\",\"temp_af\":\"21.0\",\"hum_af\":\"48\",\"RR_dia\":\"2.5\",\"rr_mes\":\"10.0\",\"presion\":\"1013.0\",\"viento_medio\":\"10.0\",\"viento_max\":\"20.0\",\"rr_15\":\"0.0\",\"pronostico\":\"\",\"scada\":\"\",\"gprs\":\"\",\"zona\":\"Prueba\",\"desde\":\"2020-01-01\",\"direc\":\"S\",\"rafaga24\":\"20.0\",\"tiempo\":\"15\",\"Localidad\":\"Prueba\",\"departamento\":\"Prueba\",\"provincia\":\"Prueba\",\"marca\":\"Prueba\",\"SMN\":\"0\",\"isSoil\":\"0\",\"isRadiation\":\"0\",\"valles\":\"0\",\"modem\":\"\"},{\"id\":\"9002\",\"Identificacion\":\"P9002\",\"nombre\":\"Prueba 2\",\"lat\":\"-34.9\",\"lon\":\"-60.9\",\"alt\":\"50\",\"foto\":\"\",\"ultregrecibido\":\"\",\"habilitada\":\"1\",\"fecha_I\":\"2026-01-10 12:00:00\",\"temp_af\":\"55.0\",\"hum_af\":\"255\",\"RR_dia\":\"\",\"rr_mes\":\"10.0\",\"presion\":\"10000.0\",\"viento_medio\":\"10.0\",\"viento_max\":\"20.0\",\"rr_15\":\"0.0\",\"pronostico\":\"\",\"scada\":\"\",\"gprs\":\"\",\"zona\":\"Prueba\",\"desde\":\"2020-01-01\",\"direc\":\"S\",\"rafaga24\":\"20.0\",\"tiempo\":\"15\",\"Localidad\":\"Prueba\",\"departamento\":\"Prueba\",\"provincia\":\"Prueba\",\"marca\":\"Prueba\",\"SMN\":\"0\",\"isSoil\":\"0\",\"isRadiation\":\"0\",\"valles\":\"0\",\"modem\":\"\"}]"
+  }
+ }
+}

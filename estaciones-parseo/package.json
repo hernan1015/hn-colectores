@@ -1,0 +1,14 @@
+{
+  "name": "hn-estaciones-parseo",
+  "private": true,
+  "type": "module",
+  "description": "HN AGRO · parseo de las estaciones internas: R2 (lo que baja estaciones-privadas/ronda.mjs) → base. USO INTERNO.",
+  "scripts": {
+    "parsear": "node parsear.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "postgres": "3.4.4"
+  }
+}

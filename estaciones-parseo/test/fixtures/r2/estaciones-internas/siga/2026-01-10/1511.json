@@ -1,0 +1,10 @@
+{
+ "leido": "2026-01-10T15:11:30.000Z",
+ "partes": {
+  "estaciones": {
+   "status": 200,
+   "tipo": "text/plain; charset=UTF-8",
+   "cuerpo": "[{\"altura\":50,\"id\":9101,\"idInterno\":\"P9101\",\"idTipo\":2,\"latitud\":-34.6,\"localidad\":\"Prueba\",\"longitud\":-60.6,\"nombre\":\"Prueba 11\",\"provincia\":\"Prueba\",\"tipo\":\"Prueba THP\",\"visible\":true,\"fecha\":\"2026-01-10T15:00:00Z[UTC]\",\"temperatura\":20,\"humedad\":50,\"precipitacion\":0},{\"altura\":50,\"id\":9102,\"idInterno\":\"P9102\",\"idTipo\":1,\"latitud\":-34.7,\"localidad\":\"Prueba\",\"longitud\":-60.7,\"nombre\":\"Prueba 12\",\"provincia\":\"Prueba\",\"tipo\":\"Prueba manual\",\"visible\":true},{\"altura\":50,\"id\":9103,\"idInterno\":\"P9103\",\"idTipo\":2,\"latitud\":-34.8,\"localidad\":\"loc_prueba\",\"longitud\":-60.8,\"nombre\":\"Prueba 13\",\"provincia\":\"Prueba\",\"tipo\":\"Prueba THP\",\"visible\":false}]"
+  }
+ }
+}
