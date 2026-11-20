@@ -74,6 +74,10 @@ for (let k = 0; k < 12; k++) {
     k === 5 ? '0' : '50', '1013.0', k === 3 ? '0.20' : '0.00', '45', '10']));
 }
 filas.push(renglon(['25/12/25', '9:00', '20.0', '20.1', '50', '1013.0', '0.00', '45', '10']));
+// [19/11] un campo VACÍO (la humedad) y una hora con «a» (am/pm): los dos se leen; un renglón cortado, no
+filas.push(renglon(['10/01/26', '9:00', '19.0', '19.1', '', '1013.0', '0.00', '45', '10']));
+filas.push(renglon(['10/01/26', '9:10a', '19.1', '19.2', '50', '1013.0', '0.00', '45', '10']));
+filas.push('10/01/26 9:20 19.2 50 1013.0');
 const davis = [renglon(COLS.map((c) => c[0])), renglon(COLS.map((c) => c[1])), '-'.repeat(70), ...filas].join('\r\n') + '\r\n';
 escribir('entrerios/2026-01-10/1511.json', ronda(L1, { prueba1: davis, prueba2: NO }));
 

@@ -33,7 +33,17 @@ test('EEAOC: hora argentina, RR_dia al acumulado del día, 0 mm sigue siendo 0, 
   assert.equal(de(r, '9002')[0].lluvia_dia_mm, null);  // vacío = sin dato, nunca 0
 });
 
-test('EEAOC: si cambia la forma, no se guarda nada', () => {
+test('EEAOC: si cambia la forma, no se guarda nada (y se anotan los NOMBRES de las claves); envuelta o con claves faltantes en la primera, sí', () => {
+  const base = ronda('eeaoc/2026-01-10/1511.json');
+  const lista = JSON.parse(base.partes.estaciones.cuerpo);
+  const env = { partes: { estaciones: { status: 200, cuerpo: JSON.stringify({ data: lista }) } } };
+  assert.equal(eeaoc.leer(env).estaciones.length, 4);
+  const sinRR = lista.map((x, i) => (i === 0 ? (({ RR_dia, ...r }) => r)(x) : x));
+  const r0 = eeaoc.leer({ partes: { estaciones: { status: 200, cuerpo: JSON.stringify(sinRR) } } });
+  assert.equal(r0.estaciones.length, 4);
+  assert.equal(r0.lecturas.find((l) => l.estacion_id === '9001').lluvia_dia_mm, null);
+  const raro = eeaoc.leer({ partes: { estaciones: { status: 200, cuerpo: JSON.stringify({ error: 1, mensaje: 2 }) } } });
+  assert.deepEqual(raro.claves_vistas, { error: 1, mensaje: 1 });
   const o = { leido: 'x', partes: { estaciones: { status: 200, cuerpo: JSON.stringify([{ id: 1, nombre: 'Prueba' }]) } } };
   assert.deepEqual(eeaoc.leer(o).descartadas, { formato_cambiado: 1 });
   assert.equal(eeaoc.leer({ partes: { estaciones: { status: 500, cuerpo: '' } } }).lecturas.length, 0);
@@ -79,7 +89,17 @@ test('Entre Ríos: columnas por la cabecera (con «�»), registros de 10 min, 
   assert.deepEqual(r.estaciones.map((e) => e.estacion_id), ['prueba1']);
   assert.equal(r.descartadas.sin_parte, 1);   // la EMA que dio 404
   const ls = de(r, 'prueba1');
-  assert.equal(ls.length, 13);
+  assert.equal(ls.length, 15);
+  // [19/11] el campo vacío queda NULL (leído por posición) y la hora «9:10a» es 09:10; el renglón que no alinea, roto
+  const vacio = ls.find((l) => l.instante === Date.parse('2026-01-10T12:00:00Z'));
+  assert.equal(vacio.hum_pct, null);
+  assert.equal(vacio.temp_c, 19);
+  assert.equal(vacio.presion_hpa, 1013);
+  assert.ok(ls.some((l) => l.instante === Date.parse('2026-01-10T12:10:00Z') && l.temp_c === 19.1));
+  assert.equal(r.descartadas.renglon_roto, 1);
+  const o = ronda('entrerios/2026-01-10/1511.json');
+  o.partes.prueba1.cuerpo = o.partes.prueba1.cuerpo.replace('9:10a', '1:10p');
+  assert.ok(de(entrerios.leer(o), 'prueba1').some((l) => l.instante === Date.parse('2026-01-10T16:10:00Z')));   // 1:10p = 13:10
   const a = ls.find((l) => l.instante === Date.parse('2026-01-10T13:30:00Z'));
   assert.equal(a.temp_c, 20.3);               // «Temp. Ext.», no «Temp. M�x.» (20.5)
   assert.equal(a.hum_pct, 50);                // «Hum. Ext.», no «Hum. Int.» (45)
@@ -111,6 +131,12 @@ test('INA: temp y HR juntas por estación; la lluvia diaria con período 1440 en
 test('SIGA: la fecha con «Z[UTC]», la convencional sin lectura, la no visible afuera', () => {
   const r = siga.leer(ronda('siga/2026-01-10/1511.json'));
   assert.deepEqual(r.estaciones.map((e) => e.estacion_id), ['9101', '9102']);
+  // [19/11] «visible» es del mapa del SIGA: no descarta; la de prueba sí; la convencional cuenta como sin_fecha
+  assert.deepEqual(r.descartadas, { de_prueba: 1, sin_fecha: 1 });
+  assert.ok(r.claves_vistas.idTipo >= 1);
+  const o = ronda('siga/2026-01-10/1511.json'); const a = JSON.parse(o.partes.estaciones.cuerpo); a[0].visible = false;
+  o.partes.estaciones.cuerpo = JSON.stringify(a);
+  assert.equal(siga.leer(o).lecturas.length, 1);
   assert.equal(r.lecturas.length, 1);
   assert.equal(r.lecturas[0].instante, Date.parse('2026-01-10T15:00:00Z'));
   assert.deepEqual(r.lecturas[0].crudo, { precipitacion: 0 });

@@ -41,11 +41,20 @@ export function parsearDavis(texto) {
   if (OBLIGATORIAS.some((k) => idx[k] == null)) return null;
   const lecturas = []; let rotos = 0;
   for (const l of datos) {
-    const t = l.trim().split(/\s+/);
-    if (t.length !== cols.length) { rotos++; continue; }
-    const f = /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/.exec(t[0]); const h = /^(\d{1,2}):(\d{2})$/.exec(t[1]);
+    // [19/11] la primera corrida real rompió 595 renglones. La causa probable: un campo VACÍO (la consola no escribe «---»)
+    // corre las columnas. Las del export van alineadas a la derecha: si la cuenta de palabras no da, el renglón se lee
+    // POR POSICIÓN (cada columna termina donde termina la del primer renglón de datos) y el campo vacío queda NULL.
+    let t = l.trim().split(/\s+/);
+    if (t.length !== cols.length) {
+      t = cols.map((c, k) => l.slice(k ? cols[k - 1].fin : 0, c.fin).trim());
+      if (l.slice(cols[cols.length - 1].fin).trim() || t.some((x) => /\s/.test(x))) { rotos++; continue; }   // no alinea: roto
+    }
+    const f = /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/.exec(t[0]); const h = /^(\d{1,2}):(\d{2})([ap])?$/.exec(t[1]);
     if (!f || !h) { rotos++; continue; }
-    const local = `20${f[3]}-${f[2].padStart(2, '0')}-${f[1].padStart(2, '0')}T${h[1].padStart(2, '0')}:${h[2]}`;
+    // la consola puede exportar la hora en 12 h («9:10a», «12:00p»)
+    let hh = Number(h[1]);
+    if (h[3]) { if (hh < 1 || hh > 12) { rotos++; continue; } hh = (hh % 12) + (h[3] === 'p' ? 12 : 0); }
+    const local = `20${f[3]}-${f[2].padStart(2, '0')}-${f[1].padStart(2, '0')}T${String(hh).padStart(2, '0')}:${h[2]}`;
     const v = (k) => (idx[k] == null ? null : numero(t[idx[k]]));
     lecturas.push({ local, temp: v('temp'), hum: v('hum'), lluvia: v('lluvia'), presion: v('presion'), paso: v('paso') });
   }

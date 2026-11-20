@@ -59,6 +59,15 @@ test('el workflow: los secretos sólo por nombre (token de R2 de sólo lectura y
   assert.doesNotMatch(WF, /set -x/);
 });
 
+test('[22023] ningún parámetro se castea directo a jsonb: siempre ($n::text)::jsonb (postgres.js lo codificaría dos veces)', () => {
+  for (const p of codigo) {
+    const t = fs.readFileSync(p, 'utf8').replace(/\/\/.*$/gm, '');
+    assert.doesNotMatch(t, /\$\d+::jsonb?\b/, path.basename(p));
+  }
+  const g = fs.readFileSync(path.join(RAIZ, 'lib', 'guardar.mjs'), 'utf8');
+  assert.equal((g.match(/\(\$\d+::text\)::jsonb/g) || []).length, 3);
+});
+
 test('las redes del parseo están todas en la política de la 0161', () => {
   const sql = fs.readFileSync(path.join(RAIZ, 'esquema', '0161_estaciones_parseo_unificada_COPIA.sql'), 'utf8');
   const nuevas = /nuevas constant text\[\] := array\[([^\]]+)\]/.exec(sql)[1];
