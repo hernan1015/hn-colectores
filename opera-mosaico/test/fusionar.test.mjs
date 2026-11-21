@@ -111,3 +111,23 @@ test('elegirLatest sin ningún mosaico definitivo → null; fusionarCatalogo dej
   assert.equal(R.subida, null);
   assert.equal(R.completo.mosaicos.every((m) => m.provisional), true);
 });
+
+/* [endurecer · 21/11] el PUT del índice se verifica re-leyendo: una tarea de una PC pisaba pasadas.json cada día y el PUT
+   «andaba» igual. verificarSubida compara el sha256 de lo subido y lo re-leído. */
+test('verificarSubida: igual → true; otro contenido (el viejo que lo pisa), vacío o null → false', () => {
+  const sub = Buffer.from(JSON.stringify({ hasta: '2026-11-19', zonas: { corrientes: [] } }) + '\n');
+  assert.equal(F.verificarSubida(sub, Buffer.from(sub)), true);
+  assert.equal(F.verificarSubida(sub, Buffer.from(JSON.stringify({ hasta: '2026-11-09', zonas: {} }) + '\n')), false);   // CONTROL: lo pisaron
+  assert.equal(F.verificarSubida(sub, Buffer.alloc(0)), false);
+  assert.equal(F.verificarSubida(sub, null), false);
+});
+test('el CLI subir-indice re-lee y falla si no coincide; bajar registra Last-Modified y ETag (por lectura del fuente)', () => {
+  const src = fs.readFileSync(ruta, 'utf8');
+  const i = src.indexOf("if (cmd === 'subir-indice')"), b = src.slice(i, src.indexOf("if (cmd === 'decidir')"));
+  assert.match(b, /await r2\('PUT', PREFIJO \+ '\/pasadas\.json'/);
+  assert.match(b, /const v = await r2\('GET', PREFIJO \+ '\/pasadas\.json'\);\s*\n\s*if \(!verificarSubida\(b, v\)\) throw new Error/);
+  assert.ok(b.indexOf("r2('GET'") > b.indexOf("r2('PUT'"), 'la lectura es DESPUÉS del PUT');
+  const ba = src.slice(src.indexOf("if (cmd === 'bajar')"), i);
+  assert.match(ba, /modificado ' \+ \(\(b\.cabeceras && b\.cabeceras\.ultimaModificacion\) \|\| '\?'\)/);
+  assert.match(ba, /etag ' \+ \(\(b\.cabeceras && b\.cabeceras\.etag\) \|\| '\?'\)/);
+});

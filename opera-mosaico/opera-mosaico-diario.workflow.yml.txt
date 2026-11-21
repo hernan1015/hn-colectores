@@ -92,7 +92,13 @@ jobs:
           set -euo pipefail
           mkdir -p crudo
           # curl no manda la cabecera Authorization al host de la redirección (S3 firmado de PO.DAAC)
-          xargs -P 2 -n 1 sh -c 'f="crudo/$(basename "$0")"; curl -fsSL --retry 3 --retry-delay 15 -H "Authorization: Bearer $EARTHDATA_TOKEN" -o "$f.part" "$0" && mv "$f.part" "$f"' < plan/urls-a-bajar.txt
+          # [endurecer · 21/11] el código HTTP de cada bajada queda en codigos.txt: un 401/403 es el TOKEN (no «sin pasada»)
+          xargs -P 2 -n 1 sh -c 'f="crudo/$(basename "$0")"; c=$(curl -sSL --retry 3 --retry-delay 15 -w "%{http_code}" -H "Authorization: Bearer $EARTHDATA_TOKEN" -o "$f.part" "$0" || echo 000); echo "$c" >> codigos.txt; [ "$c" = 200 ] && mv "$f.part" "$f" || rm -f "$f.part"' < plan/urls-a-bajar.txt || true
+          if grep -qE '^(401|403)$' codigos.txt; then
+            echo "::error title=OPERA · token Earthdata rechazado::$(grep -cE '^(401|403)$' codigos.txt) bajadas con 401/403: el token EARTHDATA_TOKEN venció o no tiene permiso (no es falta de pasadas). Renovarlo en urs.earthdata.nasa.gov y en el secreto."
+            exit 1
+          fi
+          if grep -qvE '^200$' codigos.txt; then echo "::warning title=OPERA · bajadas fallidas::$(grep -cvE '^200$' codigos.txt) bajadas no dieron 200 ($(sort codigos.txt | uniq -c | tr '\n' ' '))"; fi
           n=$(ls crudo/*.tif | wc -l); echo "bajados $n de ${{ steps.dec.outputs.granulos }}"
           [ "$n" -eq "${{ steps.dec.outputs.granulos }}" ]
       - name: Armar (opera_a_cog.py) sólo esas fechas

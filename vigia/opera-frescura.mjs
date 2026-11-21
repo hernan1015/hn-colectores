@@ -25,13 +25,18 @@ import { fileURLToPath } from 'node:url';
 import { mandar, desdeEntorno } from './lib/correo.mjs';
 
 export const URL_INDICE = 'https://app.hnagroapp.com/.netlify/functions/satchi-publico?que=opera&zona=corrientes&pasadas=1';
+/* [endurecer · 21/11] la ÚLTIMA PASADA EN VIVO (CMR de la NASA, sin R2): con ella el aviso distingue «el índice de R2 se trabó»
+   (la NASA tiene pasadas nuevas y el índice no) de «OPERA parado» (tampoco hay pasadas en vivo). El 21/11 una tarea de una PC
+   pisaba el índice cada día: el aviso decía «OPERA parado» y no lo estaba. Es una SEGUNDA consulta, sólo para el diagnóstico:
+   si no contesta, el aviso queda como antes. */
+export const URL_EN_VIVO = 'https://app.hnagroapp.com/.netlify/functions/satchi-publico?que=opera&zona=corrientes';
 export const DIAS_MAX = 3;
 const DIA = 864e5;
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Regla pura. `resp` es el JSON del índice (o null si no contestó). `hoy` es AAAA-MM-DD (UTC).
  *  `ultimoSano` = el último día (AAAA-MM-DD) en que el índice contestó bien, o null si no hay registro. */
-export function evaluar(resp, hoy, { ultimoSano = null } = {}) {
+export function evaluar(resp, hoy, { ultimoSano = null, enVivo = null } = {}) {
   const sano = !!(resp && resp.ok === true && FECHA.test(String(resp.hasta || '')));
   if (!sano) {
     const tras = FECHA.test(String(ultimoSano || '')) ? ultimoSano : 'sin-registro';
@@ -46,6 +51,14 @@ export function evaluar(resp, hoy, { ultimoSano = null } = {}) {
   }
   const dias = Math.round((Date.parse(hoy + 'T00:00:00Z') - Date.parse(hasta + 'T00:00:00Z')) / DIA);
   if (dias > DIAS_MAX) {
+    /* [endurecer] la pasada EN VIVO está fresca y el índice no: no es OPERA, es la cadena del índice (¿lo pisa otro proceso?) */
+    const fv = enVivo && enVivo.ok === true && FECHA.test(String(enVivo.fecha || '')) ? enVivo.fecha : null;
+    const diasVivo = fv ? Math.round((Date.parse(hoy + 'T00:00:00Z') - Date.parse(fv + 'T00:00:00Z')) / DIA) : null;
+    if (fv && diasVivo <= DIAS_MAX && fv > hasta) {
+      return { avisar: true, sano: true, tipo: 'indice_trabado', clave: 'opera-indice-trabado-' + hasta, dias, en_vivo: fv,
+        asunto: 'SATCHI: el índice de mosaicos OPERA de R2 se trabó en ' + hasta + ' (la NASA tiene pasadas hasta el ' + fv + ')',
+        detalle: 'La última pasada en vivo (CMR) es del ' + fv + ', pero el índice de R2 (pasadas.json) sigue en ' + hasta + ' (' + dias + ' días). OPERA NO está parado: se trabó la cadena del índice. Mirar el registro de opera-mosaico-diario («índice subido y verificado», «modificado …» al bajar): ¿otro proceso pisa opera/cog/pasadas.json?' };
+    }
     return { avisar: true, sano: true, tipo: 'atraso', clave: 'opera-atraso-' + hasta, dias,
       asunto: 'SATCHI: mosaicos OPERA sin actualizar desde ' + hasta + ' (' + dias + ' días)',
       detalle: 'El último mosaico del índice de R2 es del ' + hasta + '. La cuenca tiene pasadas todos los días: más de ' + DIAS_MAX + ' días sin uno nuevo es una falla de la cadena (bajada, conversión, subida o índice).' };
@@ -89,7 +102,7 @@ function args(argv) {
     const k = argv[i];
     if (k === '--fixture') o.fixture = argv[++i]; else if (k === '--hoy') o.hoy = argv[++i];
     else if (k === '--salida') o.salida = argv[++i]; else if (k === '--evaluacion') o.evaluacion = argv[++i];
-    else if (k === '--sano-archivo') o.sanoArchivo = argv[++i];
+    else if (k === '--sano-archivo') o.sanoArchivo = argv[++i]; else if (k === '--fixture-vivo') o.fixtureVivo = argv[++i];
   }
   o.hoy = o.hoy || new Date().toISOString().slice(0, 10);
   return o;
@@ -100,7 +113,9 @@ async function main() {
   if (a.modo === 'evaluar') {
     let ultimoSano = null;
     if (a.sanoArchivo) { try { ultimoSano = fs.readFileSync(a.sanoArchivo, 'utf8').trim(); } catch { ultimoSano = null; } }
-    const v = { ...evaluar(await leerIndice({ fixture: a.fixture }), a.hoy, { ultimoSano }), hoy: a.hoy };
+    const ind = await leerIndice({ fixture: a.fixture });
+    const enVivo = a.fixtureVivo ? await leerIndice({ fixture: a.fixtureVivo }) : (a.fixture ? null : await leerIndice({ url: URL_EN_VIVO }));   // [endurecer] para el diagnóstico
+    const v = { ...evaluar(ind, a.hoy, { ultimoSano, enVivo }), hoy: a.hoy };
     console.log('opera-frescura:', v.tipo, v.avisar ? 'AVISA' : 'sin aviso', v.clave || '', v.dias != null ? '(' + v.dias + ' días)' : '');
     if (a.salida) fs.writeFileSync(a.salida, JSON.stringify(v));
     if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, 'avisar=' + (v.avisar ? 'si' : 'no') + '\nclave=' + (v.clave || 'ninguna') + '\nsano=' + (v.sano ? 'si' : 'no') + '\n');

@@ -150,3 +150,21 @@ test('el CLI redacta el error real del SMTP antes de imprimirlo', () => {
   assert.match(err, /opera-frescura: error/);
   for (const v of ['host-inexistente.invalid', 'u@ejemplo.org', 'p-secreta-9', 'd@ejemplo.org']) assert.equal(err.includes(v), false);
 });
+
+/* [endurecer · 21/11] «el índice de R2 se trabó» (la NASA tiene pasadas nuevas) ≠ «OPERA parado» */
+test('índice atrasado + pasada EN VIVO fresca → indice_trabado (no «OPERA parado»), con su clave', () => {
+  const ind = { ok: true, fuente: 'r2', hasta: '2026-11-09' };
+  const v = evaluar(ind, '2026-11-21', { enVivo: { ok: true, fecha: '2026-11-18' } });
+  assert.equal(v.tipo, 'indice_trabado'); assert.equal(v.avisar, true);
+  assert.equal(v.clave, 'opera-indice-trabado-2026-11-09'); assert.equal(v.en_vivo, '2026-11-18');
+  assert.match(v.asunto, /se trabó en 2026-11-09 .*hasta el 2026-11-18/);
+  assert.match(v.detalle, /OPERA NO está parado/);
+});
+test('CONTROL: sin pasada en vivo, o en vivo también vieja, o no contestó → el aviso de siempre (atraso)', () => {
+  const ind = { ok: true, fuente: 'r2', hasta: '2026-11-09' };
+  for (const enVivo of [null, { ok: false }, { ok: true, fecha: '2026-11-10' }, { ok: true, fecha: 'mal' }]) {
+    const v = evaluar(ind, '2026-11-21', { enVivo });
+    assert.equal(v.tipo, 'atraso', JSON.stringify(enVivo)); assert.equal(v.clave, 'opera-atraso-2026-11-09');
+  }
+  assert.equal(evaluar({ ok: true, fuente: 'r2', hasta: '2026-11-20' }, '2026-11-21', { enVivo: { ok: true, fecha: '2026-11-20' } }).tipo, 'ok');   // al día: nada
+});

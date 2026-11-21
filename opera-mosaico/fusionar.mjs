@@ -120,8 +120,14 @@ async function r2(metodo, clave, cuerpo, cab) {
   const r = await fetch('https://' + host + camino.split('/').map(encodeURIComponent).join('/'), { method: metodo, body: cuerpo,
     headers: Object.assign({}, cab || {}, { authorization: f.authorization, 'x-amz-date': f['x-amz-date'], 'x-amz-content-sha256': f['x-amz-content-sha256'] }) });
   if (!r.ok) throw new Error(metodo + ' ' + clave + ': R2 respondió ' + r.status);   // sin cuerpo ni URL: el registro es público
-  return Buffer.from(await r.arrayBuffer());
+  const b = Buffer.from(await r.arrayBuffer());
+  /* [endurecer · 21/11] las cabeceras del objeto, para el registro (quién y cuándo lo escribió): Last-Modified y ETag */
+  b.cabeceras = { ultimaModificacion: r.headers.get('last-modified') || null, etag: r.headers.get('etag') || null };
+  return b;
 }
+
+/** PURA. ¿lo que se leyó después del PUT es lo que se subió? (sha256 de los dos) */
+export function verificarSubida(subido, releido) { return !!(releido && sha(Buffer.from(subido)) === sha(Buffer.from(releido))); }
 
 /* ── CLI ──────────────────────────────────────────────────────────────────────────────────────────────────── */
 function salidaGH(pares) {
@@ -131,12 +137,21 @@ function salidaGH(pares) {
 const leerJ = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 async function cli(a) {
   const op = (k) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : null; }, cmd = a[0];
-  if (cmd === 'bajar') { fs.mkdirSync(path.dirname(a[2]), { recursive: true }); const b = await r2('GET', a[1]); fs.writeFileSync(a[2], b); console.log('bajado ' + a[1] + ' · ' + b.length + ' bytes'); return; }
+  if (cmd === 'bajar') {
+    fs.mkdirSync(path.dirname(a[2]), { recursive: true }); const b = await r2('GET', a[1]); fs.writeFileSync(a[2], b);
+    /* [endurecer] Last-Modified y ETag: si otro proceso pisa el objeto entre corridas, el registro dice cuándo (21/11: una tarea de una PC lo pisaba cada día) */
+    let hasta = ''; try { const j = JSON.parse(b.toString('utf8')); if (j && FECHA.test(String(j.hasta || ''))) hasta = ' · hasta ' + j.hasta; } catch (e) {}
+    console.log('bajado ' + a[1] + ' · ' + b.length + ' bytes' + hasta + ' · modificado ' + ((b.cabeceras && b.cabeceras.ultimaModificacion) || '?') + ' · etag ' + ((b.cabeceras && b.cabeceras.etag) || '?'));
+    return;
+  }
   if (cmd === 'subir-indice') {
     const b = fs.readFileSync(a[1]); const j = JSON.parse(b.toString('utf8'));
     if (!j.zonas || !FECHA.test(String(j.hasta || ''))) throw new Error('no es un índice de pasadas');
     await r2('PUT', PREFIJO + '/pasadas.json', b, { 'content-type': 'application/json', 'cache-control': 'public, max-age=900' });
-    console.log('índice subido · hasta ' + j.hasta + ' · ' + b.length + ' bytes'); return;
+    /* [endurecer] se RE-LEE y se compara: un PUT que «anduvo» pero no quedó no pasa en silencio */
+    const v = await r2('GET', PREFIJO + '/pasadas.json');
+    if (!verificarSubida(b, v)) throw new Error('el índice re-leído de R2 no es el que se subió (' + v.length + ' bytes contra ' + b.length + '): ¿lo pisa otro proceso?');
+    console.log('índice subido y verificado · hasta ' + j.hasta + ' · ' + b.length + ' bytes · etag ' + ((v.cabeceras && v.cabeceras.etag) || '?')); return;
   }
   if (cmd === 'decidir') {
     const cmr = porFecha(fs.readFileSync(op('--cmr'), 'utf8').split(/\r?\n/)), urls = fs.readFileSync(op('--cmr'), 'utf8').split(/\r?\n/).filter(Boolean);
