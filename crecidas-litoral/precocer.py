@@ -246,6 +246,24 @@ def main():
              zmin=A.zmin, zmax=A.zmax, zonas=A.zonas.split(',') if A.zonas else None, calado_dir=A.calado_dir, agua_vista=A.agua_vista)
 
 
+def rangos(ys):
+    """[_v1860] [3, 4, 5, 9] -> '3-5,9' (las y de una columna, compactas)"""
+    ys = sorted(set(ys)); out = []; i = 0
+    while i < len(ys):
+        j = i
+        while j + 1 < len(ys) and ys[j + 1] == ys[j] + 1: j += 1
+        out.append(str(ys[i]) if i == j else f'{ys[i]}-{ys[j]}'); i = j + 1
+    return ','.join(out)
+
+
+def teselas_compactas(existen):
+    """[_v1860] {(z, x, y)} -> {'z': {'x': '3-5,9'}}: la lista de teselas que EXISTEN de una fecha, para que la página pida sólo
+    esas (las que faltan, el depósito r2.dev las contesta con un 404 de 27 KB en HTML, y «Todo el Litoral» pedía cientos por cuadro)"""
+    T = {}
+    for (z, x, y) in existen: T.setdefault(str(z), {}).setdefault(str(x), []).append(y)
+    return {z: {x: rangos(ys) for x, ys in sorted(xs.items(), key=lambda kv: int(kv[0]))} for z, xs in sorted(T.items(), key=lambda kv: int(kv[0]))}
+
+
 def precocer(alt, ind, fechas, salida, zmin=6, zmax=11, zonas=None, calado_dir=None, agua_vista=None, log=print, extra=None):
     class _A: pass
     A = _A(); A.zmin = zmin; A.zmax = zmax
@@ -289,7 +307,7 @@ def precocer(alt, ind, fechas, salida, zmin=6, zmax=11, zonas=None, calado_dir=N
             fuentes.append({'meta': meta, 'rgb': rgb, 'a': al, 'w': None, 'peso': PESO_AGUA_VISTA, 'fijo': None})
             det[k] = {'opera': fo, 'opera_cob': cob, 'opera_ultima': bool(ult)}
         cajas = [(F['meta']['oeste'], F['meta']['sur'], F['meta']['este'], F['meta']['norte']) for F in fuentes]
-        n = 0; bytes_ = 0
+        n = 0; bytes_ = 0; existen = set()
         for zz in range(A.zmin, A.zmax + 1):
             hechas = set()
             for c in cajas:
@@ -298,9 +316,9 @@ def precocer(alt, ind, fechas, salida, zmin=6, zmax=11, zonas=None, calado_dir=N
                     hechas.add((x, y)); im = componer(fuentes, zz, x, y)
                     if im is None: continue
                     d = os.path.join(base, fecha, str(zz), str(x)); os.makedirs(d, exist_ok=True)
-                    f = os.path.join(d, f'{y}.png'); Image.fromarray(im, 'RGBA').save(f, optimize=True); n += 1; bytes_ += os.path.getsize(f)
+                    f = os.path.join(d, f'{y}.png'); Image.fromarray(im, 'RGBA').save(f, optimize=True); n += 1; existen.add((zz, x, y)); bytes_ += os.path.getsize(f)
         ultimas = sorted({d['opera'] for d in det.values() if d.get('opera_ultima') and d.get('opera')})
-        indice['fechas'].append({'fecha': fecha, 'tipo': tipo, 'sin_dato': sin, 'zonas': det, 'opera_ultima': ultimas})   # [b] las pasadas viejas usadas ese día
+        indice['fechas'].append({'fecha': fecha, 'tipo': tipo, 'sin_dato': sin, 'zonas': det, 'opera_ultima': ultimas, 'teselas': teselas_compactas(existen)})   # [_v1860] las que existen   # [b] las pasadas viejas usadas ese día
         indice['mb'][fecha] = {'teselas': n, 'mb': round(bytes_ / 1e6, 3)}
         log(f'{fecha}: {n} teselas · {bytes_ / 1e6:.2f} MB · sin dato {len(sin)} · {time.time() - t0:.0f} s')
     if extra: indice.update(extra)
